@@ -7,7 +7,8 @@
 --
 -- To add a game, drop a file in Games/, list it in the .toc and call private.Games.Register from
 -- it. Games/TicTacToe.lua is the smallest example, Games/Chess.lua uses everything on offer.
--- Games/ConnectFour.lua and Games/Reversi.lua place pieces instead of moving them.
+-- Games/ConnectFour.lua and Games/Reversi.lua place pieces instead of moving them, and
+-- Games/ChineseCheckers.lua is for up to six players on a board that isn't a grid.
 --
 -- The window around the view is the engine's: who is playing, whose turn it is, resigning, draw
 -- offers, the list of moves and stepping back through them. A game opts into the last two with
@@ -21,6 +22,7 @@ local _, private = ...
 --- @field match Match
 --- @field state table The position to draw. Belongs to the engine: don't change it or keep it
 --- @field seat number The local player's seat
+--- @field names string[] Who is playing, by seat, as their names are shown
 --- @field canMove boolean Whether the local player may move right now
 --- @field submit fun(move: string) Plays a move for the local player
 --- @field ply number How many log entries led to this position
@@ -41,16 +43,17 @@ local _, private = ...
 --- @field genre string? What kind of game it is, for narrowing down the list in the wizard. Shown as L["genre_" .. genre], use one that is there already where it fits
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
---- @field seats number Number of players, only 2 is supported for now
---- @field newState fun(): table Fresh game state
+--- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }
+--- @field newState fun(seats: number): table Fresh game state for this many players
 --- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
 --- @field apply fun(state: table, seat: number, move: string): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list
 --- @field result fun(state: table): { winner: number, detail: string? }? nil while in progress, winner 0 for a draw. detail names how it ended and is shown as L["result_" .. detail]
+--- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two. The engine ends the game itself once only one player is left
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game
---- @field seatLabel (fun(seat: number): string)? Short label for a seat, e.g. "X"
+--- @field seatLabel (fun(seat: number, seats: number): string)? Short label for a seat in a game of this many players, e.g. "X"
 
 --- @class Games
 local Games = {}
@@ -62,12 +65,41 @@ local registry = {}
 local ordered = {}
 
 local REQUIRED = { "newState", "turn", "validate", "apply", "result", "createView" }
+-- Seats are a single digit in the log
+local MAX_SEATS = 9
+
+--- The numbers of players a game can be played with, smallest first
+--- @param game GameDefinition
+--- @return number[]
+function Games.SeatCounts(game)
+  local counts = type(game.seats) == "table" and { unpack(game.seats) } or { game.seats }
+  table.sort(counts)
+  return counts
+end
+
+--- @param game GameDefinition
+--- @param seats number
+--- @return boolean
+function Games.CanSeat(game, seats)
+  for _, count in ipairs(Games.SeatCounts(game)) do
+    if count == seats then
+      return true
+    end
+  end
+  return false
+end
 
 --- @param definition GameDefinition
 function Games.Register(definition)
   assert(private.Codec.IsSafeField(definition.id), "Game id must be alphanumeric")
   assert(not registry[definition.id], "Game already registered: " .. definition.id)
-  assert(definition.seats == 2, "Only two player games are supported")
+  local counts = Games.SeatCounts(definition)
+  assert(#counts > 0, "Game " .. definition.id .. " doesn't say how many play it")
+  for _, count in ipairs(counts) do
+    local whole = type(count) == "number" and count == math.floor(count)
+    assert(whole and count >= 2 and count <= MAX_SEATS, "Games are for 2 to " .. MAX_SEATS .. " players")
+  end
+  assert(counts[#counts] == 2 or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
   for _, key in ipairs(REQUIRED) do
     assert(type(definition[key]) == "function", "Game " .. definition.id .. " is missing " .. key)
   end

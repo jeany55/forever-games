@@ -24,6 +24,7 @@ Games\Chess.lua
 Games\ConnectFour.lua
 Games\Reversi.lua
 Games\Checkers.lua
+Games\ChineseCheckers.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua

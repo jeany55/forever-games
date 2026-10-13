@@ -4,8 +4,8 @@
     python3 Tools/make_discs.py Images
 
 Writes Images/Discs/<size>/<name>.tga for every colour, and crowned (<name>K) for the colours
-checkers is played with, at the sizes the board picks from, the white Images/Board/disc.tga that gets tinted for holes, and
-Images/Icons/<game>.tga.
+checkers is played with, at the sizes the board picks from, the white Images/Board/disc.tga that gets tinted for holes,
+the Images/Board/star.tga that Chinese Checkers is played on, and Images/Icons/<game>.tga.
 Only the standard library is used. Pass a second folder to also get PNG copies there, which are
 easier to look at than TGA.
 """
@@ -25,7 +25,13 @@ COLORS = {
     "yellow": ((240, 196, 40), None),
     "black": ((44, 44, 48), None),
     "white": ((236, 232, 220), (150, 110, 40)),
+    "green": ((52, 160, 70), None),
+    "blue": ((48, 104, 210), None),
+    "purple": ((146, 72, 190), None),
 }
+# How far the points of the star board reach, in a picture from -1 to 1
+STAR_RADIUS = 0.97
+WOOD = (166, 118, 72)
 # A crown in a box from -1 to 1, y pointing down
 CROWN = [(-0.8, 0.6), (-0.95, -0.45), (-0.45, 0.05), (0, -0.7), (0.45, 0.05), (0.95, -0.45), (0.8, 0.6)]
 
@@ -71,6 +77,41 @@ def disc(x, y, base, crown):
 
 def hole(x, y):
     return (255, 255, 255), 1.0 if math.hypot(x, y) <= 2 * RADIUS else 0.0
+
+
+def star_edge(x, y):
+    """How far a point is outside a six pointed star with a point straight up, negative inside it"""
+    edges = []
+    for flip in (1, -1):
+        # One of the two triangles the star is made of: inside means on the near side of all three edges
+        corners = (math.radians(90 + 120 * k) for k in range(3))
+        edges.append(max(-(x * math.cos(a) + flip * y * math.sin(a)) for a in corners) - STAR_RADIUS / 2)
+    return min(edges)
+
+
+def star(x, y):
+    """The board Chinese Checkers is played on, without its holes: those are drawn by the game"""
+    edge = star_edge(x, y)
+    if edge > 0:
+        return (0, 0, 0), 0.0
+    # Grain running across, a darker rim and a bevel that catches the light from the top left
+    grain = math.sin(y * 46 + 3 * math.sin(x * 5)) * 0.5 + math.sin(y * 113 + x * 9) * 0.5
+    color = mix(WOOD, (96, 62, 34), 0.12 + 0.1 * grain)
+    if edge > -0.035:
+        color = mix(color, (60, 36, 18), 0.75)
+    elif edge > -0.05:
+        color = mix(color, (255, 236, 200) if star_edge(x + 0.01, y + 0.01) < edge else (0, 0, 0), 0.22)
+    return color, 1.0
+
+
+def star_icon(x, y):
+    return star(x / 0.98, y / 0.98)[0] if star_edge(x / 0.98, y / 0.98) <= 0 else (28, 34, 52)
+
+
+def around(names, distance, scale):
+    """Pieces at the points of the star, going round from the bottom"""
+    turns = (math.radians(90 + 60 * k) for k in range(len(names)))
+    return [(name, distance * math.cos(a), distance * math.sin(a), scale) for name, a in zip(names, turns)]
 
 
 def render(size, paint):
@@ -146,6 +187,7 @@ ICONS = {
         lambda x, y: (20, 80, 44) if min(abs(x), abs(y)) < 0.04 else (36, 122, 66),
     ),
     "checkers": placed([("red", -0.5, 0.5, 0.56), ("white", 0.5, -0.5, 0.56)], checks),
+    "chinesecheckers": placed(around(["red", "yellow", "green", "blue", "white", "purple"], 0.62, 0.34), star_icon),
 }
 
 target = Path(sys.argv[1])
@@ -156,5 +198,6 @@ for size in SIZES:
         if crown:
             write(target / "Discs" / str(size) / (name + "K.tga"), render(size, lambda x, y: disc(x, y, base, crown)), preview)
 write(target / "Board" / "disc.tga", render(64, hole), preview)
+write(target / "Board" / "star.tga", render(512, star), preview)
 for name, paint in ICONS.items():
     write(target / "Icons" / (name + ".tga"), render(64, paint), preview)

@@ -14,13 +14,25 @@
 --
 -- Squares are numbered row by row from the bottom left as the first player sees it, starting at
 -- 0. Flipping the board turns it around for the player sitting opposite.
+--
+-- A board needn't be a grid. Given a layout it has holes wherever the game puts them, numbered
+-- however the game likes, and everything round instead of square: see Games/ChineseCheckers.lua.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 
+--- A board that isn't a grid of squares. Distances are in squares, a piece is one square across
+--- @class BoardLayout
+--- @field squares number[] The numbers of the squares there are
+--- @field width number Room the board takes up
+--- @field height number
+--- @field at fun(square: number, facing: number): number, number Where the middle of a square is, right and down from the top left corner. facing is what the board was last told with SetFacing, for a board that players look at from different sides
+--- @field backdrop { texture: string, size: number, color: number[]? }? A square picture behind it all, centred
+
 --- @class BoardOptions
---- @field columns number
---- @field rows number
+--- @field columns number? Not needed with a layout
+--- @field rows number?
+--- @field layout BoardLayout? For a board that isn't a grid
 --- @field light number[]? Colour of the light squares
 --- @field dark number[]? Colour of the dark squares, the bottom left one is dark. Give both the same colour for a plain board
 --- @field lines number[]? Colour of a thin line drawn between the squares, for a plain board
@@ -76,11 +88,20 @@ local HERE = { 0, 0 }
 function Board.New(parent, options)
   --- @type Board
   local self = setmetatable({}, Board)
-  self.columns, self.rows = options.columns, options.rows
-  self.count = self.columns * self.rows
+  local layout = options.layout
+  self.layout = layout
+  self.columns, self.rows = layout and layout.width or options.columns, layout and layout.height or options.rows
+  -- Every square there is, in the order they are drawn
+  self.all = layout and layout.squares or {}
+  for square = 0, layout and -1 or self.columns * self.rows - 1 do
+    self.all[#self.all + 1] = square
+  end
   self.files, self.ranks = options.files, options.ranks
   self.cell = 0
   self.flipped = false
+  self.facing = 0
+  -- Where the layout puts each square, worked out once for the way the board is facing
+  self.spots = {}
   self.enabled = false
   self.pieces, self.shown, self.tints, self.targets, self.glides, self.flips = {}, {}, {}, {}, {}, {}
 
@@ -91,19 +112,28 @@ function Board.New(parent, options)
   local light, dark = options.light or LIGHT, options.dark or DARK
   local inlay = options.inlay
   self.inlayScale = inlay and inlay.scale or 1
+  self.inlayColor = inlay and inlay.color
   if options.lines then
     -- Shows through between the squares, which are drawn a little smaller for it
     self.lines = frame:CreateTexture(nil, "BACKGROUND", nil, -1)
     self.lines:SetAllPoints()
     self.lines:SetColorTexture(unpack(options.lines))
   end
+  if layout and layout.backdrop then
+    self.backdrop = frame:CreateTexture(nil, "BACKGROUND", nil, -2)
+    self.backdrop:SetPoint("CENTER")
+    self.backdrop:SetTexture(layout.backdrop.texture)
+    self.backdrop:SetVertexColor(unpack(layout.backdrop.color or { 1, 1, 1 }))
+  end
   self.squares = {}
-  for square = 0, self.count - 1 do
-    local isDark = (square % self.columns + math.floor(square / self.columns)) % 2 == 0
+  for _, square in ipairs(self.all) do
     local parts = {}
 
-    parts.background = frame:CreateTexture(nil, "BACKGROUND")
-    parts.background:SetColorTexture(unpack(isDark and dark or light))
+    if not layout then
+      local isDark = (square % self.columns + math.floor(square / self.columns)) % 2 == 0
+      parts.background = frame:CreateTexture(nil, "BACKGROUND")
+      parts.background:SetColorTexture(unpack(isDark and dark or light))
+    end
 
     if inlay then
       parts.inlay = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
@@ -113,6 +143,9 @@ function Board.New(parent, options)
 
     -- Colours the whole square: the selection, or whatever the game wants pointed out
     parts.tint = frame:CreateTexture(nil, "BORDER")
+    if layout then
+      parts.tint:SetTexture(IMAGES .. "disc")
+    end
     parts.tint:Hide()
 
     -- Says the picked up piece may go here: a dot on an empty square, a ring around a piece
@@ -127,7 +160,12 @@ function Board.New(parent, options)
   end
 
   self.hover = frame:CreateTexture(nil, "ARTWORK", nil, 0)
-  self.hover:SetColorTexture(1, 1, 1, 0.15)
+  if layout then
+    self.hover:SetTexture(IMAGES .. "disc")
+    self.hover:SetVertexColor(1, 1, 1, 0.2)
+  else
+    self.hover:SetColorTexture(1, 1, 1, 0.15)
+  end
   self.hover:Hide()
 
   -- Edge labels sit in the corners of the squares along the edge, in the other square colour
@@ -164,6 +202,14 @@ end
 --- @param square number
 --- @return number x, number y
 function Board:OffsetOf(square)
+  if self.layout then
+    local spot = self.spots[square]
+    if not spot then
+      spot = { self.layout.at(square, self.facing) }
+      self.spots[square] = spot
+    end
+    return (spot[1] - 0.5) * self.cell, (spot[2] - 0.5) * self.cell
+  end
   local column, row = square % self.columns, math.floor(square / self.columns)
   if self.flipped then
     column, row = self.columns - 1 - column, self.rows - 1 - row
@@ -177,6 +223,17 @@ end
 --- @return number?
 function Board:SquareAt(x, y)
   if self.cell <= 0 or x < 0 or y < 0 then
+    return nil
+  end
+  if self.layout then
+    -- Whichever square the point is inside the circle of
+    local half = self.cell / 2
+    for _, square in ipairs(self.all) do
+      local squareX, squareY = self:OffsetOf(square)
+      if (x - squareX - half) ^ 2 + (y - squareY - half) ^ 2 <= half ^ 2 then
+        return square
+      end
+    end
     return nil
   end
   local column, row = math.floor(x / self.cell), self.rows - 1 - math.floor(y / self.cell)
@@ -221,17 +278,22 @@ function Board:placePiece(square, dx, dy, scale)
   piece:SetPoint("CENTER", self.frame, "TOPLEFT", x + half + (dx or 0), -(y + half + (dy or 0)))
 end
 
-function Board:layout()
+function Board:arrange()
   local cell = self.cell
   -- Room left around each square for the lines between them
   local inset = self.lines and math.max(1, math.floor(cell * 0.02)) or 0
-  for square = 0, self.count - 1 do
+  if self.backdrop then
+    self.backdrop:SetSize(cell * self.layout.backdrop.size, cell * self.layout.backdrop.size)
+  end
+  for _, square in ipairs(self.all) do
     local parts = self.squares[square]
     local x, y = self:OffsetOf(square)
 
-    parts.background:ClearAllPoints()
-    parts.background:SetPoint("TOPLEFT", x + inset, -(y + inset))
-    parts.background:SetSize(cell - 2 * inset, cell - 2 * inset)
+    if parts.background then
+      parts.background:ClearAllPoints()
+      parts.background:SetPoint("TOPLEFT", x + inset, -(y + inset))
+      parts.background:SetSize(cell - 2 * inset, cell - 2 * inset)
+    end
     parts.tint:ClearAllPoints()
     parts.tint:SetPoint("TOPLEFT", x + inset, -(y + inset))
     parts.tint:SetSize(cell - 2 * inset, cell - 2 * inset)
@@ -280,7 +342,7 @@ end
 
 function Board:refreshPieces()
   local pixels = self:pixels()
-  for square = 0, self.count - 1 do
+  for _, square in ipairs(self.all) do
     local key = self.pieces[square]
     local path = key and self.textureFor(key, pixels) or nil
     local piece = self.squares[square].piece
@@ -298,10 +360,12 @@ end
 function Board:refreshMarks()
   -- With nothing picked up, the squares a piece may be placed on are marked the same way
   local place = self.enabled and self.selected == nil and self.input and self.input.place or nil
-  for square = 0, self.count - 1 do
+  for _, square in ipairs(self.all) do
     local parts = self.squares[square]
     local tint = square == self.selected and SELECTED or self.tints[square]
-    if tint then
+    if tint and self.layout then
+      parts.tint:SetVertexColor(unpack(tint))
+    elseif tint then
       parts.tint:SetColorTexture(unpack(tint))
     end
     parts.tint:SetShown(tint ~= nil)
@@ -377,7 +441,7 @@ function Board:SetSize(width, height)
   end
   self.cell = cell
   self.frame:SetSize(cell * self.columns, cell * self.rows)
-  self:layout()
+  self:arrange()
 end
 
 --- Turns the board around, for the player whose pieces start at the top
@@ -388,13 +452,33 @@ function Board:SetFlipped(flipped)
   end
   self.flipped = flipped
   self:StopGlides()
-  self:layout()
+  self:arrange()
+end
+
+--- Turns a board with a layout to face another way. What the number means is the layout's business
+--- @param facing number
+function Board:SetFacing(facing)
+  if facing == self.facing then
+    return
+  end
+  self.facing = facing
+  self.spots = {}
+  self:StopGlides()
+  self:arrange()
+end
+
+--- Colours the inlay of squares, for a board whose squares aren't all alike
+--- @param colors table<number, number[]> Colour by square, the others get the inlay's own
+function Board:SetInlays(colors)
+  for _, square in ipairs(self.all) do
+    self.squares[square].inlay:SetVertexColor(unpack(colors[square] or self.inlayColor))
+  end
 end
 
 --- @param pieces table<number, any> What is on each square. Copied, the caller can reuse the table
 --- @param textureFor fun(key: any, pixels: number): string Texture for a piece drawn at this many screen pixels
 function Board:SetPieces(pieces, textureFor)
-  for square = 0, self.count - 1 do
+  for _, square in ipairs(self.all) do
     self.pieces[square] = pieces[square]
   end
   self.textureFor = textureFor

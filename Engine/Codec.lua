@@ -6,6 +6,10 @@
 -- Player names never travel in the payload, the sender comes from the chat event.
 --
 --   INV:id:game:gameVersion:inviterSeat   challenge someone to a match
+--   INV:id:game:gameVersion:inviterSeat:seats:yourSeat[:seat:name...]
+--                                         the same for a match of more than two: how many are
+--                                         playing, where the receiver sits and who else sits where
+--   WHO:id:seat:name[:seat:name...]       the players an INV had no room left for
 --   ACC:id                                accept a challenge
 --   DEC:id[:reason]                       decline / cancel a challenge
 --   MOV:id:n:total:entry                  entry n of the match log, sender has `total` entries
@@ -29,6 +33,9 @@ Codec.MAX_LENGTH = 255
 --- @field game string?
 --- @field gameVersion number?
 --- @field seat number?
+--- @field seats number? How many are playing, in a challenge to a match of more than two
+--- @field mine number? Seat of whoever the challenge is sent to
+--- @field names table<number, string>? Full player names by seat
 --- @field reason string?
 --- @field n number?
 --- @field total number?
@@ -65,6 +72,22 @@ local function toCount(value)
   return nil
 end
 
+--- Reads "seat:name" pairs from the end of a message
+--- @param fields string[]
+--- @param first number Index of the first seat
+--- @return table<number, string>? names nil if they don't pair up
+local function toNames(fields, first)
+  local names = {}
+  for index = first, #fields, 2 do
+    local seat, name = toCount(fields[index]), fields[index + 1]
+    if not seat or seat < 1 or not name or names[seat] then
+      return nil
+    end
+    names[seat] = name
+  end
+  return names
+end
+
 --- Parses a received payload. Returns nil for anything malformed or from another protocol version,
 --- remote input is never trusted to be well formed.
 --- @param text string
@@ -94,6 +117,17 @@ function Codec.Decode(text)
     message.gameVersion = toCount(fields[5])
     message.seat = toCount(fields[6])
     if not Codec.IsSafeField(message.game) or not message.gameVersion or not message.seat then
+      return nil
+    end
+    if fields[7] then
+      message.seats, message.mine, message.names = toCount(fields[7]), toCount(fields[8]), toNames(fields, 9)
+      if not message.seats or not message.mine or not message.names then
+        return nil
+      end
+    end
+  elseif messageType == "WHO" then
+    message.names = toNames(fields, 4)
+    if not message.names or not next(message.names) then
       return nil
     end
   elseif messageType == "ACC" then
