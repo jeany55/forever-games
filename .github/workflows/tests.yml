@@ -29,3 +29,5 @@ jobs:
         with:
           name: ForeverGames
           path: .release/*.zip
+          # The zip is in a dot folder, which is skipped by default
+          include-hidden-files: true
