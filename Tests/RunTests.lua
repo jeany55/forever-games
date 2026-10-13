@@ -15,6 +15,7 @@ local ENGINE_FILES = {
   "Games/Chess.lua",
   "Games/ConnectFour.lua",
   "Games/Reversi.lua",
+  "Games/Checkers.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -904,6 +905,131 @@ function tests.ReversiPassBetweenTwoPlayers()
   equal(9, #black.matches[match.id].log)
 end
 
+--- @param state table Checkers position
+--- @return string[]
+local function checkersMoves(state)
+  local moves = {}
+  for move in pairs(state.legal) do
+    moves[#moves + 1] = move
+  end
+  table.sort(moves)
+  return moves
+end
+
+function tests.CheckersCountsTheRightNumberOfPositions()
+  local checkers = loadEngine().Games.Get("checkers")
+  equal("10-14,10-15,11-15,11-16,12-16,9-13,9-14", table.concat(checkersMoves(checkers.newState()), ","))
+  -- Known values for the starting position
+  equal(302, countPositions(checkers, checkers.newState(), 3, checkersMoves))
+  equal(1469, countPositions(checkers, checkers.newState(), 4, checkersMoves))
+  equal(7361, countPositions(checkers, checkers.newState(), 5, checkersMoves))
+end
+
+function tests.CheckersTakingIsCompulsory()
+  local state, game, events = gameAfter("checkers", "11-15 22-18")
+  equal("15-22", table.concat(checkersMoves(state), ","), "with a jump on, nothing else is allowed")
+  equal(false, (game.validate(state, 1, "9-13")))
+  equal(false, (game.validate(state, 2, "15-22")), "not white's turn")
+  equal("11-15", events[1].notation)
+
+  state, game, events = gameAfter("checkers", "11-15 22-18 15-22")
+  equal("15x22", events[3].notation)
+  equal(1, #events[3].captured)
+  equal(nil, state.board[events[3].captured[1]], "the piece jumped over is gone")
+  equal("25-18,26-17", table.concat(checkersMoves(state), ","), "white has to take back, either way")
+end
+
+function tests.CheckersJumpsGoOnInOneMove()
+  local line = "11-15 21-17 9-14 22-18 15-22"
+  local state, game = gameAfter("checkers", line)
+  equal(false, (game.validate(state, 2, "25-18")), "a piece that can jump again has to")
+  assert(state.legal["25-18-9"], "the double jump should be on")
+
+  local events
+  state, game, events = gameAfter("checkers", line .. " 25-18-9")
+  equal("25x18x9", events[#events].notation)
+  equal(2, #events[#events].captured)
+  equal(3, #events[#events].path)
+  local pieces = { r = 0, w = 0 }
+  for _, piece in pairs(state.board) do
+    pieces[piece] = pieces[piece] + 1
+  end
+  equal(10, pieces.r)
+  equal(11, pieces.w)
+end
+
+function tests.CheckersCrownsAManOnTheFarRow()
+  local state, game, events = gameAfter("checkers", "10-15 22-18 15-22 26-17 9-13 31-26 13-22-31")
+  equal(true, events[#events].crowned)
+  local king
+  for at, piece in pairs(state.board) do
+    if piece == "R" then
+      king = at
+    end
+  end
+  equal(events[#events].to, king)
+  equal(7, math.floor(king / 8), "on the row furthest from where red set out")
+
+  -- A king goes backwards too
+  game.apply(state, 2, checkersMoves(state)[1])
+  local backwards = false
+  for _, move in pairs(state.legal) do
+    backwards = backwards or (move.path[1] == king and move.path[2] < king)
+  end
+  equal(true, backwards)
+end
+
+function tests.CheckersPlayerWithoutAMoveLoses()
+  local state, game = gameAfter(
+    "checkers",
+    "11-15 23-19 12-16 19-12 9-14 27-23 6-9 22-17 9-13 31-27 13-22-31 21-17 14-21 24-19 31-24 30-26 21-30 32-27 24-31-22 23-18"
+      .. " 15-24 28-19 22-15-24 29-25 30-21"
+  )
+  equal(1, game.result(state).winner)
+end
+
+--- A checkers position with nothing left but a king each, in opposite corners, red to move
+--- @return table state, table checkers
+local function twoKings()
+  local checkers = loadEngine().Games.Get("checkers")
+  local state = checkers.newState()
+  -- Put together by hand, a game takes a long time to get here
+  state.board = { [0] = "R", [63] = "W" }
+  state.positions = {}
+  state.legal = { ["4-8"] = { path = { 0, 9 }, captures = {} } }
+  return state, checkers
+end
+
+function tests.CheckersDrawsByRepetition()
+  local state, checkers = twoKings()
+  equal(true, checkers.draws, "and by agreement, which is the engine's business")
+
+  -- Going back and forth, the position after the first move comes up again every four moves
+  local shuffle = { "4-8", "29-25", "8-4", "25-29" }
+  for index = 1, 8 do
+    local move = shuffle[(index - 1) % 4 + 1]
+    assert(checkers.validate(state, checkers.turn(state), move), move)
+    checkers.apply(state, checkers.turn(state), move)
+  end
+  equal(nil, checkers.result(state))
+  checkers.apply(state, checkers.turn(state), "4-8")
+  equal(0, checkers.result(state).winner)
+  equal("repetition", checkers.result(state).detail)
+end
+
+function tests.CheckersDrawsAfterFortyQuietMoves()
+  local state, checkers = twoKings()
+  state.quiet = 78
+  checkers.apply(state, 1, "4-8")
+  equal(nil, checkers.result(state))
+  checkers.apply(state, 2, "29-25")
+  equal("forty", checkers.result(state).detail)
+
+  -- A man moving starts the count again
+  state = gameAfter("checkers", "11-15")
+  equal(0, state.quiet)
+end
+
 -----------------------------
 -- Draw offers and history
 -----------------------------
@@ -1479,6 +1605,127 @@ function tests.WindowShowsAReversiPlayerSittingOut()
   equal(false, row.moves[1]:IsShown())
   assert(moves[8].parent ~= row and moves[8].parent.moves[2] == moves[8])
   assert(moves[7].parent == moves[8].parent, "the line before has a move from each")
+end
+
+--- Clicks the square checkers players know by a number, on a board with red at the bottom
+--- @param board table
+--- @param number number 1 to 32
+--- @param button string?
+local function clickChecker(board, number, button)
+  local row = math.floor((number - 1) / 4)
+  clickSquare(board, 2 * (3 - (number - 1) % 4) + row % 2, row, 8, button)
+end
+
+function tests.WindowPlaysCheckersOneJumpAtATime()
+  local world, red, white, id = gameOnScreen("checkers")
+  local board = shownBoard()
+
+  clickChecker(board, 10)
+  clickChecker(board, 15)
+  equal("10-15", logOf(red, id))
+  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  settle(board)
+  world:Deliver()
+  assert(white.session:Move(id, "22-18"))
+  world:Deliver()
+  settle(board)
+
+  -- With a piece to take, the others stay where they are
+  clickChecker(board, 9)
+  clickChecker(board, 13)
+  equal("10-15,22-18", logOf(red, id))
+  clickChecker(board, 15)
+  clickChecker(board, 22)
+  equal("10-15,22-18,15-22", logOf(red, id))
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  equal("15x22", listedMoves()[3].text.text)
+  world:Deliver()
+
+  play(world, id, white, red, { "26-17", "9-13", "31-26" })
+  settle(board)
+  local before = logOf(red, id)
+
+  -- A double jump: the first hop alone isn't a move yet
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  equal(before, logOf(red, id))
+  settle(board)
+  -- Halfway there the piece can only go on, nothing else can be picked up
+  clickChecker(board, 12)
+  clickChecker(board, 16)
+  equal(before, logOf(red, id))
+
+  -- Any other mouse button takes the piece back to where it started
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  clickChecker(board, 22, "RightButton")
+  clickChecker(board, 31)
+  equal(before, logOf(red, id), "back at the start the second hop isn't on offer")
+
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  clickChecker(board, 31)
+  equal(before .. ",13-22-31", logOf(red, id))
+  settle(board)
+  world:Deliver()
+  equal(logOf(red, id), logOf(white, id))
+end
+
+function tests.WindowShowsTheOpponentsCheckersJumps()
+  local world, red, white, id = gameOnScreen("checkers")
+  local board = shownBoard()
+  play(world, id, red, white, { "11-15", "21-17", "9-14", "22-18", "15-22" })
+  settle(board)
+
+  -- Two pieces go in one move, and the window shows what is left
+  assert(white.session:Move(id, "25-18-9"))
+  world:Deliver()
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  settle(board)
+  local tallies = Client.Find(function(widget)
+    return widget.kind == "FontString" and widget.text == "x 2" and widget:IsVisible()
+  end)
+  equal(1, #tallies, "white has taken two")
+  equal("25x18x9", listedMoves()[6].text.text)
+end
+
+function tests.WindowShowsCheckersFromTheOtherSide()
+  local world, red, white, id = gameOnScreen("checkers")
+  play(world, id, red, white, { "11-15", "21-17", "9-14", "22-18" })
+
+  -- White has the window this time, and sees the board turned around
+  local MainFrame = openWindow(white)
+  MainFrame.Open(id)
+  local board = shownBoard()
+  assert(red.session:Move(id, "15-22"))
+  world:Deliver()
+  settle(board)
+
+  --- Moves the cursor onto a square by its number
+  --- @param number number
+  local function point(number)
+    local row = math.floor((number - 1) / 4)
+    local cell = board.width / 8
+    Client.cursor = { (7 - (2 * (3 - (number - 1) % 4) + row % 2) + 0.5) * cell, (7 - row + 0.5) * cell }
+    board:Fire("OnUpdate", 0.02)
+  end
+  point(25)
+  press(board)
+  release(board)
+  point(18)
+  press(board)
+  release(board)
+  equal(5, #white.matches[id].log, "one hop of two isn't a move")
+  settle(board)
+
+  -- The second hop can be dragged like any move
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  point(9)
+  release(board)
+  equal("25-18-9", white.matches[id].log[6])
+  world:Deliver()
+  equal(logOf(white, id), logOf(red, id))
 end
 
 -----------------------------

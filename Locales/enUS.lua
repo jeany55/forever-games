@@ -20,6 +20,10 @@ L["game_reversi_description"] = "Trap your opponent's discs between yours to tur
 L["reversi_black"] = "Black"
 L["reversi_white"] = "White"
 L["reversi_passed"] = "%s has nowhere to go, %s plays again"
+L["game_checkers"] = "Checkers"
+L["game_checkers_description"] = "Jump over your opponent's pieces to take them, and get your own across the board to be crowned. If you can take, you have to."
+L["checkers_red"] = "Red"
+L["checkers_white"] = "White"
 
 -- How a game ended
 L["result_checkmate"] = "checkmate"
@@ -28,6 +32,7 @@ L["result_repetition"] = "threefold repetition"
 L["result_fifty"] = "fifty move rule"
 L["result_material"] = "insufficient material"
 L["result_agreement"] = "by agreement"
+L["result_forty"] = "forty moves without progress"
 
 -- Main window
 L["title"] = "Forever Games"
