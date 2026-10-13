@@ -3,8 +3,8 @@
 A World of Warcraft Forever addon for playing classic games against your friends and guildies, at
 your own pace. Make a move, go pull a boss, come back later.
 
-Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Backgammon, Chinese Checkers,
-which is for up to six, and Crazy Eights, which is too.
+Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
+Chinese Checkers, which is for up to six, and Crazy Eights, which is too.
 
 ## Usage
 
@@ -36,6 +36,12 @@ which is for up to six, and Crazy Eights, which is too.
   your hand, click one to play it. An eight
   asks which suit comes next. Click the deck to draw instead, and if what you drew can be played
   the choice is yours: play, or **Pass**. Everyone else's cards are turned over when the game ends
+- Battleship begins with your fleet laid out at random on your own sea. Click a ship to pick it
+  up and click the water to put it down again, a right click or **Rotate** turns it, **Random**
+  lays out another fleet, and nothing is sent until you press **Deploy**. You can arrange yours
+  while you wait for the other fleet. After that click a square of the other sea to fire at it:
+  you are told what the shot did right away, whether your opponent is around or not. The sea
+  you aren't playing on is shown small, click it for a closer look
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -80,7 +86,9 @@ nothing: that catches mistakes in what the window does, not in how it looks.
     that are moved by drag and drop or placed with a click, target marks, pieces that glide,
     drop, turn over and settle, and a shared set of round pieces. Given a layout it is a board
     of holes wherever the game wants them instead of a grid, that can be turned to face each
-    player, with piles of pieces counted where they get too high to draw
+    player, with piles of pieces counted where they get too high to draw. A grid can lie on a
+    picture that shimmers, carry things that lie across several squares, and say which square
+    the cursor is over
   - `Cards.lua` playing cards: a hand that fans out to fit and lets the player pick a card, a
     card for a deck or a pile, and cards that fly from one to the other, dealt round the table
     and turned over in the air
@@ -127,11 +135,14 @@ game (`history = true`).
 where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`, at
 `Games/Checkers.lua` for moves made in several steps, and at `Games/ChineseCheckers.lua` for more
 than two players and a board that isn't a grid. `Games/Backgammon.lua` rolls dice and stacks
-its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden.
+its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
+hides what a player chose rather than what they were dealt, on two boards at once, with pieces
+several squares long.
 
 The round pieces, the star Chinese Checkers is played on and the icons of the games played with
 them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
-`Tools/make_tables.py`. The cards, dice and sounds are converted by `Tools/convert_kenney.py`.
+`Tools/make_tables.py`, the sea, ships and pegs of Battleship by `Tools/make_fleet.py`. The cards,
+dice and sounds are converted by `Tools/convert_kenney.py`.
 
 ## Credits
 

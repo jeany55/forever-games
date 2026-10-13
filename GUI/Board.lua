@@ -20,6 +20,10 @@
 -- A layout can also say for itself which square a point of the board belongs to, for a board
 -- where pieces stand in piles and the whole pile is one thing to point at: see
 -- Games/Backgammon.lua, which also writes how many there are on a pile too high to draw.
+--
+-- A grid can lie on a picture instead of on squares of its own colours, and have things lying
+-- across several of its squares, under the pieces. A game can also be told which square the
+-- cursor is over, to show what a click there would do: see Games/Battleship.lua for all three.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -37,13 +41,14 @@ local _, private = ...
 --- @field columns number? Not needed with a layout
 --- @field rows number?
 --- @field layout BoardLayout? For a board that isn't a grid
+--- @field backdrop { texture: string, color: number[]?, shimmer: string? }? A picture the whole grid lies on. Its squares are see-through then, unless they are given colours as well. shimmer is a second picture that comes and goes over it, adding its light, for one that should seem to move
 --- @field light number[]? Colour of the light squares
 --- @field dark number[]? Colour of the dark squares, the bottom left one is dark. Give both the same colour for a plain board
 --- @field lines number[]? Colour of a thin line drawn between the squares, for a plain board
 --- @field inlay { texture: string, color: number[], scale: number }? Something drawn on every square under its piece, like the holes of a rack
 --- @field mark number[]? Colour of the marks on squares a piece may go to
---- @field files string? One character per column, written along the bottom edge
---- @field ranks string? One character per row, written up the left edge
+--- @field files (string|string[])? One character per column, written along the bottom edge. A list where one character isn't enough
+--- @field ranks (string|string[])? One character per row, written up the left edge
 --- @field label number[]? Colour of the edge labels, for a board where the other square colour doesn't stand out
 
 --- @class BoardInput
@@ -53,6 +58,16 @@ local _, private = ...
 --- @field place (fun(square: number): number?)? For games where pieces are placed: the square a click on this one puts a piece on, nil for none. Usually the square itself, but a game may let the player point at a whole column. The squares that stand for themselves get marked
 --- @field onPlace fun(square: number)? The player clicked to place a piece on this square
 --- @field onCancel fun(button: string?)? The player clicked away from what they were doing, or waved it off with another mouse button, which is then said
+--- @field onHover fun(square: number?)? The cursor came onto this square, or with nil left the board. Only while the board is enabled
+
+--- Something lying across several squares of a grid, under the pieces
+--- @class BoardSpan
+--- @field square number The square in its bottom left corner, as the first player sees the board
+--- @field columns number How many squares wide it is
+--- @field rows number
+--- @field key any What it is, for its texture
+--- @field upright boolean? The texture shows it lying down: turn it a quarter to stand up
+--- @field alpha number?
 
 --- @class Board
 --- @field frame Frame
@@ -90,6 +105,10 @@ local DRAG_DISTANCE = 4
 -- A piece being carried is drawn a little larger, as if lifted off the board
 local CARRIED_SCALE = 1.15
 local DOT_SCALE = 0.3
+-- A shimmer is two copies of its picture, one of them turned around, that fade in and out out of
+-- step: seconds each takes one way, and how far it fades
+local SHIMMER = { 3.1, 4.7 }
+local SHIMMER_FROM, SHIMMER_TO = 0.1, 0.85
 -- A piece that is where it belongs, as a distance from its square
 local HERE = { 0, 0 }
 
@@ -116,6 +135,7 @@ function Board.New(parent, options)
   self.enabled = false
   self.pieces, self.shown, self.tints, self.targets, self.glides, self.flips = {}, {}, {}, {}, {}, {}
   self.pops, self.labels = {}, {}
+  self.spans, self.spanTextures = {}, {}
 
   local frame = CreateFrame("Frame", nil, parent)
   frame:EnableMouse(true)
@@ -131,17 +151,48 @@ function Board.New(parent, options)
     self.lines:SetAllPoints()
     self.lines:SetColorTexture(unpack(options.lines))
   end
-  if layout and layout.backdrop then
+  local backdrop = options.backdrop or (layout and layout.backdrop)
+  if backdrop then
+    self.backdropShape = backdrop
     self.backdrop = frame:CreateTexture(nil, "BACKGROUND", nil, -2)
     self.backdrop:SetPoint("CENTER")
-    self.backdrop:SetTexture(layout.backdrop.texture)
-    self.backdrop:SetVertexColor(unpack(layout.backdrop.color or { 1, 1, 1 }))
+    self.backdrop:SetTexture(backdrop.texture)
+    self.backdrop:SetVertexColor(unpack(backdrop.color or { 1, 1, 1 }))
   end
+  if options.backdrop and options.backdrop.shimmer then
+    local shimmers = {}
+    for index, seconds in ipairs(SHIMMER) do
+      local shimmer = frame:CreateTexture(nil, "BACKGROUND", nil, -1)
+      shimmer:SetAllPoints(self.backdrop)
+      shimmer:SetTexture(options.backdrop.shimmer)
+      shimmer:SetBlendMode("ADD")
+      if index % 2 == 0 then
+        shimmer:SetTexCoord(1, 0, 1, 0)
+      end
+      local group = shimmer:CreateAnimationGroup()
+      group:SetLooping("BOUNCE")
+      local fade = group:CreateAnimation("Alpha")
+      fade:SetFromAlpha(SHIMMER_FROM)
+      fade:SetToAlpha(SHIMMER_TO)
+      fade:SetDuration(seconds)
+      fade:SetSmoothing("IN_OUT")
+      group:Play()
+      shimmers[index] = group
+    end
+    -- An animation doesn't outlast its frame being hidden
+    frame:SetScript("OnShow", function()
+      for _, group in ipairs(shimmers) do
+        group:Play()
+      end
+    end)
+  end
+  -- On a picture the squares only get in the way, unless the game wants them coloured
+  local plain = options.backdrop ~= nil and not options.light and not options.dark
   self.squares = {}
   for _, square in ipairs(self.all) do
     local parts = {}
 
-    if not layout then
+    if not layout and not plain then
       local isDark = (square % self.columns + math.floor(square / self.columns)) % 2 == 0
       parts.background = frame:CreateTexture(nil, "BACKGROUND")
       parts.background:SetColorTexture(unpack(isDark and dark or light))
@@ -202,6 +253,7 @@ function Board.New(parent, options)
   frame:SetScript("OnHide", function()
     self:cancelDrag()
     self.hover:Hide()
+    self:leave()
   end)
   return self
 end
@@ -293,13 +345,21 @@ function Board:placePiece(square, dx, dy, scale)
   piece:SetPoint("CENTER", self.frame, "TOPLEFT", x + half + (dx or 0), -(y + half + (dy or 0)))
 end
 
+--- @param labels string|string[] What is written along an edge
+--- @param index number
+--- @return string
+local function edgeText(labels, index)
+  return type(labels) == "table" and labels[index] or labels:sub(index, index)
+end
+
 function Board:arrange()
   local cell = self.cell
   -- Room left around each square for the lines between them
   local inset = self.lines and math.max(1, math.floor(cell * 0.02)) or 0
   if self.backdrop then
-    local backdrop = self.layout.backdrop
-    self.backdrop:SetSize(cell * (backdrop.width or backdrop.size), cell * (backdrop.height or backdrop.size))
+    local backdrop = self.backdropShape
+    local width, height = backdrop.width or backdrop.size or self.columns, backdrop.height or backdrop.size or self.rows
+    self.backdrop:SetSize(cell * width, cell * height)
   end
   for _, square in ipairs(self.all) do
     local parts = self.squares[square]
@@ -339,7 +399,7 @@ function Board:arrange()
     local column = self.flipped and self.columns - index or index - 1
     local bottomRow = self.flipped and self.rows - 1 or 0
     label:SetFont(STANDARD_TEXT_FONT, font, "")
-    label:SetText(self.files:sub(column + 1, column + 1))
+    label:SetText(edgeText(self.files, column + 1))
     label:SetTextColor(unpack(self.labelColors[(column + bottomRow) % 2 + 1]))
     label:ClearAllPoints()
     label:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMLEFT", index * cell - inset, inset)
@@ -348,12 +408,13 @@ function Board:arrange()
     local row = self.flipped and self.rows - index or index - 1
     local leftColumn = self.flipped and self.columns - 1 or 0
     label:SetFont(STANDARD_TEXT_FONT, font, "")
-    label:SetText(self.ranks:sub(row + 1, row + 1))
+    label:SetText(edgeText(self.ranks, row + 1))
     label:SetTextColor(unpack(self.labelColors[(row + leftColumn) % 2 + 1]))
     label:ClearAllPoints()
     label:SetPoint("TOPLEFT", self.frame, "BOTTOMLEFT", inset, index * cell - inset)
   end
 
+  self:refreshSpans()
   self:refreshPieces()
   self:refreshMarks()
 end
@@ -361,6 +422,34 @@ end
 -----------------------------
 -- Drawing
 -----------------------------
+
+function Board:refreshSpans()
+  local pixels = self:pixels()
+  for index, span in ipairs(self.spans) do
+    local texture = self.spanTextures[index]
+    if not texture then
+      texture = self.frame:CreateTexture(nil, "BORDER", nil, 1)
+      self.spanTextures[index] = texture
+    end
+    -- Whichever way round the board is, the corner to draw from is the one nearest its own
+    local x, y = self:OffsetOf(span.square)
+    local farX, farY = self:OffsetOf(span.square + span.columns - 1 + (span.rows - 1) * self.columns)
+    texture:SetTexture(self.spanTextureFor(span.key, pixels))
+    if span.upright then
+      texture:SetTexCoord(1, 0, 0, 0, 1, 1, 0, 1)
+    else
+      texture:SetTexCoord(0, 1, 0, 1)
+    end
+    texture:SetAlpha(span.alpha or 1)
+    texture:ClearAllPoints()
+    texture:SetPoint("TOPLEFT", math.min(x, farX), -math.min(y, farY))
+    texture:SetSize(span.columns * self.cell, span.rows * self.cell)
+    texture:Show()
+  end
+  for index = #self.spans + 1, #self.spanTextures do
+    self.spanTextures[index]:Hide()
+  end
+end
 
 function Board:refreshPieces()
   local pixels = self:pixels()
@@ -511,6 +600,14 @@ function Board:SetPieces(pieces, textureFor)
   self:refreshMarks()
 end
 
+--- Lays things across several squares of a grid, under the pieces
+--- @param spans BoardSpan[] Kept, not copied
+--- @param textureFor fun(key: any, pixels: number): string Texture for one whose squares are drawn at this many screen pixels
+function Board:SetSpans(spans, textureFor)
+  self.spans, self.spanTextureFor = spans, textureFor
+  self:refreshSpans()
+end
+
 --- Writes on squares, over whatever stands there: how many pieces a pile is of, say
 --- @param labels table<number, string|number> Text by square. Copied, the caller can reuse the table
 function Board:SetLabels(labels)
@@ -555,6 +652,7 @@ function Board:SetEnabled(enabled)
     self:cancelDrag()
     self:Select(nil)
     self.hover:Hide()
+    self:leave()
   end
   self:refreshMarks()
 end
@@ -646,6 +744,16 @@ end
 -----------------------------
 -- Mouse
 -----------------------------
+
+--- The cursor is no longer over any square the game should know about
+function Board:leave()
+  if self.over ~= nil then
+    self.over = nil
+    if self.input and self.input.onHover then
+      self.input.onHover(nil)
+    end
+  end
+end
 
 --- Puts a carried piece back without moving it
 function Board:cancelDrag()
@@ -803,6 +911,12 @@ function Board:onUpdate(elapsed)
   -- Light up the square under the cursor when clicking or dropping there would do something
   local input = self.input
   local over = self:SquareAt(x, y)
+  if over ~= self.over then
+    self.over = over
+    if input.onHover then
+      input.onHover(over)
+    end
+  end
   local useful = false
   if over then
     if self.drag and self.drag.carried then

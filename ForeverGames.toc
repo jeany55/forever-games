@@ -29,6 +29,7 @@ Games\Checkers.lua
 Games\ChineseCheckers.lua
 Games\Backgammon.lua
 Games\CrazyEights.lua
+Games\Battleship.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua

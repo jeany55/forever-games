@@ -20,6 +20,7 @@ local ENGINE_FILES = {
   "Games/ChineseCheckers.lua",
   "Games/Backgammon.lua",
   "Games/CrazyEights.lua",
+  "Games/Battleship.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -1772,7 +1773,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,checkers,chinesecheckers", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,checkers,chinesecheckers,battleship", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
@@ -3923,6 +3924,352 @@ function tests.WindowTurnsTheCardsOverWhenCrazyEightsIsOver()
   world:Deliver()
   equal("finished", first.matches[id].status)
   equal(0, #backsOnScreen(), "no secrets once the game is over")
+end
+
+-----------------------------
+-- Battleship
+-----------------------------
+
+-- A fleet along the left edge, a ship to a row from the bottom, and one down the right edge, a
+-- ship to a column
+local FLEET_ROWS, FLEET_COLUMNS = "a1h.a2h.a3h.a4h.a5h", "j1v.i1v.h1v.g1v.f1v"
+
+function tests.BattleshipBeginsWithBothFleets()
+  local private = loadEngine()
+  local game = private.Games.Get("battleship")
+  local state = game.newState(2, private.Random.New(1))
+  equal(1, game.turn(state))
+  equal("not_your_turn", select(2, game.validate(state, 2, FLEET_COLUMNS)))
+  equal("invalid_move", select(2, game.validate(state, 1, "a1")), "no firing before the fleets are down")
+
+  local wrong = {
+    ["a1h.a2h.a3h.a4h"] = "a ship short",
+    ["a1h.a2h.a3h.a4h.a5h.a6h"] = "a ship too many",
+    ["g1h.a2h.a3h.a4h.a5h"] = "a carrier sticking out over the edge",
+    ["a7v.a2h.a3h.a4h.a5h"] = "and over the top",
+    ["a1h.a1v.a3h.a4h.a5h"] = "two ships on one square",
+    ["a1h.a2h.a3h.a4h.a11h"] = "a square there isn't",
+    ["a1h.a2h.a3h.a4h.a05h"] = "a square written another way",
+    ["a1h.a2h.a3h.a4h.a5x"] = "a ship lying no way at all",
+    ["a1h.a2h.a3h.a4h.a5h."] = "something after the last ship",
+  }
+  for move, why in pairs(wrong) do
+    equal(false, (game.validate(state, 1, move)), why)
+  end
+
+  equal(true, (game.validate(state, 1, "f1h.g2h.h3h.h4h.i5h")), "right up to the edge is fine")
+  local event = game.apply(state, 1, FLEET_ROWS)
+  equal(true, event.placed)
+  equal(nil, event.square, "where a fleet lies is nobody else's business")
+  equal(2, game.turn(state))
+  equal(nil, game.result(state))
+  game.apply(state, 2, FLEET_COLUMNS)
+  equal(1, game.turn(state), "whoever put their fleet down first fires first")
+  equal(5, state.afloat[1])
+  equal(1, state.decks[1][4], "the carrier is five long")
+  equal(nil, state.decks[1][5])
+  equal(1, state.decks[2][49], "and stands four squares up from j1")
+  equal(5, state.decks[2][15])
+  equal("invalid_move", select(2, game.validate(state, 1, FLEET_ROWS)), "a fleet is put down once")
+end
+
+function tests.BattleshipShotsHitMissAndSink()
+  local state, game, events = gameAfter("battleship", FLEET_ROWS .. " " .. FLEET_COLUMNS .. " f1 f5 a10")
+  equal(true, events[3].hit)
+  equal(2, events[3].target)
+  equal(5, events[3].square)
+  equal(nil, events[3].sunk)
+  equal("hit", state.shots[2][5])
+  equal(false, events[4].hit, "the sea of the one fired at is what counts, not the shooter's own")
+  equal("miss", state.shots[1][45])
+  equal(true, events[5].hit == false and state.shots[2][90] == "miss")
+  equal(2, game.turn(state))
+
+  equal("already_fired", select(2, game.validate(state, 2, "f5")))
+  equal(true, (game.validate(state, 2, "f1")), "what the other player fired at is still open to this one")
+  equal("invalid_move", select(2, game.validate(state, 2, "k1")))
+  equal("invalid_move", select(2, game.validate(state, 2, "a0")))
+  equal("invalid_move", select(2, game.validate(state, 2, "a11")))
+  equal("not_your_turn", select(2, game.validate(state, 1, "f2")))
+
+  game.apply(state, 2, "j10")
+  local sinking = game.apply(state, 1, "f2")
+  equal(5, sinking.sunk, "both squares of the destroyer")
+  equal(true, state.fleets[2][5].sunk)
+  equal(4, state.afloat[2])
+  equal(5, state.afloat[1])
+  equal(nil, game.result(state))
+end
+
+function tests.BattleshipIsWonBySinkingTheWholeFleet()
+  local shots, wide = {}, {}
+  for column, length in ipairs({ 2, 3, 3, 4, 5 }) do
+    for row = 1, length do
+      shots[#shots + 1] = string.char(101 + column) .. row
+    end
+  end
+  for index = 0, 15 do
+    wide[#wide + 1] = string.char(97 + index % 10) .. (6 + math.floor(index / 10))
+  end
+  local moves = { FLEET_ROWS, FLEET_COLUMNS }
+  for index = 1, 16 do
+    moves[#moves + 1] = shots[index]
+    moves[#moves + 1] = wide[index]
+  end
+  local state, game = gameAfter("battleship", table.concat(moves, " "))
+  equal(nil, game.result(state))
+  equal(1, state.afloat[2])
+  local last = game.apply(state, 1, shots[17])
+  equal(1, last.sunk)
+  equal(1, game.result(state).winner)
+  equal(5, state.afloat[1], "not a scratch on the winner")
+end
+
+function tests.BattleshipShowsAPlayerOnlyTheShipsThatWentDown()
+  local state, game = gameAfter("battleship", FLEET_ROWS .. " " .. FLEET_COLUMNS .. " f1 a1 f2 j10 j1")
+  local seen = game.visible(state, 1)
+  equal(0, seen.fleets[1][1].square, "their own fleet, all of it")
+  equal(1, seen.fleets[1][1].hits)
+  equal(1, seen.decks[1][0])
+  equal(5, seen.fleets[2][5].square, "of the other one, the destroyer that went down")
+  equal(5, seen.decks[2][15])
+  for index = 1, 4 do
+    equal(nil, seen.fleets[2][index].square, "not where the rest of them are")
+    equal(nil, seen.fleets[2][index].hits, "nor which of them was hit")
+    equal(false, seen.fleets[2][index].sunk)
+  end
+  equal(5, seen.fleets[2][1].size, "how long each is, is no secret")
+  equal(nil, seen.decks[2][9])
+  equal("hit", seen.shots[2][9], "what a shot did, is told")
+  equal(4, seen.afloat[2])
+
+  local theirs = game.visible(state, 2)
+  equal(nil, theirs.fleets[1][1].square)
+  equal(nil, next(theirs.decks[1]))
+  equal(9, theirs.fleets[2][1].square)
+
+  -- What a player sees is a copy: nothing done to it reaches the game
+  seen.shots[2][50], seen.fleets[1][1].square = "hit", 77
+  equal(nil, state.shots[2][50])
+  equal(0, state.fleets[1][1].square)
+end
+
+function tests.BattleshipMatchBetweenTwoPlayers()
+  local world, seated, id = startedGame("battleship")
+  local Match = seated[2].private.Match
+  assert(seated[1].session:Move(id, FLEET_ROWS))
+  world:Deliver()
+  equal(nil, Match.Visible(seated[2].matches[id]).fleets[1][1].square, "the fleet that was sent is not shown to whoever it was sent to")
+  equal(false, (seated[2].session:Move(id, "a1")))
+  assert(seated[2].session:Move(id, FLEET_COLUMNS))
+  world:Deliver()
+
+  -- A shot is answered on the spot, the other player doesn't have to be there for it
+  seated[2].online = false
+  assert(seated[1].session:Move(id, "j1"))
+  local mine = seated[1].private.Match.Visible(seated[1].matches[id])
+  equal("hit", mine.shots[2][9])
+  equal(nil, mine.fleets[2][1].square)
+  seated[2].online = true
+  world:Tick(60)
+  equal(logOf(seated[1], id), logOf(seated[2], id))
+  equal("hit", Match.Visible(seated[2].matches[id]).shots[2][9])
+
+  -- Once the game is over there is nothing left to hide
+  assert(seated[2].session:Resign(id))
+  world:Deliver()
+  equal(9, seated[1].private.Match.Visible(seated[1].matches[id]).fleets[2][1].square)
+end
+
+--- Makes the client's dice fall a given way, for a fleet that is put down at random
+--- @param rolls number[]
+--- @return fun() restore Gives the dice back
+local function riggedDice(rolls)
+  local real, rolled = math.random, 0
+  math.random = function(...)
+    rolled = rolled + 1
+    return rolls[rolled] or real(...)
+  end
+  return function()
+    math.random = real
+  end
+end
+
+--- The two seas on screen: the player's own and the other player's
+--- @return table fleet, table waters
+local function seasOnScreen()
+  local found = Client.Find(function(widget)
+    return widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget:IsVisible()
+  end)
+  assert(#found == 2, "Expected two seas on screen, found " .. #found)
+  return found[1], found[2]
+end
+
+--- @param sea table
+--- @param kind string "Fleet" for ships, "hit" or "miss" for pegs
+--- @return number How many of them are drawn on a sea
+local function countOn(sea, kind)
+  return #Client.Find(function(widget)
+    local drawn = widget.kind == "Texture" and widget.parent == sea and widget.shown
+    return drawn and tostring(widget.texture):find(kind, 1, true) ~= nil
+  end)
+end
+
+--- Starts a game of Battleship where the player with the window has their fleet along the left
+--- edge to begin with, and is the first to put it down
+--- @return World, table first, table second, string id
+local function battleshipOnScreen()
+  -- Each ship lying across (2), on the first square of a row
+  local restore = riggedDice({ 2, 1, 2, 11, 2, 21, 2, 31, 2, 41 })
+  local world, first, second, id = gameOnScreen("battleship")
+  restore()
+  return world, first, second, id
+end
+
+function tests.WindowArrangesAFleetAndDeploysIt()
+  local world, first, second, id = battleshipOnScreen()
+  local fleet, waters = seasOnScreen()
+  assert(fleet.width > waters.width * 2, "the sea the fleet is arranged on is the large one")
+  assert(fleet.width >= 10 * 28, "and makes use of the window, got " .. fleet.width)
+  equal(5, countOn(fleet, "Fleet"))
+  equal(0, countOn(waters, "Fleet"))
+  local deploy, rotate = Client.Button("battleship_deploy"), Client.Button("battleship_rotate")
+  equal(true, deploy.enabled)
+  equal(false, rotate.enabled, "nothing in hand to turn")
+
+  -- A click picks the carrier up. Standing up it doesn't fit beside the battleship
+  clickSquare(fleet, 0, 0, 10)
+  equal(5, countOn(fleet, "Fleet"), "in hand, it is seen where it would go")
+  Client.cursor = { -5, -5 }
+  fleet:Fire("OnUpdate", 0.02)
+  equal(4, countOn(fleet, "Fleet"), "which is nowhere with the cursor off the sea")
+  equal(false, deploy.enabled, "not with a ship still in hand")
+  equal(true, rotate.enabled)
+  equal(true, says("battleship_place"))
+  clickSquare(fleet, 3, 0, 10, "RightButton")
+  clickSquare(fleet, 3, 0, 10)
+  equal(false, deploy.enabled, "d1 and up runs into the battleship on d2")
+
+  -- Pointing at the top row, it goes as far up as it fits
+  clickSquare(fleet, 9, 9, 10)
+  equal(true, deploy.enabled)
+  equal(false, rotate.enabled)
+  equal("", logOf(first, id), "nothing is sent while the fleet is being arranged")
+  deploy:Fire("OnClick")
+  equal("j6v.a2h.a3h.a4h.a5h", logOf(first, id))
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "battleship_deploy" and widget:IsVisible()
+  end), "and that is that")
+  equal(true, says("battleship_waiting"))
+  equal(5, countOn(fleet, "Fleet"))
+
+  -- A click on a ship does nothing any more
+  clickSquare(fleet, 0, 1, 10)
+  equal(5, countOn(fleet, "Fleet"))
+  world:Deliver()
+  equal("j6v.a2h.a3h.a4h.a5h", logOf(second, id))
+end
+
+function tests.WindowDrawsUpAnotherFleetAtRandom()
+  local world, first, second, id = battleshipOnScreen()
+  local game = first.private.Games.Get("battleship")
+  for _ = 1, 20 do
+    Client.Button("battleship_random"):Fire("OnClick")
+  end
+  Client.Button("battleship_deploy"):Fire("OnClick")
+  local log = logOf(first, id)
+  assert(log ~= "" and log ~= FLEET_ROWS, "another fleet than the one it began with, got " .. log)
+  equal(true, (game.validate(game.newState(2), 1, log)))
+end
+
+function tests.WindowLetsTheSecondPlayerArrangeWhileWaiting()
+  local world = World.New()
+  world.seed = 1
+  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(first.session:Invite("Bob-Realm", "battleship"))
+  world:Deliver()
+  assert(second.session:Accept(match.id))
+  world:Deliver()
+  local restore = riggedDice({ 2, 1, 2, 11, 2, 21, 2, 31, 2, 41 })
+  openWindow(second).Open(match.id)
+  restore()
+
+  local fleet = seasOnScreen()
+  local deploy = Client.Button("battleship_deploy")
+  equal(false, deploy.enabled, "the other player sends theirs first")
+  equal(true, says("battleship_ready_early"))
+  clickSquare(fleet, 0, 4, 10)
+  clickSquare(fleet, 8, 9, 10)
+  equal(false, deploy.enabled)
+
+  assert(first.session:Move(match.id, FLEET_COLUMNS))
+  world:Deliver()
+  equal(true, deploy.enabled)
+  deploy:Fire("OnClick")
+  equal(FLEET_COLUMNS .. ",a1h.a2h.a3h.a4h.i10h", logOf(second, match.id), "arranged the way it was left")
+end
+
+function tests.WindowFiresAtTheOtherSea()
+  local world, first, second, id = battleshipOnScreen()
+  local fleet, waters = seasOnScreen()
+  Client.Button("battleship_deploy"):Fire("OnClick")
+  world:Deliver()
+  clickSquare(waters, 0, 0, 10)
+  equal(FLEET_ROWS, logOf(first, id), "no firing until both fleets are down")
+  assert(second.session:Move(id, FLEET_COLUMNS))
+  world:Deliver()
+  assert(waters.width > fleet.width * 2, "now the sea to fire at is the large one")
+  equal(true, says("status_your_turn"))
+
+  -- f1 is the stern of their destroyer
+  clickSquare(waters, 5, 0, 10)
+  equal(FLEET_ROWS .. "," .. FLEET_COLUMNS .. ",f1", logOf(first, id))
+  equal("dieThrow", Client.sounds[#Client.sounds])
+  equal(1, countOn(waters, "hit"))
+  equal(true, says("battleship_you_hit"))
+  equal(0, countOn(waters, "Fleet"), "a hit doesn't show the ship")
+  clickSquare(waters, 5, 1, 10)
+  equal(3, #first.matches[id].log, "not on the other player's turn")
+
+  world:Deliver()
+  assert(second.session:Move(id, "j10"))
+  world:Deliver()
+  equal("cardSlide", Client.sounds[#Client.sounds])
+  equal(1, countOn(fleet, "miss"))
+  equal(true, says("battleship_they_missed"))
+
+  clickSquare(waters, 5, 0, 10)
+  equal(4, #first.matches[id].log, "nor at a square that was fired at before")
+  clickSquare(waters, 5, 1, 10)
+  equal(5, #first.matches[id].log)
+  equal(2, countOn(waters, "hit"))
+  equal(1, countOn(waters, "Fleet"), "a ship that went down is there to see")
+  equal(true, says("battleship_you_sank"))
+end
+
+function tests.WindowChangesTheSeasOverAndShowsTheOtherFleetInTheEnd()
+  local world, first, second, id = battleshipOnScreen()
+  local fleet, waters = seasOnScreen()
+  Client.Button("battleship_deploy"):Fire("OnClick")
+  world:Deliver()
+  assert(second.session:Move(id, FLEET_COLUMNS))
+  world:Deliver()
+  assert(waters.width > fleet.width)
+
+  -- A click on the small one, which a button lies over
+  local swap = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == nil and widget.scripts.OnClick and widget.scripts.OnEnter and widget:IsVisible()
+  end)
+  equal(1, #swap)
+  swap[1]:Fire("OnClick")
+  assert(fleet.width > waters.width, "the player's own sea, for a closer look")
+  swap[1]:Fire("OnClick")
+  assert(waters.width > fleet.width)
+
+  equal(0, countOn(waters, "Fleet"))
+  assert(second.session:Resign(id))
+  world:Deliver()
+  equal(5, countOn(waters, "Fleet"), "no secrets once the game is over")
 end
 
 -----------------------------

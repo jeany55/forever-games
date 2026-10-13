@@ -16,7 +16,8 @@
 --
 -- Games of chance are given their dice and shuffles by the engine (Engine/Random.lua), see
 -- Games/Backgammon.lua. Games where a player holds something the others don't see say what each
--- of them may know with `visible`, see Games/CrazyEights.lua.
+-- of them may know with `visible`, see Games/CrazyEights.lua, and Games/Battleship.lua for
+-- something a player chose themselves instead of being dealt.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
