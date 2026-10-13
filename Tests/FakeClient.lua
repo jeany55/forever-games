@@ -66,6 +66,22 @@ function methods:GetTop()
   return self.height
 end
 
+function methods:GetBottom()
+  return 0
+end
+
+function methods:GetCenter()
+  return self.width / 2, self.height / 2
+end
+
+function methods:SetAlpha(alpha)
+  self.alpha = alpha
+end
+
+function methods:GetAlpha()
+  return self.alpha or 1
+end
+
 function methods:GetEffectiveScale()
   return 1
 end

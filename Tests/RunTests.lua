@@ -3851,6 +3851,71 @@ function tests.WindowPlaysCrazyEights()
   assert(played > 0, "at least one card should have been played by clicking it")
 end
 
+function tests.WindowDealsCrazyEightsOut()
+  local world, first, second, id, MainFrame = gameOnScreen("crazyeights")
+  local state = first.private.Match.State(first.matches[id])
+  local hand, backs, deck = handOnScreen(), backsOnScreen(), deckOnScreen()
+  local piles = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.card == state.pile[1] and widget.SetPlayable ~= nil
+  end)
+  equal(1, #piles)
+
+  --- @param cards table[]
+  --- @return number How many of them can be seen
+  local function arrived(cards)
+    local count = 0
+    for _, card in ipairs(cards) do
+      count = count + (card:GetAlpha() > 0 and 1 or 0)
+    end
+    return count
+  end
+  equal(0, arrived(hand), "nobody holds anything before the deal")
+  equal(0, arrived(backs))
+  equal(0, arrived(piles))
+  equal(tostring(#state.deck + 14), tostring(deck.count:GetText()), "all but the first card are still in the deck")
+
+  -- A card at a time, the player's hand and the opponent's filling up together
+  local flights = Client.Find(function(widget)
+    return widget.flights ~= nil and widget:IsVisible()
+  end)
+  equal(1, #flights)
+  local partly = false
+  for _ = 1, 100 do
+    flights[1]:Fire("OnUpdate", 0.05)
+    local mine, theirs = arrived(hand), arrived(backs)
+    assert(math.abs(mine - theirs) <= 1, "dealt in turn, not a hand at a time: " .. mine .. " and " .. theirs)
+    partly = partly or (mine > 0 and mine < 7)
+    if mine < 7 then
+      equal(0, arrived(piles), "the card for the pile is turned up last")
+    end
+  end
+  equal(true, partly, "it takes a while")
+  equal(7, arrived(hand))
+  equal(7, arrived(backs))
+  equal(1, arrived(piles))
+  equal(tostring(#state.deck), tostring(deck.count:GetText()))
+  equal("cardSlide", Client.sounds[#Client.sounds])
+  equal(false, flights[1].flights:Busy())
+
+  -- Once is enough: looking at the game again doesn't deal it again
+  MainFrame.Select(nil)
+  MainFrame.Select(id)
+  equal(7, arrived(handOnScreen()))
+  equal(false, flights[1].flights:Busy())
+
+  -- Neither does a game that someone has already played in
+  local other = assert(first.session:Invite("Bob-Realm", "crazyeights"))
+  world:Deliver()
+  assert(second.session:Accept(other.id))
+  world:Deliver()
+  local mover = first.private.Match.IsMyTurn(other) and first or second
+  local game = mover.private.Games.Get("crazyeights")
+  assert(mover.session:Move(other.id, crazyEightsMove(game, mover.private.Match.State(mover.matches[other.id]))))
+  world:Deliver()
+  MainFrame.Select(other.id)
+  equal(false, flights[1].flights:Busy())
+end
+
 function tests.WindowTurnsTheCardsOverWhenCrazyEightsIsOver()
   local world, first, second, id = gameOnScreen("crazyeights")
   equal(7, #backsOnScreen())

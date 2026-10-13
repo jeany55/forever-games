@@ -2,8 +2,9 @@
 --  Cards
 --------------------------
 -- Playing cards, for any game played with them: what a card looks like, a row of them that
--- fans out to fit the room it has and lets the player pick one, a single card for a deck or a
--- pile, and cards that fly from one place to another.
+-- fans out to fit the room it has, a hand that is such a row held in an arc for the player to
+-- pick from, a single card for a deck or a pile, and cards that fly from one place to another:
+-- one at a time as they are played, or dealt round the table and turned over as they land.
 --
 -- Nothing here knows any rules. A card is the two characters games write it as, rank and then
 -- suit ("QH", "TS"), and anything else is a card seen from the back. See Games/CrazyEights.lua.
@@ -29,8 +30,15 @@ local SPREAD = 0.7
 local LIFT, HOVER_LIFT = 0.1, 0.16
 -- A card that can't be picked while others can
 local DIMMED = { 0.55, 0.55, 0.6 }
+-- How much higher the middle of a hand is held than its ends, as a fraction of a card's height
+local ARC = 0.08
 -- Seconds a card takes to fly somewhere
 local FLIGHT = 0.28
+-- Seconds a card that is dealt takes, and from one card leaving the deck to the next. A big
+-- deal is hurried up so that it never takes much longer than this in all
+local DEAL_FLIGHT, DEAL_GAP, DEAL_TIME = 0.36, 0.1, 1.8
+-- The part of its flight a card spends turning over, and how narrow it gets edge on
+local TURN_FROM, TURN_TO, TURN_EDGE = 0.25, 0.8, 0.06
 
 --- @param card string
 --- @return string
@@ -98,6 +106,15 @@ function Cards.Row(parent)
   return row
 end
 
+--- The player's own cards: a row held the way a hand of cards is, in a shallow arc
+--- @param parent Frame
+--- @return CardRow
+function Cards.Hand(parent)
+  local hand = Cards.Row(parent)
+  hand.arc = ARC
+  return hand
+end
+
 --- @param row CardRow
 --- @param index number
 --- @return Button
@@ -133,16 +150,19 @@ end
 function Row:place(index)
   local button = self.cards[index]
   local count = #self.held
-  local cardHeight = self.height / (1 + HOVER_LIFT)
+  local arc = self.arc or 0
+  local cardHeight = self.height / (1 + HOVER_LIFT + arc)
   local cardWidth = cardHeight * Cards.RATIO
   local step = cardWidth * SPREAD
   if count > 1 then
     step = math.min(step, (self.width - cardWidth) / (count - 1))
   end
   local left = (self.width - (cardWidth + step * (count - 1))) / 2
-  local lift = 0
+  -- An arc is highest in the middle and falls away to both sides
+  local along = count > 1 and (index - 1) / (count - 1) * 2 - 1 or 0
+  local lift = cardHeight * arc * (1 - along ^ 2)
   if button.pickable then
-    lift = cardHeight * (button.hovered and HOVER_LIFT or LIFT)
+    lift = lift + cardHeight * (button.hovered and HOVER_LIFT or LIFT)
   end
   button:SetSize(cardWidth, cardHeight)
   button:ClearAllPoints()
@@ -150,7 +170,7 @@ function Row:place(index)
 end
 
 --- How much room the row has. Cards are as high as that allows, less what one that is pointed
---- at rises by
+--- at rises by and what the arc of a hand takes
 --- @param width number
 --- @param height number
 function Row:SetSize(width, height)
@@ -215,6 +235,7 @@ Flights.__index = Flights
 function Cards.Flights(parent)
   --- @type CardFlights
   local flights = setmetatable({ frame = CreateFrame("Frame", nil, parent), flying = {}, spare = {} }, Flights)
+  flights.frame.flights = flights
   flights.frame:SetAllPoints()
   flights.frame:SetFrameLevel(parent:GetFrameLevel() + 40)
   flights.frame:SetScript("OnUpdate", function(_, elapsed)
@@ -244,50 +265,111 @@ end
 --- @param to Region
 --- @param width number How big the card is on the way
 --- @param height number
-function Flights:Fly(card, fromX, fromY, to, width, height)
+--- @param options { delay: number?, seconds: number?, face: string?, onStart: fun()? }? Seconds to wait before it sets out, how long it takes, a card it turns over into on the way, and something to do as it leaves
+function Flights:Fly(card, fromX, fromY, to, width, height, options)
   local toX, toY = self:Spot(to)
   if not fromX or not toX then
     return
   end
+  options = options or {}
   local flight = table.remove(self.spare) or { texture = self.frame:CreateTexture(nil, "OVERLAY") }
   flight.fromX, flight.fromY, flight.toX, flight.toY = fromX, fromY, toX, toY
-  flight.elapsed, flight.to = 0, to
+  flight.card, flight.face, flight.turned = card, options.face, false
+  flight.width, flight.height = width, height
+  flight.seconds, flight.onStart = options.seconds or FLIGHT, options.onStart
+  -- Not on its way yet for as long as this is below nothing
+  flight.elapsed, flight.started, flight.to = -(options.delay or 0), false, to
   flight.texture:SetTexture(Cards.Texture(card))
   flight.texture:SetSize(width, height)
-  flight.texture:Show()
+  flight.texture:Hide()
   to:SetAlpha(0)
   self.flying[#self.flying + 1] = flight
   self:advance(0)
 end
 
+--- Deals cards out of a deck, one after the other. Each is dealt face down and may turn over
+--- as it lands
+--- @param deck Region
+--- @param stops { to: Region, face: string? }[] Where each card goes, in the order they are dealt, and what it turns out to be
+--- @param width number How big a card is on the way
+--- @param height number
+--- @param onDealt fun(index: number)? Called as each card leaves the deck
+function Flights:Deal(deck, stops, width, height, onDealt)
+  local x, y = self:Spot(deck)
+  local gap = math.min(DEAL_GAP, DEAL_TIME / math.max(1, #stops))
+  for index, stop in ipairs(stops) do
+    self:Fly("back", x, y, stop.to, width, height, {
+      delay = (index - 1) * gap,
+      seconds = DEAL_FLIGHT,
+      face = stop.face,
+      onStart = onDealt and function()
+        onDealt(index)
+      end,
+    })
+  end
+end
+
+--- Whether any card is still on its way
+--- @return boolean
+function Flights:Busy()
+  return #self.flying > 0
+end
+
+--- @param flight table
+function Flights:land(flight)
+  flight.texture:Hide()
+  flight.to:SetAlpha(1)
+  self.spare[#self.spare + 1] = flight
+end
+
 --- Lands every card that is still on its way
 function Flights:Stop()
   for index = #self.flying, 1, -1 do
-    local flight = table.remove(self.flying, index)
-    flight.texture:Hide()
-    flight.to:SetAlpha(1)
-    self.spare[#self.spare + 1] = flight
+    self:land(table.remove(self.flying, index))
   end
 end
 
 --- @param elapsed number
 function Flights:advance(elapsed)
-  for index = #self.flying, 1, -1 do
+  -- In the order they were sent off, so that what each one does as it leaves happens in order
+  local index = 1
+  while self.flying[index] do
     local flight = self.flying[index]
     flight.elapsed = flight.elapsed + elapsed
-    local progress = flight.elapsed / FLIGHT
+    local progress = flight.elapsed / flight.seconds
     if progress >= 1 then
       table.remove(self.flying, index)
-      flight.texture:Hide()
-      flight.to:SetAlpha(1)
-      self.spare[#self.spare + 1] = flight
+      if not flight.started and flight.onStart then
+        flight.onStart()
+      end
+      self:land(flight)
     else
-      -- Fast at first, settling as it arrives
-      local left = (1 - progress) ^ 3
-      local x = flight.toX + (flight.fromX - flight.toX) * left
-      local y = flight.toY + (flight.fromY - flight.toY) * left
-      flight.texture:ClearAllPoints()
-      flight.texture:SetPoint("CENTER", self.frame, "BOTTOMLEFT", x, y)
+      index = index + 1
+      if progress >= 0 then
+        if not flight.started then
+          flight.started = true
+          flight.texture:Show()
+          if flight.onStart then
+            flight.onStart()
+          end
+        end
+        -- Fast at first, settling as it arrives
+        local left = (1 - progress) ^ 3
+        local x = flight.toX + (flight.fromX - flight.toX) * left
+        local y = flight.toY + (flight.fromY - flight.toY) * left
+        flight.texture:ClearAllPoints()
+        flight.texture:SetPoint("CENTER", self.frame, "BOTTOMLEFT", x, y)
+
+        if flight.face then
+          -- Turning over in the air: narrower until it is edge on, then wider again showing its face
+          local turn = math.max(0, math.min(1, (progress - TURN_FROM) / (TURN_TO - TURN_FROM)))
+          if turn >= 0.5 and not flight.turned then
+            flight.turned = true
+            flight.texture:SetTexture(Cards.Texture(flight.face))
+          end
+          flight.texture:SetWidth(flight.width * math.max(TURN_EDGE, math.abs(math.cos(turn * math.pi))))
+        end
+      end
     end
   end
 end

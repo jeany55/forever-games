@@ -32,7 +32,8 @@ which is for up to six, and Crazy Eights, which is too.
   the points it can reach are marked, by one die or by both. Put your turn together a checker at
   a time, **Undo** or a right click takes the last one back, and nothing is sent until you
   press **Play**. A roll you can't play at all is skipped by itself
-- In Crazy Eights the cards you can play stand out of your hand, click one to play it. An eight
+- In Crazy Eights a new game is dealt out in front of you. The cards you can play stand out of
+  your hand, click one to play it. An eight
   asks which suit comes next. Click the deck to draw instead, and if what you drew can be played
   the choice is yours: play, or **Pass**. Everyone else's cards are turned over when the game ends
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
@@ -81,7 +82,8 @@ nothing: that catches mistakes in what the window does, not in how it looks.
     of holes wherever the game wants them instead of a grid, that can be turned to face each
     player, with piles of pieces counted where they get too high to draw
   - `Cards.lua` playing cards: a hand that fans out to fit and lets the player pick a card, a
-    card for a deck or a pile, and cards that fly from one to the other
+    card for a deck or a pile, and cards that fly from one to the other, dealt round the table
+    and turned over in the air
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`

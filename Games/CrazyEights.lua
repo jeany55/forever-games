@@ -267,6 +267,9 @@ end
 -- others' along the top as so many backs, and the deck and the pile between them. A card that
 -- can be played stands out of the hand, clicking it plays it. An eight asks for a suit first,
 -- and playing something else instead is how the player thinks better of it.
+--
+-- A game the player opens before anyone has played is dealt out in front of them: a card at a
+-- time round the table, their own turning face up as they land, and one turned up for the pile.
 
 local SUIT_ORDER = { S = 1, H = 2, D = 3, C = 4 }
 -- The most players there are other than the local one
@@ -279,6 +282,10 @@ local LABEL_HEIGHT = 18
 local FELT = { 0.06, 0.24, 0.15, 0.85 }
 local BUTTON_WIDTH, BUTTON_HEIGHT = 90, 24
 local PLAY_SOUND, DRAW_SOUND = "cardPlace", "cardSlide"
+-- A deal of more cards than this is heard every other card, not every one
+local QUIET_DEAL = 16
+-- Matches the player has watched being dealt, by id: once is enough
+local dealt = {}
 
 --- @class CrazyEightsView: GameViewObject
 --- @field stage Frame
@@ -294,6 +301,7 @@ local PLAY_SOUND, DRAW_SOUND = "cardPlace", "cardSlide"
 --- @field flights CardFlights
 --- @field view GameView? What was last asked for
 --- @field pending string? The eight the player is choosing a suit for
+--- @field dealing number? Cards that have yet to leave the deck, while the game is being dealt
 local View = {}
 View.__index = View
 
@@ -332,7 +340,7 @@ local function createView(stage)
   felt:SetAllPoints()
   felt:SetColorTexture(unpack(FELT))
 
-  self.hand = Cards.Row(stage)
+  self.hand = Cards.Hand(stage)
   self.hand.frame:SetPoint("BOTTOM")
   self.hand.onPick = function(card)
     if parts(card) == WILD then
@@ -506,7 +514,7 @@ function View:draw()
   self.pile:Set(state.pile[#state.pile])
   self.under:Set(state.pile[#state.pile - 1])
   self.deck:Set(#state.deck > 0 and HIDDEN or nil)
-  self.deck.count:SetText(#state.deck)
+  self.deck.count:SetText(#state.deck + (self.dealing or 0))
   self.deck:SetPlayable(view.canMove and not state.drew and canDraw(state))
   self.follow.icon:SetTexture(private.Cards.Suit(state.suit))
 
@@ -528,6 +536,70 @@ function View:draw()
   end
 end
 
+--- The cards of whoever sits in a seat, as they are on the table
+--- @param seat number
+--- @return CardRow
+function View:rowOf(seat)
+  local view = self.view
+  for index = 1, view.state.seats - 1 do
+    if seatAt(view.state, view.seat, index) == seat then
+      return self.others[index].row
+    end
+  end
+  return self.hand
+end
+
+--- Whether nobody has played yet in the position on the table
+--- @return boolean
+function View:isOpening()
+  local view = self.view
+  for index = 1, view.ply do
+    if view.events[index].kind == "move" then
+      return false
+    end
+  end
+  return view.live and view.match.status == "active"
+end
+
+--- Deals the game out: a card to everyone in turn until the hands are full, the player's own
+--- face up, and then the card that starts the pile. The table already holds all of it, each
+--- card just isn't seen until it has arrived
+function View:deal()
+  local view = self.view
+  --- @type CrazyEightsState
+  local state = view.state
+  local stops = {}
+  for round = 1, #state.hands[view.seat] do
+    for seat = 1, state.seats do
+      if seat == view.seat then
+        -- Hands are kept in the order they were dealt, and shown sorted
+        local card = state.hands[seat][round]
+        stops[#stops + 1] = { to = self.hand:Find(card), face = card }
+      else
+        stops[#stops + 1] = { to = self:rowOf(seat).cards[round] }
+      end
+    end
+  end
+  stops[#stops + 1] = { to = self.pile, face = state.pile[#state.pile] }
+
+  local every = #stops > QUIET_DEAL and 2 or 1
+  self.dealing = #stops
+  self.deck.count:SetText(#state.deck + #stops)
+  self.flights:Deal(self.deck, stops, self.cardWidth, self.cardHeight, function(index)
+    -- The deck gets thinner as the cards leave it
+    self.dealing = index < #stops and #stops - index or nil
+    self.deck.count:SetText(#state.deck + #stops - index)
+    if index % every == 0 then
+      private.Widgets.PlaySound(DRAW_SOUND)
+    end
+  end)
+  if not self.flights:Busy() then
+    -- The table has no place on screen yet to deal across: the cards are simply there
+    self.dealing = nil
+    self.deck.count:SetText(#state.deck)
+  end
+end
+
 --- Shows a move being made: the card played flies to the pile, a card drawn out of the deck
 --- @param event CrazyEightsEvent
 --- @param fromX number? Where the card set out from, when it was in the player's own hand
@@ -536,12 +608,7 @@ end
 function View:animate(event, fromX, fromY, held)
   local view, flights = self.view, self.flights
   local mine = event.seat == view.seat
-  local row = self.hand
-  for index = 1, view.state.seats - 1 do
-    if seatAt(view.state, view.seat, index) == event.seat then
-      row = self.others[index].row
-    end
-  end
+  local row = self:rowOf(event.seat)
 
   if event.card then
     if not fromX then
@@ -571,6 +638,7 @@ function View:Update(view)
   end
   if view.changed then
     self.flights:Stop()
+    self.dealing = nil
   end
 
   --- @type CrazyEightsEvent?
@@ -585,7 +653,10 @@ function View:Update(view)
     end
   end
   self:draw()
-  if event then
+  if view.changed and not dealt[view.match.id] and self:isOpening() then
+    dealt[view.match.id] = true
+    self:deal()
+  elseif event then
     self:animate(event, fromX, fromY, held)
   end
 end
