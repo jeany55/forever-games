@@ -12,6 +12,10 @@ local _, private = ...
 --- @field Match MatchModel
 --- @field Session Session Session class, the running instance is private.session
 --- @field session Session
+--- @field Presence Presence Presence class, the running instance is private.presence
+--- @field presence Presence
+--- @field Widgets Widgets
+--- @field Wizard Wizard
 --- @field Transport Transport
 --- @field Toast Toast
 --- @field MainFrame MainFrame

@@ -611,6 +611,8 @@ end
 private.Games.Register({
   id = "chess",
   name = L["game_chess"],
+  description = L["game_chess_description"],
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\chess",
   version = 1,
   seats = 2,
   newState = newState,

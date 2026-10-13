@@ -5,7 +5,7 @@
 -- sessions together through a fake network that can drop messages or take a player offline.
 
 local ADDON_NAME = "ForeverGames"
-local ENGINE_FILES = { "Engine/Codec.lua", "Engine/Games.lua", "Engine/Match.lua", "Engine/Session.lua", "Games/TicTacToe.lua", "Games/Chess.lua" }
+local ENGINE_FILES = { "Engine/Codec.lua", "Engine/Games.lua", "Engine/Match.lua", "Engine/Session.lua", "Engine/Presence.lua", "Games/TicTacToe.lua", "Games/Chess.lua" }
 
 -- Rendering is never exercised here
 STANDARD_TEXT_FONT = "font"
@@ -453,6 +453,118 @@ function tests.ResyncDoesNotFloodTheNetwork()
   equal("1,2,3,5,4,6,8,7,9", logOf(second, id))
   local used = #world.sent - before
   assert(used <= 30, "Resending 9 moves took " .. used .. " messages")
+end
+
+-----------------------------
+-- Presence
+-----------------------------
+
+--- A handful of players who can hear each other, some sharing a guild
+--- @param guildOf table<string, string?>
+--- @param friendsOf table<string, string[]>
+local function presenceWorld(guildOf, friendsOf)
+  local world = { clock = 5000, queue = {}, players = {}, changes = {} }
+  local Presence = loadEngine().Presence
+
+  for name in pairs(guildOf) do
+    world.changes[name] = 0
+    world.players[name] = Presence.New({
+      me = name,
+      now = function()
+        return world.clock
+      end,
+      broadcast = function(text)
+        for other, guild in pairs(guildOf) do
+          if guild and guild == guildOf[name] then
+            world.queue[#world.queue + 1] = { from = name, to = other, text = text, viaGuild = true }
+          end
+        end
+      end,
+      whisper = function(target, text)
+        world.queue[#world.queue + 1] = { from = name, to = target, text = text, viaGuild = false }
+      end,
+      friends = function()
+        return friendsOf[name] or {}
+      end,
+      onChange = function()
+        world.changes[name] = world.changes[name] + 1
+      end,
+    })
+  end
+
+  function world:Deliver()
+    local guard = 0
+    while #self.queue > 0 do
+      guard = guard + 1
+      assert(guard < 1000, "Presence messages are not settling")
+      local message = table.remove(self.queue, 1)
+      if self.players[message.to] then
+        self.players[message.to]:Handle(message.from, message.text, message.viaGuild)
+      end
+    end
+  end
+  return world
+end
+
+local function names(presence)
+  local list = {}
+  for _, player in ipairs(presence:List()) do
+    list[#list + 1] = player.name .. "=" .. player.source
+  end
+  return table.concat(list, " ")
+end
+
+function tests.PresenceFindsGuildiesAndFriends()
+  local world = presenceWorld(
+    { Alice = "Knights", Bob = "Knights", Carol = false, Dave = "Other" },
+    { Alice = { "Carol", "Bob" } }
+  )
+  world.players.Alice:Announce()
+  world:Deliver()
+
+  equal("Bob=guild Carol=friend", names(world.players.Alice))
+  equal("Alice=guild", names(world.players.Bob))
+  equal("Alice=friend", names(world.players.Carol))
+  equal("", names(world.players.Dave))
+
+  local counts = world.players.Alice:Counts()
+  equal(2, counts.total)
+  equal(1, counts.guild)
+  equal(1, counts.friend)
+  equal(2, world.changes.Alice, "one change per player found")
+end
+
+function tests.PresenceForgetsPlayersWhoGoQuiet()
+  local world = presenceWorld({ Alice = "Knights", Bob = "Knights" }, {})
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("Bob=guild", names(world.players.Alice))
+
+  -- Bob keeps answering announcements, so he stays
+  world.clock = world.clock + 6 * 60
+  world.players.Alice:Tick()
+  world:Deliver()
+  world.clock = world.clock + 6 * 60
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("Bob=guild", names(world.players.Alice))
+
+  -- Then he logs off without a word
+  world.players.Bob = nil
+  world.clock = world.clock + 12 * 60
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("", names(world.players.Alice))
+end
+
+function tests.PresenceLeavesGameMessagesAlone()
+  local world = presenceWorld({ Alice = "Knights", Bob = "Knights" }, {})
+  equal(false, world.players.Alice:Handle("Bob", "1:MOV:abc:1:1:5", false))
+  equal(true, world.players.Alice:Handle("Bob", "1:HI", true))
+  world.players.Alice:Remove("Bob")
+  equal("", names(world.players.Alice))
+  world.players.Alice:Touch("Erin")
+  equal("Erin=other", names(world.players.Alice))
 end
 
 -----------------------------

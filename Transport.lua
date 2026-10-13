@@ -9,7 +9,7 @@
 local _, private = ...
 
 --- @class TransportHandlers
---- @field onMessage fun(sender: string, text: string)
+--- @field onMessage fun(sender: string, text: string, viaGuild: boolean)
 --- @field onReachable fun(peer: string?) Messages may get through again, to this player or to everyone
 --- @field onOffline fun(peer: string)
 
@@ -41,6 +41,7 @@ end
 
 local NOT_FOUND = toPattern(ERR_CHAT_PLAYER_NOT_FOUND_S)
 local CAME_ONLINE = toPattern(ERR_FRIEND_ONLINE_SS)
+local WENT_OFFLINE = toPattern(ERR_FRIEND_OFFLINE_S)
 
 --- @param name string
 --- @return string
@@ -115,6 +116,26 @@ function Transport.Send(target, text)
   return false
 end
 
+--- Sends to everyone in the player's guild
+--- @param text string
+function Transport.Broadcast(text)
+  if IsInGuild() and not Transport.IsLocked() then
+    C_ChatInfo.SendAddonMessage(PREFIX, text, "GUILD")
+  end
+end
+
+--- @return string[] Full names of the friends who are online
+function Transport.OnlineFriends()
+  local names = {}
+  for index = 1, C_FriendList.GetNumFriends() do
+    local info = C_FriendList.GetFriendInfoByIndex(index)
+    if info and info.connected and info.name then
+      names[#names + 1] = Transport.Normalize(info.name)
+    end
+  end
+  return names
+end
+
 --- Name from a "player not found" message, if it is the bounce of one of our own whispers
 --- @param text string
 --- @return string?
@@ -145,6 +166,12 @@ local function onSystemMessage(text)
   local online = CAME_ONLINE and text:match(CAME_ONLINE)
   if online then
     handlers.onReachable(Transport.Normalize(online))
+    return
+  end
+
+  local offline = WENT_OFFLINE and text:match(WENT_OFFLINE)
+  if offline then
+    handlers.onOffline(Transport.Normalize(offline))
   end
 end
 
@@ -161,8 +188,8 @@ function Transport.Init(newHandlers)
   frame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHAT_MSG_ADDON" then
       local prefix, text, channel, sender = ...
-      if prefix == PREFIX and channel == "WHISPER" then
-        handlers.onMessage(Transport.Normalize(sender), text)
+      if prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
+        handlers.onMessage(Transport.Normalize(sender), text, channel == "GUILD")
       end
     elseif event == "CHAT_MSG_SYSTEM" then
       onSystemMessage(...)

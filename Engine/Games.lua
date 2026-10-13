@@ -17,6 +17,8 @@ local _, private = ...
 --- @class GameDefinition
 --- @field id string Unique id sent over the wire, letters and digits only
 --- @field name string Display name
+--- @field description string? One or two sentences for the new game wizard
+--- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number Number of players, only 2 is supported for now
 --- @field newState fun(): table Fresh game state
