@@ -95,19 +95,66 @@ function Widgets.Pulse(region)
   return group
 end
 
+--- How something gets from where it was to where it is going: each takes how far along in time
+--- it is, from 0 to 1, and says how far along the way. Give one to an Animator as `ease`.
+Widgets.Ease = {
+  --- Fast at first, settling at the end: for whatever arrives somewhere
+  --- @param progress number
+  --- @return number
+  out = function(progress)
+    return 1 - (1 - progress) ^ 3
+  end,
+  --- Slow at first: for whatever leaves or falls
+  into = function(progress)
+    return progress ^ 2
+  end,
+  --- Slow at both ends: for whatever only changes place
+  inOut = function(progress)
+    return progress < 0.5 and 4 * progress ^ 3 or 1 - (-2 * progress + 2) ^ 3 / 2
+  end,
+  --- A little past the end and back: for whatever is put down or pops up
+  back = function(progress)
+    local over = 1.70158
+    return 1 + (over + 1) * (progress - 1) ^ 3 + over * (progress - 1) ^ 2
+  end,
+  --- There and back again, ending where it began: for a swell or a nudge. Not a way to get anywhere
+  swell = function(progress)
+    return math.sin(progress * math.pi)
+  end,
+}
+
+--- Seconds as a clock shows them: "0:07", "12:34", "1:02:03"
+--- @param seconds number
+--- @return string
+function Widgets.Time(seconds)
+  local whole = math.max(0, math.floor(seconds))
+  local hours, minutes = math.floor(whole / 3600), math.floor(whole / 60) % 60
+  if hours > 0 then
+    return string.format("%d:%02d:%02d", hours, minutes, whole % 60)
+  end
+  return string.format("%d:%02d", minutes, whole % 60)
+end
+
 --- Things that happen over time: a frame's worth of them at once, each with its own start and
 --- length. A view starts one for everything it wants to see move, and stops them all when what
 --- they were about is no longer what is shown.
 --- @param frame Frame Runs them while it is shown. Its OnUpdate is taken
---- @return { Play: fun(self: table, seconds: number, step: fun(progress: number), options: { delay: number?, onStart: fun()?, onDone: fun()? }?), Stop: fun(self: table), Busy: fun(self: table): boolean }
+--- @return { Play: fun(self: table, seconds: number, step: fun(progress: number), options: { delay: number?, ease: (fun(progress: number): number)?, onStart: fun()?, onDone: fun()? }?), Stop: fun(self: table), Busy: fun(self: table): boolean }
 function Widgets.Animator(frame)
   local animator = { running = {} }
 
   --- @param seconds number How long it takes
   --- @param step fun(progress: number) Called every frame with how far along it is, from 0 to 1. Always called with 1 in the end
-  --- @param options { delay: number?, onStart: fun()?, onDone: fun()? }? Seconds to wait first, something to do as it starts and something to do when it is over
+  --- @param options { delay: number?, ease: (fun(progress: number): number)?, onStart: fun()?, onDone: fun()? }? Seconds to wait first, how it gets there (Widgets.Ease, evenly if left out), something to do as it starts and something to do when it is over
   function animator:Play(seconds, step, options)
     options = options or {}
+    local ease = options.ease
+    if ease then
+      local plain = step
+      step = function(progress)
+        plain(ease(progress))
+      end
+    end
     local run = { seconds = seconds, step = step, elapsed = -(options.delay or 0), onStart = options.onStart, onDone = options.onDone }
     self.running[#self.running + 1] = run
   end
@@ -172,6 +219,90 @@ function Widgets.Animator(frame)
     end
   end)
   return animator
+end
+
+--- Lets a frame take keys: the arrows for a game that is played with them, the digits for one
+--- that has numbers written into it. Only while the cursor is over the frame, so that a window
+--- left open doesn't keep the player from steering their character, and never in combat, where
+--- the client doesn't let an addon decide key by key what it keeps: every key then does what it
+--- always does.
+--- @param frame Frame Its OnKeyDown and OnEvent are taken
+--- @param onKey fun(key: string): boolean? What to do with a key, by the client's name for it ("LEFT", "A", "1", "BACKSPACE"). Returns true for a key it used, any other goes on to do what it usually does
+function Widgets.Keys(frame, onKey)
+  frame:SetScript("OnKeyDown", function(self, key)
+    if InCombatLockdown() then
+      return
+    end
+    local used = self:IsMouseOver() and onKey(key) == true
+    self:SetPropagateKeyboardInput(not used)
+  end)
+  -- Going into combat is the last moment the frame may still be told to let every key through
+  frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+  frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+  frame:SetScript("OnEvent", function(self, event)
+    -- Neither is in combat yet, or any more
+    self:SetPropagateKeyboardInput(true)
+    self:EnableKeyboard(event == "PLAYER_REGEN_ENABLED")
+  end)
+  if not InCombatLockdown() then
+    frame:SetPropagateKeyboardInput(true)
+    frame:EnableKeyboard(true)
+  end
+end
+
+--- A number with a word over it, for what a game keeps count of: a score, a time, how many are
+--- left. It swells for a moment when it is told something else, so a change is seen.
+--- @param parent Frame
+--- @param title string
+--- @param width number
+--- @param height number? 38 if left out
+--- @return Frame stat Set(text, quiet) changes what it says, without the swell if quiet. SetTitle(text) changes the word, Tint(color) the colour of the number
+function Widgets.Stat(parent, title, width, height)
+  local stat = Widgets.Panel(parent)
+  stat:SetSize(width, height or 38)
+  local caption = stat:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  caption:SetPoint("TOP", 0, -4)
+  caption:SetText(title)
+  local value = stat:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+  value:SetPoint("BOTTOM", 0, 5)
+  stat.caption, stat.value = caption, value
+
+  local swell = value:CreateAnimationGroup()
+  for order, scale in ipairs({ 1.25, 0.8 }) do
+    local grow = swell:CreateAnimation("Scale")
+    grow:SetOrder(order)
+    grow:SetDuration(order == 1 and 0.08 or 0.16)
+    grow:SetScale(scale, scale)
+    grow:SetSmoothing(order == 1 and "OUT" or "IN")
+  end
+
+  --- @param text string|number
+  --- @param quiet boolean? Don't draw the eye to it
+  function stat:Set(text, quiet)
+    text = tostring(text)
+    if text == self.shown then
+      return
+    end
+    local first = self.shown == nil
+    self.shown = text
+    value:SetText(text)
+    if not quiet and not first then
+      swell:Stop()
+      swell:Play()
+    end
+  end
+
+  --- @param text string
+  function stat:SetTitle(text)
+    caption:SetText(text)
+  end
+
+  --- @param color number[]? White if left out
+  function stat:Tint(color)
+    value:SetTextColor(unpack(color or { 1, 1, 1 }))
+  end
+
+  return stat
 end
 
 --- A list that scrolls with the mouse wheel. Rows are built on demand and reused.

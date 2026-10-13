@@ -26,11 +26,14 @@ local ENGINE_FILES = {
   "Lexicon/Warcraft.lua",
   "Games/Words.lua",
   "Games/Solitaire.lua",
+  "Games/Minesweeper.lua",
+  "Games/2048.lua",
+  "Games/Sudoku.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/Effects.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -1785,7 +1788,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  equal("solitaire", idsOf(Games.Search(nil, nil, 1)))
+  equal("solitaire,minesweeper,2048,sudoku", idsOf(Games.Search(nil, nil, 1)))
   equal("chinesecheckers,crazyeights,words", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
   equal("chinesecheckers", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
@@ -1937,7 +1940,7 @@ function tests.WizardKeepsFavouritesFirst()
   star("words")
   star("chess")
   equal(true, favourites.words)
-  equal("chess,words,backgammon", idsOf({ unpack(offeredGames(), 1, 3) }), "the starred ones lead")
+  equal("chess,words,2048", idsOf({ unpack(offeredGames(), 1, 3) }), "the starred ones lead")
   clickGenre("wizard_favourites")
   equal("chess,words", idsOf(offeredGames()))
   clickGenre("wizard_more_players")
@@ -1951,7 +1954,7 @@ function tests.WizardKeepsFavouritesFirst()
   clickGenre("wizard_all_games")
   equal(#byName, #offeredGames())
   clickGenre("wizard_two_players")
-  equal(#byName - 1, #offeredGames(), "all but the one played alone")
+  equal(#byName - #alice.private.Games.Search(nil, nil, 1), #offeredGames(), "all but the ones played alone")
   wizard.Open()
   equal(#byName, #offeredGames())
   equal("chess", offeredGames()[1].id, "a favourite stays one")
@@ -5109,6 +5112,22 @@ local function lookOf(tile, log)
   }
 end
 
+function tests.DragIsOnlyInTheWayOfTheMouseWhileSomethingIsInHand()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+  equal(false, drag.frame:IsMouseEnabled(), "it lies over everything, clicks have to get past it")
+
+  Client.cursor, Client.mouseDown = { 20, 50 }, false
+  drag:Carry("Q", lookOf(tile, log))
+  equal(true, drag.frame:IsMouseEnabled(), "the next click puts it down")
+  drag.frame:Fire("OnMouseDown", "LeftButton")
+  equal(false, drag.frame:IsMouseEnabled())
+
+  drag:Carry("Q", lookOf(tile, log))
+  drag:Cancel(true)
+  equal(false, drag.frame:IsMouseEnabled())
+end
+
 function tests.DragCarriesAThingToATarget()
   local drag, tile, log = dragOnScreen()
   dropTarget(drag, log, "rack", 100, 100)
@@ -6557,6 +6576,1352 @@ function tests.CardTableShakesOffACardAndThrowsThemAllAbout()
 end
 
 -----------------------------
+-- 2048
+-----------------------------
+
+--- A game of 2048 with the tiles where a test wants them
+--- @param rows string[] What lies on the board, a row at a time: "2 . 4 4"
+--- @return table game, table state, table private
+local function slidingGame(rows)
+  local private = loadEngine()
+  local game = private.Games.Get("2048")
+  local state = game.newState(1, private.Random.New(1), { size = #rows })
+  state.best = 0
+  for row, text in ipairs(rows) do
+    local column = 0
+    for word in text:gmatch("%S+") do
+      column = column + 1
+      state.cells[(row - 1) * #rows + column] = tonumber(word) or 0
+      state.best = math.max(state.best, tonumber(word) or 0)
+    end
+    equal(#rows, column, "tiles in row " .. row)
+  end
+  return game, state, private
+end
+
+--- What lies on a board of 2048, written the way slidingGame reads it
+--- @param state table
+--- @param without number? A square to leave out: the one the new tile turned up on
+--- @return string
+local function slidingRows(state, without)
+  local rows = {}
+  for row = 1, state.size do
+    local words = {}
+    for column = 1, state.size do
+      local square = (row - 1) * state.size + column
+      local value = state.cells[square]
+      words[column] = (value == 0 or square == without) and "." or tostring(value)
+    end
+    rows[row] = table.concat(words, " ")
+  end
+  return table.concat(rows, "/")
+end
+
+--- Pushes the tiles of a game of 2048 and says what came of it, the new tile aside
+--- @param game table
+--- @param state table
+--- @param way string
+--- @param private table
+--- @param seed number?
+--- @return string rows, table event
+local function slidingPush(game, state, way, private, seed)
+  equal(true, (game.validate(state, 1, way)), "pushing " .. way)
+  local event = game.apply(state, 1, way, private.Random.New(seed or 1))
+  return slidingRows(state, event.spawn.at), event
+end
+
+--- Works a position out from the one before and what a move says happened, the way a view
+--- would have to: nothing of it is taken from the position that came of the move
+--- @param before number[]
+--- @param event table
+--- @return number[]
+local function slidingFollow(before, event)
+  local after, left = {}, {}
+  for square = 1, #before do
+    after[square] = 0
+    left[square] = before[square]
+  end
+  local arrived, joined = {}, {}
+  for _, slide in ipairs(event.slides) do
+    equal(slide.value, left[slide.from], "a tile sets out from where one lies")
+    left[slide.from] = 0
+    arrived[slide.to] = (arrived[slide.to] or 0) + 1
+    joined[slide.to] = (joined[slide.to] or 0) + (slide.merged and 1 or 0)
+    after[slide.to] = slide.merged and -1 or slide.value
+  end
+  for square = 1, #before do
+    equal(0, left[square], "every tile is accounted for")
+    equal(arrived[square] == 2 and 2 or 0, joined[square] or 0, "tiles that share a square became one, and no others")
+  end
+  for _, merge in ipairs(event.merges) do
+    equal(-1, after[merge.at], "two tiles met where one was made")
+    equal(2, arrived[merge.at])
+    after[merge.at] = merge.value
+  end
+  for square = 1, #before do
+    assert(after[square] >= 0, "every pair that met became a tile")
+    assert((arrived[square] or 0) <= 2, "never more than two")
+  end
+  equal(0, after[event.spawn.at], "the new tile turns up on a free square")
+  after[event.spawn.at] = event.spawn.value
+  return after
+end
+
+--- What a player who looks a little ahead would push next in a game of 2048: whatever keeps
+--- the most squares free and the biggest tile in its corner
+--- @param game table
+--- @param state table
+--- @param private table
+--- @param depth number? How many moves ahead to look, 2 if left out
+--- @param chance number? What the match's chance has come to (slidingChance), for a player who works out which tiles will turn up where instead of guessing
+--- @return string? way Nothing when there is no move left
+local function slidingMove(game, state, private, depth, chance)
+  local best, bestWorth = nil, nil
+  for index, way in ipairs({ "l", "u", "r", "d" }) do
+    if game.validate(state, 1, way) then
+      local after = copy(state)
+      local stirred = chance and private.Random.Stir(chance, way)
+      local event = game.apply(after, 1, way, private.Random.New(stirred or index + after.moves))
+      local free = 0
+      for _, value in ipairs(after.cells) do
+        free = free + (value == 0 and 1 or 0)
+      end
+      local worth = event.gained + free * 12 + (after.cells[1] == after.best and after.best or 0) - (after.over and 10000 or 0)
+      if (depth or 2) > 1 and not after.over then
+        worth = worth + (select(2, slidingMove(game, after, private, (depth or 2) - 1, stirred)) or 0) * 0.9
+      end
+      if not bestWorth or worth > bestWorth then
+        best, bestWorth = way, worth
+      end
+    end
+  end
+  return best, bestWorth
+end
+
+--- What the chance of a match has come to with the moves made in it (Engine/Random.lua): the
+--- tile a move brings follows from it and the move
+--- @param private table
+--- @param match table
+--- @return number
+local function slidingChance(private, match)
+  local chance = private.Random.Seed(match.id)
+  for _, entry in ipairs(match.log) do
+    chance = private.Random.Stir(chance, entry)
+  end
+  return chance
+end
+
+function tests.TwentyFortyEightBeginsWithTwoTiles()
+  local private = loadEngine()
+  local game = private.Games.Get("2048")
+  equal(1, game.seats)
+  equal(true, private.Games.IsSolo(game))
+  equal(true, game.undo)
+  equal(nil, game.clock, "nobody is in a hurry")
+
+  for size, target in pairs({ [3] = 256, [4] = 2048, [5] = 2048 }) do
+    for seed = 1, 20 do
+      local state = game.newState(1, private.Random.New(seed), { size = size })
+      equal(size * size, #state.cells)
+      local tiles = 0
+      for _, value in ipairs(state.cells) do
+        assert(value == 0 or value == 2 or value == 4, "a 2 or a 4, got " .. value)
+        tiles = tiles + (value > 0 and 1 or 0)
+      end
+      equal(2, tiles)
+      equal(0, state.score)
+      equal(target, state.target)
+      equal(false, state.reached)
+      equal(nil, game.result(state))
+      assert(state.best == 2 or state.best == 4)
+    end
+  end
+  -- Four by four unless it says otherwise, and for whoever is handed no rules at all
+  equal(16, #game.newState(1, private.Random.New(1), private.Games.Rules(game.options)).cells)
+  equal(16, #game.newState(1, private.Random.New(1)).cells)
+  equal(1, game.turn({}))
+end
+
+function tests.TwentyFortyEightPushesTilesAsFarAsTheyGo()
+  local board = { ". 2 . .", ". . . 4", "8 . . .", ". . 16 ." }
+  local function pushed(way)
+    local game, state, private = slidingGame(board)
+    local rows, event = slidingPush(game, state, way, private)
+    equal(way, event.way)
+    equal(0, event.gained)
+    equal(0, #event.merges)
+    equal(4, #event.slides, "every tile is spoken for")
+    equal(0, state.score)
+    equal(1, state.moves)
+    return rows
+  end
+  equal("2 . . ./4 . . ./8 . . ./16 . . .", pushed("l"))
+  equal(". . . 2/. . . 4/. . . 8/. . . 16", pushed("r"))
+  equal("8 2 16 4/. . . ./. . . ./. . . .", pushed("u"))
+  equal(". . . ./. . . ./. . . ./8 2 16 4", pushed("d"))
+
+  -- Tiles that aren't worth the same only queue up
+  local game, state, private = slidingGame({ ". 2 4 2", "4 . . 8", ". . . .", ". . . ." })
+  equal("2 4 2 ./4 8 . ./. . . ./. . . .", (slidingPush(game, state, "l", private)))
+end
+
+function tests.TwentyFortyEightMakesOneTileOfTwoOnceAMove()
+  local function pushed(rows, way)
+    local game, state, private = slidingGame(rows)
+    local after, event = slidingPush(game, state, way, private)
+    equal(event.gained, state.score)
+    return after, event, state
+  end
+  -- Of four the same it is two pairs, not one tile of everything
+  local rows, event, state = pushed({ "2 2 2 2", ". . . .", ". . . .", ". . . ." }, "l")
+  equal("4 4 . ./. . . ./. . . ./. . . .", rows)
+  equal(8, event.gained)
+  equal(2, #event.merges)
+  equal(4, state.best)
+  -- Of three it is the two nearest the edge they are pushed to
+  equal("4 2 . ./. . . ./. . . ./. . . .", (pushed({ "2 2 2 .", ". . . .", ". . . .", ". . . ." }, "l")))
+  equal(". . 2 4/. . . ./. . . ./. . . .", (pushed({ "2 2 2 .", ". . . .", ". . . .", ". . . ." }, "r")))
+  -- What was made in a move isn't made into more by the same move
+  rows, event = pushed({ "4 . 2 2", ". . . .", ". . . .", ". . . ." }, "l")
+  equal("4 4 . ./. . . ./. . . ./. . . .", rows)
+  equal(4, event.gained)
+  rows, event = pushed({ "2 2 4 8", ". . . .", ". . . .", ". . . ." }, "r")
+  equal(". 4 4 8/. . . ./. . . ./. . . .", rows)
+  -- Across a gap, and up and down as well
+  rows, event, state = pushed({ "16 . 2", ". . .", "16 . 2" }, "d")
+  equal(". . ./. . ./32 . 4", rows)
+  equal(36, event.gained)
+  equal(36, state.score)
+  equal(32, state.best)
+  equal("32 . 4/. . ./. . .", (pushed({ "16 . 2", ". . .", "16 . 2" }, "u")))
+
+  -- The move says all of it: which tiles went where, which of them became one
+  local _, told = pushed({ ". 2 . 2", ". . . .", "4 . . .", ". . . ." }, "l")
+  equal(3, #told.slides)
+  local seen = {}
+  for _, slide in ipairs(told.slides) do
+    seen[#seen + 1] = slide.from .. ">" .. slide.to .. "=" .. slide.value .. (slide.merged and "!" or "")
+  end
+  table.sort(seen)
+  equal("2>1=2!,4>1=2!,9>9=4", table.concat(seen, ","))
+  equal(1, told.merges[1].at)
+  equal(4, told.merges[1].value)
+end
+
+function tests.TwentyFortyEightRefusesAMoveThatChangesNothing()
+  local game, state = slidingGame({ "2 4 . .", "4 . . .", ". . . .", ". . . ." })
+  equal(false, (game.validate(state, 1, "l")), "everything is as far left as it goes")
+  equal("invalid_move", select(2, game.validate(state, 1, "u")))
+  equal(true, (game.validate(state, 1, "r")))
+  equal(true, (game.validate(state, 1, "d")))
+  equal("not_your_turn", select(2, game.validate(state, 2, "r")))
+  for _, move in ipairs({ "", "x", "ll", "L", "left", "1" }) do
+    equal("invalid_move", select(2, game.validate(state, 1, move)), "nothing is written " .. move)
+  end
+  -- A full line can still go if two of its tiles are worth the same
+  game, state = slidingGame({ "2 4 8", "2 8 4", "4 2 8" })
+  equal(false, (game.validate(state, 1, "l")))
+  equal(false, (game.validate(state, 1, "r")))
+  equal(true, (game.validate(state, 1, "u")))
+  equal(true, (game.validate(state, 1, "d")))
+
+  -- And the engine doesn't take one from the player either
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "2048"))
+  local refused = 0
+  for _, way in ipairs({ "u", "d", "l", "r" }) do
+    if not game.validate(alice.private.Match.State(match), 1, way) then
+      equal("invalid_move", select(2, alice.session:Move(match.id, way)))
+      refused = refused + 1
+    end
+  end
+  equal(0, #match.log)
+  assert(refused < 4, "there is always something to do at first")
+end
+
+function tests.TwentyFortyEightPutsANewTileOnAFreeSquare()
+  local twos, fours, squares = 0, 0, {}
+  local game, start, private = slidingGame({ "2 . . .", ". . . .", ". . . .", ". . . ." })
+  for seed = 1, 600 do
+    local state = copy(start)
+    local _, event = slidingPush(game, state, "r", private, seed)
+    assert(event.spawn.at ~= 4, "not where the tile went")
+    equal(event.spawn.value, state.cells[event.spawn.at])
+    squares[event.spawn.at] = true
+    twos = twos + (event.spawn.value == 2 and 1 or 0)
+    fours = fours + (event.spawn.value == 4 and 1 or 0)
+  end
+  equal(600, twos + fours)
+  assert(fours > 30 and fours < 95, "one in ten is a 4, got " .. fours .. " of 600")
+  local reached = 0
+  for _ in pairs(squares) do
+    reached = reached + 1
+  end
+  equal(15, reached, "anywhere that is free")
+
+  -- With one square left that is where it goes
+  local state
+  game, state, private = slidingGame({ "2 4 8", "16 32 64", ". 128 256" })
+  local _, event = slidingPush(game, state, "l", private)
+  equal(9, event.spawn.at)
+end
+
+function tests.TwentyFortyEightGoesOnPastItsTileAndEndsWhenNothingMoves()
+  -- Making the tile is noted, once, and is not the end
+  local game, state, private = slidingGame({ "1024 1024 . .", ". . . .", ". . . .", ". . . ." })
+  local _, event = slidingPush(game, state, "l", private)
+  equal(true, event.reached)
+  equal(true, state.reached)
+  equal(2048, state.best)
+  equal(2048, state.score)
+  equal(nil, game.result(state), "the game goes on")
+  equal(nil, event.over)
+  state.cells = { 2048, 2048, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+  _, event = slidingPush(game, state, "l", private)
+  equal(nil, event.reached, "only the first time")
+  equal(4096, state.best)
+  equal(true, state.reached)
+  equal(nil, game.result(state))
+
+  -- On the small board it is 256
+  game, state, private = slidingGame({ "128 128 .", ". . .", ". . ." })
+  _, event = slidingPush(game, state, "r", private)
+  equal(true, event.reached)
+
+  -- No square free and no two neighbours the same: over, and lost without the tile
+  local last = { "8 16 8", "32 8 16", ". 64 32" }
+  game, state, private = slidingGame(last)
+  equal(nil, game.result(state))
+  _, event = slidingPush(game, state, "l", private)
+  equal(true, event.over)
+  equal(true, state.over)
+  equal(0, game.result(state).winner)
+  for _, way in ipairs({ "u", "d", "l", "r" }) do
+    equal(false, (game.validate(state, 1, way)), "nothing moves any more")
+  end
+  -- Won if it was made on the way
+  game, state, private = slidingGame(last)
+  state.reached = true
+  slidingPush(game, state, "l", private)
+  equal(1, game.result(state).winner)
+  -- A full board isn't over while two neighbours are worth the same
+  game, state, private = slidingGame({ "8 16 8", "32 8 16", ". 64 8" })
+  _, event = slidingPush(game, state, "l", private)
+  equal(nil, event.over)
+  equal(nil, game.result(state))
+end
+
+function tests.TwentyFortyEightSaysWhatItIsPlayedOn()
+  local private = loadEngine()
+  local Games, game = private.Games, private.Games.Get("2048")
+  equal(4, Games.Rules(game.options).size)
+  equal(3, Games.Rules(game.options, { size = 3 }).size)
+  equal(4, Games.Rules(game.options, { size = 7 }).size, "only the boards there are")
+  equal(nil, Games.EncodeOptions(game, { size = 4 }), "the usual board goes without saying")
+  equal("size=5", Games.EncodeOptions(game, { size = 5 }))
+  equal(5, Games.DecodeOptions(game, "size=5").size)
+  equal(false, select(2, Games.DecodeOptions(game, "size=9")))
+  equal("2048_option_size_label", Games.OptionLabel(game.options[1], 3))
+  equal(1, #Games.DescribeOptions(game, { size = 3 }))
+  equal(0, #Games.DescribeOptions(game, nil))
+  equal("2048_progress", game.progress(game.newState(1, private.Random.New(1))))
+
+  -- The board is kept with the match
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local small = assert(alice.session:Invite({}, "2048", { options = { size = 3 } }))
+  equal(9, #alice.private.Match.State(small).cells)
+  equal(3, small.options.size)
+  local usual = assert(alice.session:Invite({}, "2048", { options = { size = 4 } }))
+  equal(16, #alice.private.Match.State(usual).cells)
+  equal(nil, usual.options)
+end
+
+function tests.TwentyFortyEightComesOutTheSameFromTheSameLog()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Match, game = alice.private.Match, alice.private.Games.Get("2048")
+  local match = assert(alice.session:Invite({}, "2048"))
+  for _ = 1, 60 do
+    local way = slidingMove(game, Match.State(match), alice.private, 1)
+    if not way then
+      break
+    end
+    assert(alice.session:Move(match.id, way))
+  end
+  assert(#match.log >= 40, "a game lasts a while")
+  local played = slidingRows(Match.State(match))
+
+  -- Whoever is handed the same match comes out with the same tiles in the same places
+  local other = World.New():AddPlayer("Alice-Realm", { [match.id] = copy(match) })
+  equal(played, slidingRows(other.private.Match.State(other.matches[match.id])))
+  local elsewhere = assert(alice.session:Invite({}, "2048"))
+  for _, way in ipairs(match.log) do
+    if not alice.session:Move(elsewhere.id, way) then
+      break
+    end
+  end
+  assert(played ~= slidingRows(Match.State(elsewhere)), "and another match is another game")
+
+  -- A move taken back and made again brings the same tile to the same square
+  local last = match.log[#match.log]
+  local spawn = Match.Events(match)[#match.log].spawn
+  assert(alice.session:Undo(match.id))
+  assert(played ~= slidingRows(Match.State(match)))
+  assert(alice.session:Move(match.id, last))
+  equal(played, slidingRows(Match.State(match)))
+  equal(spawn.at, Match.Events(match)[#match.log].spawn.at)
+  equal(spawn.value, Match.Events(match)[#match.log].spawn.value)
+end
+
+function tests.TwentyFortyEightIsPlayedThroughWithoutLosingATile()
+  local private = loadEngine()
+  local game = private.Games.Get("2048")
+  local ways = { "l", "u", "r", "d" }
+  local ended, merged = 0, 0
+  for seed = 1, 40 do
+    local size = 3 + seed % 3
+    local dice = private.Random.New(seed)
+    local state = game.newState(1, private.Random.New(seed + 1000), { size = size })
+    local thinks = seed % 4 == 0
+    local played = 0
+    while not game.result(state) do
+      -- Some think and some push any old way
+      local way = thinks and slidingMove(game, state, private, 1) or nil
+      while not way or not game.validate(state, 1, way) do
+        way = ways[dice:Roll(4)]
+      end
+      local before, score = copy(state.cells), state.score
+      local sum = 0
+      for _, value in ipairs(before) do
+        sum = sum + value
+      end
+      local event = game.apply(state, 1, way, private.Random.New(seed * 100000 + played))
+      played = played + 1
+
+      -- What the move says happened is what happened, to the last tile
+      local follows = slidingFollow(before, event)
+      local after, biggest = 0, 0
+      for square, value in ipairs(state.cells) do
+        equal(follows[square], value, "square " .. square .. " after " .. way)
+        after, biggest = after + value, math.max(biggest, value)
+        assert(value == 0 or math.log(value) / math.log(2) % 1 < 1e-9, "tiles are powers of two")
+      end
+      equal(sum + event.spawn.value, after, "nothing is lost and only the new tile is added")
+      local gained = 0
+      for _, merge in ipairs(event.merges) do
+        gained = gained + merge.value
+      end
+      equal(gained, event.gained)
+      equal(score + gained, state.score)
+      equal(played, state.moves)
+      equal(biggest, state.best)
+      equal(state.best >= state.target, state.reached)
+      merged = merged + #event.merges
+      assert(played < 200000, "the game should end")
+    end
+    ended = ended + 1
+    equal(state.reached and 1 or 0, game.result(state).winner)
+    for _, way in ipairs(ways) do
+      equal(false, (game.validate(state, 1, way)))
+    end
+  end
+  equal(40, ended, "every game ends")
+  assert(merged > 1000)
+end
+
+function tests.TwentyFortyEightKeepsTheBestOfEveryBoard()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session, Match, game = alice.session, alice.private.Match, alice.private.Games.Get("2048")
+  equal(nil, session:Best("2048", "score4"))
+
+  --- Plays a match until it has scored something
+  local function scoring(match)
+    while Match.State(match).score == 0 do
+      assert(session:Move(match.id, slidingMove(game, Match.State(match), alice.private, 1)))
+    end
+    return Match.State(match)
+  end
+  local match = assert(session:Invite({}, "2048"))
+  local state = scoring(match)
+  equal(state.score, session:Best("2048", "score4"), "asked after every move: a game given up half way still counts")
+  equal(state.best, session:Best("2048", "tile4"))
+  equal(true, session:SetBest(match, "score4"))
+  equal(nil, session:Best("2048", "score3"), "every board has its own")
+
+  local small = assert(session:Invite({}, "2048", { options = { size = 3 } }))
+  local smallState = scoring(small)
+  equal(smallState.score, session:Best("2048", "score3"))
+  equal(smallState.best, session:Best("2048", "tile3"))
+  equal(state.score, session:Best("2048", "score4"))
+
+  -- A move taken back doesn't take the best back with it
+  assert(session:Undo(match.id))
+  assert(Match.State(match).score < state.score)
+  equal(state.score, session:Best("2048", "score4"))
+  assert(session:Resign(match.id))
+  equal(state.score, session:Best("2048", "score4"))
+end
+
+-----------------------------
+-- 2048 on screen
+-----------------------------
+
+--- A grid of sliding tiles on its own, three by three with tiles of 40 lying 10 apart, so that
+--- the middle of a square is 20, 70 or 120 across and down
+--- @return table grid, table frame, table private
+local function gridOnItsOwn()
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } } }
+  local private = {}
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Tiles.lua", "GUI/SlideGrid.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local grid = private.SlideGrid.New(CreateFrame("Frame", nil, UIParent), {
+    art = "art\\",
+    style = function(value)
+      return tostring(value), { 1, 1, 1 }, { 0, 0, 0 }, value >= 100 and 0.5 or nil
+    end,
+  })
+  grid:Arrange(3, 3, 40, 10)
+  return grid, grid.frame, private
+end
+
+--- The tiles a grid shows, as "square=value" in the order of the squares, wherever they are
+--- on their way to
+--- @param grid table
+--- @return string
+local function gridTiles(grid)
+  local tiles = {}
+  for square = 1, grid.columns * grid.rows do
+    local sprite = grid.at[square]
+    if sprite then
+      tiles[#tiles + 1] = square .. "=" .. sprite.value
+    end
+  end
+  return table.concat(tiles, " ")
+end
+
+--- How many tiles of a grid can be seen, whether it knows about them or not
+--- @param grid table
+--- @return number
+local function gridShown(grid)
+  return #Client.Find(function(widget)
+    return widget.parent == grid.frame and widget.label ~= nil and widget:IsVisible()
+  end)
+end
+
+--- Checks that a grid has come to rest on a position: a tile on every square that has one,
+--- where it belongs and at its size, and no other anywhere
+--- @param grid table
+--- @param cells number[]
+local function gridRestsOn(grid, cells)
+  local count = 0
+  for square = 1, grid.columns * grid.rows do
+    local sprite, value = grid.at[square], cells[square]
+    if not value or value == 0 then
+      equal(nil, sprite, "nothing on square " .. square)
+    else
+      count = count + 1
+      assert(sprite, "a tile on square " .. square)
+      equal(value, sprite.value, "square " .. square)
+      equal(tostring(value), sprite.label.text)
+      local x, y = grid:Center(square)
+      equal(x .. "," .. y, sprite.x .. "," .. sprite.y, "where the tile of square " .. square .. " is")
+      equal(1, sprite.scale)
+      equal(1, sprite:GetAlpha())
+      equal(true, sprite:IsVisible())
+    end
+  end
+  equal(count, gridShown(grid), "tiles to be seen")
+end
+
+function tests.SlideGridPutsTilesOnItsSquares()
+  local grid, frame = gridOnItsOwn()
+  equal(140, frame.width)
+  equal(140, frame.height)
+  equal("20,20", table.concat({ grid:Center(1) }, ","))
+  equal("120,70", table.concat({ grid:Center(6) }, ","))
+  equal(0, gridShown(grid))
+
+  grid:Set({ [1] = 2, [5] = 128, [9] = 0, [3] = false })
+  equal(false, grid:Busy(), "it is simply there")
+  equal("1=2 5=128", gridTiles(grid))
+  gridRestsOn(grid, { [1] = 2, [5] = 128 })
+  equal("art\\64\\tile", grid.at[1].body.texture, "the picture that suits its size")
+  equal(false, grid.at[1].glow:IsShown())
+  equal(true, grid.at[5].glow:IsShown(), "as the style says")
+
+  -- Another position uses the tiles there are, and puts aside what it has no use for
+  local kept = grid.at[1]
+  grid:Set({ [1] = 4, [2] = 2 })
+  equal(kept, grid.at[1])
+  equal("4", kept.label.text)
+  gridRestsOn(grid, { [1] = 4, [2] = 2 })
+  equal(0, #grid.spare, "the one it had no use for on one square is the one it needed on another")
+  grid:Set({ [1] = 4 })
+  equal(1, #grid.spare)
+  grid:Set({ 2, 2, 2, 2 })
+  equal(0, #grid.spare, "and what was put aside is taken back out")
+  grid:Set({})
+  equal(0, gridShown(grid))
+  equal(4, #grid.spare)
+
+  -- A bigger tile is the same tiles drawn bigger, what is written on them included
+  grid:Set({ [2] = 2, [9] = 16384 })
+  local small, long = grid.at[2].font, grid.at[9].font
+  assert(long < small, "a long number is written smaller to fit")
+  grid:Arrange(3, 3, 120, 20)
+  equal(400, frame.width)
+  gridRestsOn(grid, { [2] = 2, [9] = 16384 })
+  equal(120, grid.at[2].width)
+  assert(grid.at[2].font > small and grid.at[9].font > long)
+  equal("art\\256\\tile", grid.at[2].body.texture, "from a bigger picture")
+  -- On a grid of other squares nothing of it means anything any more
+  grid:Arrange(4, 4, 40, 10)
+  equal(0, gridShown(grid))
+  equal("", gridTiles(grid))
+end
+
+function tests.SlideGridSlidesTilesTogetherAndMakesOneOfThem()
+  local grid, frame = gridOnItsOwn()
+  grid:Set({ [1] = 2, [3] = 2, [4] = 8 })
+  local first, second, still = grid.at[1], grid.at[3], grid.at[4]
+  local after = { [1] = 4, [4] = 8, [8] = 2 }
+  local landed = grid:Animate({
+    moves = { { from = 1, to = 1, value = 2 }, { from = 3, to = 1, value = 2 }, { from = 4, to = 4, value = 8 } },
+    merges = { { at = 1, value = 4 } },
+    appear = { { at = 8, value = 2 } },
+  }, after)
+  assert(landed > 0 and landed < 0.3, "a slide is quick")
+  equal(true, grid:Busy())
+  equal(3, gridShown(grid), "what comes of it isn't there yet")
+
+  -- Both tiles are on the table until they meet, the one that travels getting there fast at first
+  frame:Fire("OnUpdate", landed / 4)
+  assert(second.x < 120 and second.x > 20, "on its way, at " .. second.x)
+  assert(second.x < 85, "more than a quarter of the way in a quarter of the time")
+  equal(20, first.x)
+  equal(70, still.y)
+  equal(true, first:IsVisible() and second:IsVisible())
+  equal(3, gridShown(grid))
+
+  -- When they have arrived there is one tile in their place, which swells, and then the new one grows
+  frame:Fire("OnUpdate", landed * 0.75 + 0.02)
+  equal(false, first:IsVisible() or second:IsVisible(), "the two that met are gone")
+  local made, born = grid.at[1], grid.at[8]
+  equal(4, made.value)
+  equal(true, made:IsVisible())
+  equal(true, born:IsVisible())
+  assert(born.scale < 1 and born.scale > 0, "the new one is growing, at " .. born.scale)
+  frame:Fire("OnUpdate", 0.05)
+  assert(made.scale > 1, "the tile that was made swells, at " .. made.scale)
+  assert(born.scale > 0.9, "and the new one is nearly there, at " .. born.scale)
+  equal(true, grid:Busy())
+  passTime(frame, 1)
+  equal(false, grid:Busy())
+  gridRestsOn(grid, after)
+  equal(still, grid.at[4], "a tile that stayed is the tile it was")
+  equal(2, #grid.spare)
+
+  -- The other way round: a tile comes apart into two, and one goes away
+  grid:Animate({
+    moves = { { from = 1, to = 1, value = 2 }, { from = 1, to = 3, value = 2 }, { from = 4, to = 4, value = 8 } },
+    vanish = { 8 },
+  }, { [1] = 2, [3] = 2, [4] = 8 })
+  equal(4, gridShown(grid), "two where one was, and the one that is leaving")
+  frame:Fire("OnUpdate", 0.04)
+  assert(born.scale < 1, "going")
+  assert(grid.at[3].x > 20 and grid.at[3].x < 120)
+  passTime(frame, 1)
+  gridRestsOn(grid, { [1] = 2, [3] = 2, [4] = 8 })
+
+  -- Whatever it was told on the way, it ends on the position it was given
+  local astray = { { from = 7, to = 9, value = 64 }, { from = 1, to = 2, value = 2 }, { from = 4, to = 2, value = 8 } }
+  grid:Animate({ moves = astray }, { [5] = 16 })
+  passTime(frame, 1)
+  gridRestsOn(grid, { [5] = 16 })
+end
+
+function tests.SlideGridGetsThereAtOnceWhenAskedForMore()
+  local grid, frame = gridOnItsOwn()
+  grid:Set({ [1] = 2, [2] = 2 })
+  local first = { [1] = 4, [9] = 2 }
+  local function push()
+    grid:Animate({
+      moves = { { from = 1, to = 1, value = 2 }, { from = 2, to = 1, value = 2 } },
+      merges = { { at = 1, value = 4 } },
+      appear = { { at = 9, value = 2 } },
+    }, first)
+  end
+
+  -- Finish takes everything to its end, and so does putting another position on
+  push()
+  frame:Fire("OnUpdate", 0.02)
+  grid:Finish()
+  equal(false, grid:Busy())
+  gridRestsOn(grid, first)
+  grid:Set({ [1] = 2, [2] = 2 })
+  push()
+  grid:Set({ [5] = 8 })
+  equal(false, grid:Busy())
+  gridRestsOn(grid, { [5] = 8 })
+
+  -- The next move starts from where the last one ends, not from where its tiles had got to
+  grid:Set({ [1] = 2, [2] = 2 })
+  push()
+  frame:Fire("OnUpdate", 0.02)
+  local second = { [3] = 4, [9] = 2, [4] = 2 }
+  local across = { { from = 1, to = 3, value = 4 }, { from = 9, to = 9, value = 2 } }
+  grid:Animate({ moves = across, appear = { { at = 4, value = 2 } } }, second)
+  equal(true, grid:Busy())
+  equal(4, grid.at[3].value)
+  equal(20, grid.at[3].x, "setting out from the square the last move left it on")
+  equal(2, gridShown(grid), "nothing of the move before is left lying about")
+  passTime(frame, 1)
+  gridRestsOn(grid, second)
+
+  -- Resizing doesn't wait either, and hiding it leaves nothing hanging in the air
+  push = function()
+    local back = { { from = 3, to = 1, value = 4 }, { from = 4, to = 4, value = 2 }, { from = 9, to = 7, value = 2 } }
+    grid:Animate({ moves = back }, { [1] = 4, [4] = 2, [7] = 2 })
+  end
+  push()
+  grid:Arrange(3, 3, 60, 10)
+  equal(false, grid:Busy())
+  gridRestsOn(grid, { [1] = 4, [4] = 2, [7] = 2 })
+  equal(30, grid.at[1].x)
+  grid:Set(second)
+  push()
+  frame:Hide()
+  equal(false, grid:Busy())
+  frame:Show()
+  gridRestsOn(grid, { [1] = 4, [4] = 2, [7] = 2 })
+end
+
+function tests.SlideGridLeansIntoAMoveThatIsNotOne()
+  local grid, frame = gridOnItsOwn()
+  local cells = { [1] = 2, [5] = 4 }
+  grid:Set(cells)
+  local anchored = {}
+  local sprite = grid.at[5]
+  function sprite:SetPoint(_, _, _, x, y)
+    anchored[#anchored + 1] = { x, y }
+  end
+
+  grid:Nudge(-1, 0)
+  equal(true, grid:Busy())
+  passTime(frame, 0.08)
+  local leant = anchored[#anchored]
+  assert(leant[1] < 70 and leant[1] > 60, "a little to the left, at " .. leant[1])
+  equal(-70, leant[2])
+  passTime(frame, 1)
+  equal(false, grid:Busy())
+  equal("70,-70", table.concat(anchored[#anchored], ","), "and back")
+  gridRestsOn(grid, cells)
+
+  -- One after the other, each from where the tiles belong
+  grid:Nudge(0, 1)
+  frame:Fire("OnUpdate", 0.08)
+  grid:Nudge(0, -1)
+  frame:Fire("OnUpdate", 0.08)
+  leant = anchored[#anchored]
+  equal(70, leant[1])
+  assert(leant[2] > -70, "up, at " .. leant[2])
+  grid:Finish()
+  equal("70,-70", table.concat(anchored[#anchored], ","))
+end
+
+function tests.SlideGridIsPlayedOnByDragging()
+  local grid = gridOnItsOwn()
+  local swiped, taps = {}, 0
+  grid:Swipes(function(across, down)
+    swiped[#swiped + 1] = across .. "," .. down
+  end, function()
+    taps = taps + 1
+  end)
+  local touch = grid.touch
+  local function drag(x, y, button)
+    Client.cursor = { 100, 100 }
+    touch:Fire("OnMouseDown", button or "LeftButton")
+    touch:Fire("OnUpdate", 0.02)
+    Client.cursor = { 100 + x, 100 + y }
+    touch:Fire("OnUpdate", 0.02)
+    touch:Fire("OnMouseUp", button or "LeftButton")
+  end
+
+  drag(30, 4)
+  drag(-30, -9)
+  -- The screen is measured from the bottom up
+  drag(5, 40)
+  drag(-12, -25)
+  equal("1,0 -1,0 0,-1 0,1", table.concat(swiped, " "))
+  equal(0, taps)
+
+  -- Not far enough to have said anything is a click, and the other button is nothing at all
+  drag(5, -6)
+  equal(4, #swiped)
+  equal(1, taps)
+  drag(40, 0, "RightButton")
+  equal(4, #swiped)
+  equal(1, taps)
+
+  -- Pulling on without letting go is the next move, told once each
+  Client.cursor = { 100, 100 }
+  touch:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { 130, 100 }
+  touch:Fire("OnUpdate", 0.02)
+  touch:Fire("OnUpdate", 0.02)
+  equal(5, #swiped)
+  Client.cursor = { 132, 60 }
+  touch:Fire("OnUpdate", 0.02)
+  touch:Fire("OnMouseUp", "LeftButton")
+  equal("1,0 0,1", table.concat(swiped, " ", 5))
+  equal(1, taps, "what was pulled isn't a click as well")
+
+  -- A button let go of while nobody was looking is forgotten
+  touch:Fire("OnMouseDown", "LeftButton")
+  touch:Hide()
+  touch:Show()
+  Client.cursor = { 300, 300 }
+  touch:Fire("OnUpdate", 0.02)
+  equal(6, #swiped)
+end
+
+--- Opens the window on a new game of 2048
+--- @param size number? How many squares each way, the usual four if left out
+--- @param seed number?
+--- @return table player, string id, table MainFrame
+local function slidingOnScreen(size, seed)
+  local world = World.New()
+  world.seed = seed or 1
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  -- Whatever is asked is answered with a yes
+  function StaticPopup_Show(which, _, _, data)
+    StaticPopupDialogs[which].OnAccept(nil, data)
+  end
+  local match = assert(player.session:Invite({}, "2048", { options = { size = size } }))
+  MainFrame.Open(match.id)
+  return player, match.id, MainFrame
+end
+
+--- The grid of the game on screen, and the stage it is played on
+--- @return table grid, table frame, table stage
+local function shownGrid()
+  local found = Client.Find(function(widget)
+    return widget.slideGrid ~= nil and widget:IsVisible()
+  end)
+  equal(1, #found, "grids on screen")
+  return found[1].slideGrid, found[1], found[1].parent.parent
+end
+
+--- Lets time pass for everything of the game on screen
+--- @param seconds number
+local function slidingTime(seconds)
+  local _, _, stage = shownGrid()
+  local ticking = Client.Find(function(widget)
+    local inside = widget.parent
+    while inside and inside ~= stage do
+      inside = inside.parent
+    end
+    return inside == stage and widget.scripts.OnUpdate ~= nil and widget:IsVisible()
+  end)
+  for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+    for _, widget in ipairs(ticking) do
+      widget:Fire("OnUpdate", 0.02)
+    end
+  end
+end
+
+--- Presses a key with the cursor over the game on screen
+--- @param key string
+--- @return boolean Whether the game kept it to itself
+local function slidingKey(key)
+  local _, _, stage = shownGrid()
+  local found = Client.Find(function(widget)
+    return widget.parent == stage and widget.scripts.OnKeyDown ~= nil
+  end)
+  equal(1, #found, "what takes the keys")
+  found[1]:Fire("OnKeyDown", key)
+  return found[1].propagates == false
+end
+
+--- The arrow of the game on screen that pushes one way
+--- @param way string
+--- @return table
+local function slidingArrow(way)
+  local _, _, stage = shownGrid()
+  local found = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.parent == stage and widget.Lit ~= nil and widget:IsVisible()
+  end)
+  equal(4, #found, "arrows next to the board")
+  return found[({ u = 1, l = 2, r = 3, d = 4 })[way]]
+end
+
+--- Drags across the board of the game on screen
+--- @param way string
+local function slidingDrag(way)
+  local grid = shownGrid()
+  local towards = ({ u = { 0, 30 }, d = { 0, -30 }, l = { -30, 0 }, r = { 30, 0 } })[way]
+  Client.cursor = { 200, 200 }
+  grid.touch:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { 200 + towards[1], 200 + towards[2] }
+  grid.touch:Fire("OnUpdate", 0.02)
+  grid.touch:Fire("OnMouseUp", "LeftButton")
+end
+
+--- Pushes the tiles of the game on screen the way a player would, a different way every time
+--- @param way string
+--- @param turn number
+local function slidingPlay(way, turn)
+  if turn % 3 == 0 then
+    equal(true, slidingKey(({ u = "UP", d = "DOWN", l = "LEFT", r = "RIGHT" })[way]))
+  elseif turn % 3 == 1 then
+    slidingArrow(way):Fire("OnClick")
+  else
+    slidingDrag(way)
+  end
+end
+
+--- A way the tiles of a position can't be pushed, if there is one
+--- @param game table
+--- @param state table
+--- @return string?
+local function slidingStuck(game, state)
+  for _, way in ipairs({ "l", "u", "r", "d" }) do
+    if not game.validate(state, 1, way) then
+      return way
+    end
+  end
+  return nil
+end
+
+function tests.WindowShows2048TilesSliding()
+  local player, id = slidingOnScreen()
+  local Match, game = player.private.Match, player.private.Games.Get("2048")
+  local match = player.matches[id]
+  local grid, frame = shownGrid()
+
+  -- Nobody to play against: the game, how it is going, and what is kept count of
+  equal(true, says("game_2048"))
+  equal(true, says("2048_progress"))
+  equal(false, says("status_your_turn"))
+  equal(true, says("stat_score") and says("stat_best") and says("2048_stat_tile"))
+  equal(true, says("2048_hint"))
+  equal(true, says("stat_none"), "no best yet")
+  equal(false, Client.Button("undo").enabled, "nothing to take back yet")
+  equal(false, grid:Busy(), "the tiles are simply there")
+  equal(4, grid.columns)
+  gridRestsOn(grid, Match.State(match).cells)
+  equal(2, gridShown(grid))
+
+  -- A push sets them sliding: for a moment they are on their way, then where the game has them
+  local way = slidingMove(game, Match.State(match), player.private)
+  local before = copy(Match.State(match).cells)
+  equal(true, slidingKey(({ u = "UP", d = "DOWN", l = "LEFT", r = "RIGHT" })[way]))
+  equal(way, logOf(player, id))
+  local event = Match.Events(match)[1]
+  equal(true, grid:Busy())
+  equal("cardSlide", Client.sounds[#Client.sounds])
+  local moving
+  for _, slide in ipairs(event.slides) do
+    moving = moving or (slide.from ~= slide.to and slide or nil)
+  end
+  local sprite = grid.at[moving.to]
+  local fromX, fromY = grid:Center(moving.from)
+  local toX, toY = grid:Center(moving.to)
+  equal(fromX .. "," .. fromY, sprite.x .. "," .. sprite.y, "it sets out from where it lay")
+  frame:Fire("OnUpdate", 0.03)
+  local between = (sprite.x - fromX) * (toX - sprite.x) + (sprite.y - fromY) * (toY - sprite.y)
+  assert(between > 0, "on its way from one square to the other")
+  equal(false, grid.at[event.spawn.at]:IsVisible(), "the new tile waits for the others to arrive")
+  equal(#event.slides, gridShown(grid))
+  slidingTime(1)
+  equal(false, grid:Busy())
+  gridRestsOn(grid, Match.State(match).cells)
+  equal(true, Client.Button("undo").enabled)
+  assert(before[moving.from] == moving.value)
+
+  -- Nothing starts over when the window only looks again
+  player.private.MainFrame.Refresh()
+  player.private.MainFrame.Refresh()
+  equal(false, grid:Busy())
+  gridRestsOn(grid, Match.State(match).cells)
+end
+
+function tests.WindowPlays2048WithKeysArrowsAndDrags()
+  local player, id = slidingOnScreen()
+  local Match, game = player.private.Match, player.private.Games.Get("2048")
+  local match = player.matches[id]
+  local grid = shownGrid()
+
+  -- Every way of pushing makes the move it stands for, however fast one follows the other
+  local merges, floated = 0, false
+  for turn = 1, 90 do
+    local state = Match.State(match)
+    local way = slidingMove(game, state, player.private, 1)
+    slidingPlay(way, turn)
+    equal(turn, #match.log, "a move for every push")
+    equal(way, match.log[turn])
+    local event = Match.Events(match)[turn]
+    merges = merges + #event.merges
+    if #event.merges > 0 then
+      equal("chipsCollide", Client.sounds[#Client.sounds - (event.merges[1].value >= 256 and 1 or 0)])
+      slidingTime(0.3)
+      floated = floated or says("+" .. event.merges[1].value)
+    end
+    -- Some are left the time to finish and some are not: either way the tiles end up right
+    if turn % 4 == 0 then
+      slidingTime(0.6)
+      equal(false, grid:Busy())
+      gridRestsOn(grid, Match.State(match).cells)
+    elseif turn % 4 == 1 then
+      slidingTime(0.04)
+    end
+    equal(tostring(Match.State(match).score), Client.Find(function(widget)
+      return widget.caption ~= nil and widget.caption.text == "stat_score" and widget:IsVisible()
+    end)[1].value.text, "the score is kept up with")
+  end
+  assert(merges > 20, "tiles were made")
+  equal(true, floated, "what a move scores drifts up from it")
+  slidingTime(2)
+  gridRestsOn(grid, Match.State(match).cells)
+
+  -- W, A, S and D are the arrows, any other key is none of the game's business
+  local state = Match.State(match)
+  local way = slidingMove(game, state, player.private, 1)
+  equal(true, slidingKey(({ u = "W", d = "S", l = "A", r = "D" })[way]))
+  equal(91, #match.log)
+  equal(way, match.log[91])
+  equal(false, slidingKey("SPACE"))
+  equal(false, slidingKey("1"))
+  equal(91, #match.log)
+  -- The arrow a key stands for lights up for a moment
+  equal(true, slidingArrow(way).lit)
+  slidingTime(0.5)
+  equal(false, slidingArrow(way).lit)
+
+  -- Not while the cursor is somewhere else, and not in combat
+  Client.over = false
+  equal(false, slidingKey("LEFT"))
+  equal(false, slidingKey("UP"))
+  Client.over, Client.combat = true, true
+  equal(false, slidingKey("LEFT"))
+  equal(false, slidingKey("UP"))
+  Client.combat = false
+  equal(91, #match.log)
+
+  -- A click on the board that goes nowhere shows what there is to push with
+  grid.touch:Fire("OnMouseDown", "LeftButton")
+  grid.touch:Fire("OnMouseUp", "LeftButton")
+  equal(91, #match.log)
+  equal(true, slidingArrow("u").lit and slidingArrow("d").lit)
+  slidingTime(1)
+  equal(false, slidingArrow("u").lit)
+
+  -- The best follows the score, and is this game's
+  equal(Match.State(match).score, player.session:Best("2048", "score4"))
+  local best = Client.Find(function(widget)
+    return widget.caption ~= nil and widget.caption.text == "stat_best" and widget:IsVisible()
+  end)[1]
+  equal(tostring(Match.State(match).score), best.value.text)
+  equal(false, says("stat_none"))
+end
+
+function tests.WindowNudgesA2048MoveThatChangesNothing()
+  local player, id = slidingOnScreen()
+  local Match, game = player.private.Match, player.private.Games.Get("2048")
+  local match = player.matches[id]
+  local grid = shownGrid()
+
+  -- Push into a corner until one way is closed
+  local stuck = slidingStuck(game, Match.State(match))
+  local turns = 0
+  while not stuck do
+    turns = turns + 1
+    slidingPlay(turns % 2 == 0 and "l" or "u", turns)
+    stuck = slidingStuck(game, Match.State(match))
+    assert(turns < 50, "tiles pushed into a corner get stuck there")
+  end
+  slidingTime(1)
+  local made = #match.log
+  local cells = Match.State(match).cells
+
+  for turn = 1, 3 do
+    local sounds = #Client.sounds
+    slidingPlay(stuck, turn)
+    equal(made, #match.log, "no move is made")
+    equal(0, #ForeverGames.printed, "and nothing is said about it in chat")
+    equal(true, grid:Busy(), "the tiles lean into it instead")
+    equal(sounds + 1, #Client.sounds)
+    equal("IG_MAINMENU_OPTION_CHECKBOX_OFF", Client.sounds[#Client.sounds])
+    slidingTime(0.5)
+    equal(false, grid:Busy())
+    gridRestsOn(grid, cells)
+  end
+  -- The key was the game's all the same: the character doesn't walk off because of it
+  equal(true, slidingKey(({ u = "UP", d = "DOWN", l = "LEFT", r = "RIGHT" })[stuck]))
+
+  -- A nudge that is still going doesn't hold a real move up
+  slidingPlay(stuck, 1)
+  local way = slidingMove(game, Match.State(match), player.private, 1)
+  slidingPlay(way, 2)
+  equal(made + 1, #match.log)
+  slidingTime(1)
+  gridRestsOn(grid, Match.State(match).cells)
+end
+
+function tests.WindowTakesA2048MoveBack()
+  local player, id = slidingOnScreen()
+  local Match, game = player.private.Match, player.private.Games.Get("2048")
+  local match = player.matches[id]
+  local grid, frame = shownGrid()
+
+  local positions = { copy(Match.State(match).cells) }
+  local turn = 0
+  -- Until two tiles have just become one
+  while turn < 3 or #Match.Events(match)[turn].merges == 0 do
+    turn = turn + 1
+    slidingPlay(slidingMove(game, Match.State(match), player.private, 1), turn)
+    positions[turn + 1] = copy(Match.State(match).cells)
+    assert(turn < 60, "sooner or later two tiles meet")
+  end
+  slidingTime(1)
+  local event = Match.Events(match)[turn]
+  local merge = event.merges[1]
+  local made = grid.at[merge.at]
+  local tiles = gridShown(grid)
+
+  -- Undo shows the move backwards: the new tile goes, the one that was made comes apart
+  Client.Button("undo"):Fire("OnClick")
+  equal(turn - 1, #match.log)
+  equal(true, grid:Busy())
+  equal("cardSlide", Client.sounds[#Client.sounds])
+  equal(tiles + #event.merges, gridShown(grid), "two again where there was one")
+  equal(merge.value / 2, made.value)
+  frame:Fire("OnUpdate", 0.04)
+  slidingTime(1)
+  equal(false, grid:Busy())
+  gridRestsOn(grid, positions[turn])
+  equal(tiles + #event.merges - 1, gridShown(grid))
+
+  -- And again, faster than the tiles, all the way to the beginning
+  for back = turn - 1, 1, -1 do
+    Client.Button("undo"):Fire("OnClick")
+    equal(back - 1, #match.log)
+    if back % 2 == 0 then
+      slidingTime(1)
+      gridRestsOn(grid, positions[back])
+    end
+  end
+  slidingTime(1)
+  gridRestsOn(grid, positions[1])
+  equal(2, gridShown(grid))
+  equal(false, Client.Button("undo").enabled)
+
+  -- The same push brings the same tile back to the same square
+  slidingPlay(match.log[1] or slidingMove(game, Match.State(match), player.private, 1), 0)
+  slidingTime(1)
+  gridRestsOn(grid, Match.State(match).cells)
+end
+
+function tests.WindowFits2048IntoTheRoomItHas()
+  for _, size in ipairs({ 3, 4, 5 }) do
+    local player, id = slidingOnScreen(size)
+    local Match, game = player.private.Match, player.private.Games.Get("2048")
+    local match = player.matches[id]
+    local grid, frame, stage = shownGrid()
+    equal(size, grid.columns)
+    equal(size, grid.rows)
+    for turn = 1, 12 do
+      slidingPlay(slidingMove(game, Match.State(match), player.private, 1), turn)
+    end
+
+    local function fits()
+      local tray = frame.parent
+      assert(tray.width <= stage.width - 2 * 86 and tray.height <= stage.height, "the board leaves room either side of it")
+      equal(tray.width, tray.height)
+      assert(frame.width < tray.width and frame.width > tray.width * 0.9, "the tiles fill the board")
+      assert(grid.side >= 36, "tiles big enough to read, got " .. grid.side)
+      equal(grid.side, math.floor(grid.side), "on whole pixels")
+      local x, y = grid:Center(size * size)
+      assert(x + grid.side / 2 <= frame.width and y + grid.side / 2 <= frame.height)
+      for _, way in ipairs({ "u", "l", "r", "d" }) do
+        local arrow = slidingArrow(way)
+        assert(arrow.width >= 22 and arrow.width == arrow.height, "arrows big enough to hit")
+      end
+      local stats = Client.Find(function(widget)
+        return widget.caption ~= nil and widget.parent == stage and widget:IsVisible()
+      end)
+      equal(3, #stats)
+      for _, stat in ipairs(stats) do
+        assert(stat.width >= 70 and stat.width <= (stage.width - tray.width) / 2, "what is kept count of fits next to the board")
+      end
+      equal(false, grid:Busy(), "the tiles are simply there, not on their way")
+      gridRestsOn(grid, Match.State(match).cells)
+    end
+
+    slidingTime(1)
+    local normal = grid.side
+    fits()
+    -- Resized in the middle of a move
+    slidingPlay(slidingMove(game, Match.State(match), player.private, 1), 1)
+    equal(true, grid:Busy())
+    ForeverGamesFrame:SetSize(1500, 1100)
+    assert(grid.side > normal * 1.4, "a bigger window should mean bigger tiles")
+    fits()
+    assert(grid.at[next(grid.at)].body.texture:find("256\\tile$"), "drawn from a bigger picture")
+    ForeverGamesFrame:SetSize(764, 560)
+    assert(grid.side < normal)
+    fits()
+    -- With the list of matches out of the way there is more of it
+    local small = grid.side
+    Client.Button("focus_on"):Fire("OnClick")
+    assert(grid.side > small)
+    fits()
+  end
+end
+
+function tests.WindowCelebrates2048AndSaysWhenItIsOver()
+  local player, id, MainFrame = slidingOnScreen(3, 3)
+  local Match, game = player.private.Match, player.private.Games.Get("2048")
+  local match = player.matches[id]
+  local grid, _, stage = shownGrid()
+  equal(256, Match.State(match).target)
+  --- What someone who means to get there pushes next: on a board this small that takes knowing
+  --- which tiles are coming, and the log says
+  local function careful()
+    return slidingMove(game, Match.State(match), player.private, 4, slidingChance(player.private, match))
+  end
+
+  --- How many pieces of paper are in the air
+  local function papers()
+    return #Client.Find(function(widget)
+      local paper = widget.kind == "Texture" and widget.texture == "Interface\\Buttons\\WHITE8X8"
+      return paper and widget.parent.parent == stage and widget:IsVisible()
+    end)
+  end
+
+  -- Play it like someone who means to get there, until the tile is made
+  local turn = 0
+  while not Match.State(match).reached do
+    assert(match.status == "active", "the tile should be made before the board is full, after " .. turn .. " moves")
+    turn = turn + 1
+    slidingPlay(careful(), turn)
+    if not Match.State(match).reached then
+      equal(0, papers())
+    end
+  end
+  equal(true, Match.Events(match)[turn].reached)
+  equal("UI_EPICLOOT_TOAST", Client.sounds[#Client.sounds])
+  equal("active", match.status, "which is not the end")
+  slidingTime(0.6)
+  assert(papers() > 20, "paper rains down")
+  equal(true, says("2048_reached"))
+  equal(false, says("2048_over"))
+
+  -- And the game goes on under it, right away
+  slidingPlay(careful(), 0)
+  equal(turn + 1, #match.log)
+  turn = turn + 1
+  slidingTime(5)
+  equal(0, papers(), "the show is over by itself")
+  equal(false, says("2048_reached"))
+  gridRestsOn(grid, Match.State(match).cells)
+
+  -- Until nothing moves any more
+  while match.status == "active" do
+    turn = turn + 1
+    slidingPlay(slidingMove(game, Match.State(match), player.private, 1), turn)
+    equal(0, papers(), "once is enough")
+  end
+  local state = Match.State(match)
+  equal(true, state.over)
+  equal(1, Match.Result(match).winner, "won, for having made the tile")
+  equal("IG_QUEST_LOG_ABANDON_QUEST", Client.sounds[#Client.sounds])
+  equal(true, says("status_won_with"))
+  equal(false, says("2048_over"), "the last tile lands first")
+  slidingTime(2)
+  equal(true, says("2048_over"))
+  equal(true, says("2048_final  new_best"), "the best this board was ever played")
+  gridRestsOn(grid, state.cells)
+
+  -- Nothing moves any more, by any means
+  local made = #match.log
+  for _, way in ipairs({ "u", "d", "l", "r" }) do
+    slidingArrow(way):Fire("OnClick")
+    slidingDrag(way)
+    equal(false, grid:Busy(), "not even a nudge")
+    equal(false, slidingArrow(way).usable, "and the arrows say so")
+  end
+  equal(false, slidingKey("LEFT"), "and the keys are the character's again")
+  equal(made, #match.log)
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "undo" and widget:IsVisible()
+  end))
+
+  -- Another game is played on a clean board of the same size, and the best is there to beat
+  Client.Button("play_again"):Fire("OnClick")
+  equal(2, #player.session:List())
+  equal(false, MainFrame.IsViewing(id))
+  equal(false, says("2048_over"))
+  grid = shownGrid()
+  equal(3, grid.columns)
+  equal(2, gridShown(grid))
+  local best = Client.Find(function(widget)
+    return widget.caption ~= nil and widget.caption.text == "stat_best" and widget:IsVisible()
+  end)[1]
+  equal(tostring(state.score), best.value.text)
+
+  -- Looking at the one that is over again finds it the way it ended, without the entrance
+  MainFrame.Open(id)
+  equal(true, says("2048_over"))
+  equal(true, says("2048_final  new_best"))
+  equal(false, grid:Busy())
+  gridRestsOn(grid, state.cells)
+  equal(0, papers())
+  MainFrame.Refresh()
+  equal(true, says("2048_over"))
+end
+
+function tests.WindowSaysWhenA2048GameIsLost()
+  local player, id, MainFrame = slidingOnScreen(3, 2)
+  local Match = player.private.Match
+  local match = player.matches[id]
+  local grid = shownGrid()
+
+  -- Pushed about without a thought the small board is full in no time
+  local ways, turn = { "l", "u", "r", "d" }, 0
+  while match.status == "active" do
+    turn = turn + 1
+    slidingPlay(ways[turn % 4 + 1], turn)
+    assert(turn < 4000, "the game should end")
+  end
+  local state = Match.State(match)
+  equal(false, state.reached)
+  equal(0, Match.Result(match).winner)
+  equal(true, says("status_solo_lost_with"), "lost, which isn't giving up")
+  slidingTime(2)
+  equal(true, says("2048_over"))
+  gridRestsOn(grid, state.cells)
+
+  -- A game that was given up says nothing across the board
+  local other = assert(player.session:Invite({}, "2048"))
+  MainFrame.Open(other.id)
+  equal(false, says("2048_over"))
+  equal(4, grid.columns, "the board of the game that is looked at")
+  slidingPlay("l", 0)
+  slidingPlay("u", 1)
+  slidingPlay("r", 2)
+  Client.Button("give_up"):Fire("OnClick")
+  equal(nil, player.matches[other.id])
+  equal(true, MainFrame.IsViewing(id) or not says("2048_over"))
+end
+
+-----------------------------
 -- Solitaire on screen
 -----------------------------
 
@@ -7330,6 +8695,2922 @@ function tests.WindowSaysWhatRulesAChallengeComesWith()
     again = id ~= match.id and other or again
   end
   equal(100, again.options.bingo)
+end
+
+-----------------------------
+-- Minesweeper
+-----------------------------
+
+--- A game of minesweeper to try the rules on
+--- @param level string?
+--- @return table game, table state, table private
+local function minesweeper(level)
+  local private = loadEngine()
+  local game = private.Games.Get("minesweeper")
+  return game, game.newState(1, private.Random.New(1), private.Games.Rules(game.options, { level = level })), private
+end
+
+--- A field with its mines where a test wants them, as if the first square had been opened
+--- @param level string?
+--- @param mines number[] The squares they are under
+--- @return table game, table state, table private
+local function minefield(level, mines)
+  local game, state, private = minesweeper(level)
+  state.laid, state.mines = true, #mines
+  for _, square in ipairs(mines) do
+    state.mine[square] = true
+  end
+  return game, state, private
+end
+
+--- Makes a move that has to be legal
+--- @return table event
+local function sweep(game, state, move, random)
+  local ok, err = game.validate(state, 1, move)
+  assert(ok, move .. " should be legal: " .. tostring(err))
+  return game.apply(state, 1, move, random)
+end
+
+--- Checks that a position adds up: what it counts is what is there, nothing is both open and
+--- flagged, every number is right and no mine is open in a game that isn't lost
+--- @param state table
+local function minesweeperIsSound(state)
+  local columns, total = state.columns, state.columns * state.rows
+  local mines, opened, flags = 0, 0, 0
+  for square = 0, total - 1 do
+    mines = mines + (state.mine[square] and 1 or 0)
+    flags = flags + (state.flag[square] and 1 or 0)
+    if state.open[square] then
+      opened = opened + 1
+      assert(not state.flag[square], "square " .. square .. " is open and flagged")
+      assert(not state.mine[square], "a mine is open at " .. square)
+      local around = 0
+      for down = -1, 1 do
+        for across = -1, 1 do
+          local column, row = square % columns + across, math.floor(square / columns) + down
+          local onField = column >= 0 and column < columns and row >= 0 and row < state.rows
+          around = around + ((onField and state.mine[row * columns + column]) and 1 or 0)
+        end
+      end
+      equal(around, state.open[square], "the number at " .. square)
+    end
+  end
+  equal(state.laid and state.mines or 0, mines, "mines in the field")
+  equal(opened, state.opened, "squares counted as open")
+  equal(flags, state.flags, "flags counted")
+  for key in pairs(state.mine) do
+    assert(key >= 0 and key < total, "a mine off the field")
+  end
+end
+
+function tests.MinesweeperComesInThreeSizes()
+  local game, state, private = minesweeper()
+  equal(true, private.Games.IsSolo(game))
+  equal("solo", game.genre)
+  equal("move", game.clock)
+  equal(nil, game.undo, "a mine that went off can't be taken back")
+  equal("beginner", state.level)
+  equal("9x9 10", state.columns .. "x" .. state.rows .. " " .. state.mines)
+  equal(false, state.laid)
+  equal(nil, next(state.mine), "no mines until the first square is opened")
+  equal(nil, game.result(state))
+  equal("minesweeper_progress", game.progress(state))
+  minesweeperIsSound(state)
+
+  local _, intermediate = minesweeper("intermediate")
+  equal("16x16 40", intermediate.columns .. "x" .. intermediate.rows .. " " .. intermediate.mines)
+  local _, expert = minesweeper("expert")
+  equal("30x16 99", expert.columns .. "x" .. expert.rows .. " " .. expert.mines)
+  local _, usual = minesweeper("impossible")
+  equal("beginner", usual.level, "what it can't be set to is the usual")
+  equal("beginner", game.newState(1, private.Random.New(1)).level, "and so is nothing at all")
+
+  -- How hard it is travels the way any option does
+  equal(nil, private.Games.EncodeOptions(game, { level = "beginner" }))
+  equal("level=expert", private.Games.EncodeOptions(game, { level = "expert" }))
+  equal("expert", private.Games.DecodeOptions(game, "level=expert").level)
+  equal("minesweeper_level_expert", private.Games.OptionLabel(game.options[1], "expert"))
+  equal("option_line", private.Games.DescribeOptions(game, { level = "expert" })[1])
+end
+
+function tests.MinesweeperLaysItsMinesAroundTheFirstSquare()
+  for _, level in ipairs({ "beginner", "intermediate", "expert" }) do
+    for seed = 1, 12 do
+      local game, state, private = minesweeper(level)
+      local total = state.columns * state.rows
+      -- In a corner, on an edge and in the middle
+      local first = ({ 0, state.columns - 1, total - 1, math.floor(total / 2) + 3, state.columns * 2 })[seed % 5 + 1]
+      local event = sweep(game, state, "r" .. first, private.Random.New(seed))
+      equal(true, event.laid)
+      equal(true, state.laid)
+      minesweeperIsSound(state)
+      equal(0, state.open[first], "nothing touches the square the game began with")
+      assert(#event.opened >= 4, "it opens a patch, not a square")
+      equal(first, event.opened[1])
+      equal(0, event.depths[1])
+      equal(#event.opened, state.opened)
+      equal(#event.opened, #event.depths)
+      for index = 2, #event.depths do
+        assert(event.depths[index] >= event.depths[index - 1], "the opening spreads outward")
+      end
+    end
+  end
+end
+
+function tests.MinesweeperIsTheSameGameFromTheSameSeed()
+  local function field(seed, first)
+    local game, state, private = minesweeper("intermediate")
+    sweep(game, state, "r" .. first, private.Random.New(seed))
+    local mines = {}
+    for square = 0, state.columns * state.rows - 1 do
+      mines[#mines + 1] = state.mine[square] and "*" or "."
+    end
+    return table.concat(mines)
+  end
+  equal(field(7, 100), field(7, 100))
+  assert(field(7, 100) ~= field(8, 100), "another seed, another field")
+  assert(field(7, 100) ~= field(7, 30), "and another first square as well")
+
+  -- Through the engine, where a match is replayed from its log every time it is looked at
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "minesweeper", { options = { level = "expert" } }))
+  assert(alice.session:Move(match.id, "f3"))
+  assert(alice.session:Move(match.id, "r200"))
+  local Match = alice.private.Match
+  local state = Match.State(match)
+  equal("expert", state.level)
+  equal(true, state.flag[3])
+  local copied = copy(match)
+  local again = Match.State(copied)
+  assert(again ~= state)
+  for square = 0, 479 do
+    equal(state.mine[square], again.mine[square], "the mine at " .. square)
+    equal(state.open[square], again.open[square], "what is open at " .. square)
+  end
+  local events = Match.Events(match)
+  equal("f", events[1].action)
+  equal(true, events[2].laid)
+  equal("minesweeper_progress", alice.private.Games.Get("minesweeper").progress(state))
+end
+
+function tests.MinesweeperOpensSquaresAndFloodsFromTheEmptyOnes()
+  -- Mines in the top right corner and in the middle of the left edge of a nine by nine field
+  local game, state = minefield("beginner", { 80, 36 })
+  local event = sweep(game, state, "r79")
+  equal("r", event.action)
+  equal(79, event.square)
+  equal("79", table.concat(event.opened, ","), "a number opens only itself")
+  equal(1, state.open[79])
+  equal(1, state.opened)
+  equal(nil, game.result(state))
+
+  -- An empty square opens everything up to the numbers around the mines
+  event = sweep(game, state, "r0")
+  equal(0, event.opened[1])
+  equal(0, event.depths[1])
+  equal(81 - 2, state.opened, "all of it but the mines")
+  equal(8, event.depths[#event.depths], "the far corner is eight steps away")
+  equal(true, event.won)
+  equal(1, game.result(state).winner)
+  minesweeperIsSound(state)
+  -- Nothing is left to do but flag what is left, which is done for the player
+  equal("36,80", (function()
+    local swept = { unpack(event.swept) }
+    table.sort(swept)
+    return table.concat(swept, ",")
+  end)())
+  equal(36, event.swept[1], "nearest where the move was made first")
+  equal(true, state.flag[80])
+  equal(2, state.flags)
+  equal(false, (game.validate(state, 1, "r80")), "over is over")
+  equal(false, (game.validate(state, 1, "f80")))
+end
+
+function tests.MinesweeperFloodLeavesFlagsStanding()
+  local game, state = minefield("beginner", { 80 })
+  local planted = sweep(game, state, "f40")
+  equal("f", planted.action)
+  equal(true, planted.planted)
+  equal(1, state.flags)
+  equal(1, state.moves)
+  local event = sweep(game, state, "r0")
+  equal(nil, state.open[40], "a flag keeps its square shut")
+  equal(81 - 2, state.opened)
+  equal(nil, event.won, "which leaves one still to open")
+  equal(nil, game.result(state))
+
+  local taken = sweep(game, state, "f40")
+  equal(false, taken.planted)
+  equal(0, state.flags)
+  equal(nil, state.flag[40])
+  event = sweep(game, state, "r40")
+  equal(true, event.won)
+  equal("80", table.concat(event.swept, ","))
+  minesweeperIsSound(state)
+end
+
+function tests.MinesweeperRejectsWhatCantBeDone()
+  local game, state = minefield("beginner", { 80, 36 })
+  sweep(game, state, "r79")
+  sweep(game, state, "f80")
+  local wrong = { "r79", "f79", "r80", "c80", "c0", "r81", "r-1", "r", "x3", "r03", "r3 ", "f1.0", "c79x", "", "r" .. string.rep("9", 20) }
+  for _, move in ipairs(wrong) do
+    local ok, err = game.validate(state, 1, move)
+    equal(false, ok, "'" .. move .. "' should be rejected")
+    equal("invalid_move", err)
+  end
+  equal("not_your_turn", select(2, game.validate(state, 2, "r0")))
+  -- A chord takes exactly as many flags as the number says, and something to open
+  sweep(game, state, "f70")
+  equal(false, (game.validate(state, 1, "c79")), "two flags on a one")
+  sweep(game, state, "f70")
+  equal(true, (game.validate(state, 1, "c79")))
+  sweep(game, state, "f80")
+  equal(false, (game.validate(state, 1, "c79")), "none")
+  equal(true, (game.validate(state, 1, "r0")))
+  equal(true, (game.validate(state, 1, "f0")))
+end
+
+function tests.MinesweeperChordsOpenTheRestAroundANumber()
+  -- One mine in the corner at the bottom left. Its neighbours are opened one at a time
+  local game, state = minefield("beginner", { 0, 80 })
+  sweep(game, state, "r10")
+  equal(1, state.open[10])
+  equal(false, (game.validate(state, 1, "c10")), "not without its flag")
+  sweep(game, state, "f0")
+  local event = sweep(game, state, "c10")
+  equal("c", event.action)
+  equal(10, event.square)
+  equal(1, event.depths[1], "a chord begins a step from its number")
+  equal(79 - 1, #event.opened, "the rest of the field, flooded from around it")
+  equal(true, event.won)
+  equal(nil, event.exploded)
+  equal(79, state.opened)
+  equal(true, state.flag[80])
+  minesweeperIsSound(state)
+
+  -- A flag on the wrong square, and the chord opens the mine
+  game, state = minefield("beginner", { 0, 80 })
+  sweep(game, state, "r10")
+  sweep(game, state, "f1")
+  event = sweep(game, state, "c10")
+  equal(0, event.exploded)
+  equal(0, state.hit)
+  equal(0, game.result(state).winner)
+  equal("80", table.concat(event.mines, ","))
+  equal("8", table.concat(event.reach, ","))
+  equal("1", table.concat(event.wrong, ","))
+  assert(#event.opened > 0, "what had no mine was opened all the same")
+  equal(nil, state.open[1], "though not what was flagged")
+end
+
+function tests.MinesweeperIsLostByOpeningAMine()
+  local game, state, private = minefield("beginner", { 40, 41, 0, 80, 8 })
+  sweep(game, state, "r31")
+  sweep(game, state, "f41")
+  sweep(game, state, "f72")
+  local event = sweep(game, state, "r40")
+  equal(40, event.exploded)
+  equal(0, #event.opened)
+  equal(40, state.hit)
+  equal(0, game.result(state).winner)
+  equal("0,8,80", table.concat(event.mines, ","), "every other mine nobody flagged, nearest first")
+  equal("4,4,4", table.concat(event.reach, ","))
+  equal("72", table.concat(event.wrong, ","))
+  equal(false, (game.validate(state, 1, "r1")), "over is over")
+  equal(false, (game.validate(state, 1, "f1")))
+  equal(nil, game.record(state, 12, game.result(state)), "nothing to remember of a game that was lost")
+  equal(3, state.mines - state.flags)
+
+  -- Lost through the engine: the window says it is over, not that the player gave up
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "minesweeper"))
+  assert(alice.session:Move(match.id, "r40"))
+  local field = alice.private.Match.State(match)
+  local mine = next(field.mine)
+  assert(alice.session:Move(match.id, "r" .. mine))
+  equal("finished", match.status)
+  equal(0, alice.private.Match.Result(match).winner)
+  equal(false, alice.session:CanUndo(match))
+  equal(nil, alice.session:Best("minesweeper", "beginner"))
+  equal(true, private ~= nil)
+end
+
+function tests.MinesweeperKeepsTheBestTimeOfEachLevel()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session, Match = alice.session, alice.private.Match
+
+  --- Plays a game through without ever guessing: the test can see the mines
+  local function win(level, seconds)
+    local match = assert(session:Invite({}, "minesweeper", { options = { level = level } }))
+    session:Spend(match.id, 30)
+    equal(0, session:Elapsed(match), "the clock starts with the first move")
+    assert(session:Move(match.id, "r0"))
+    local state = Match.State(match)
+    for square = 0, state.columns * state.rows - 1 do
+      state = Match.State(match)
+      if not state.mine[square] and not state.open[square] then
+        if state.opened + 1 == state.columns * state.rows - state.mines then
+          session:Spend(match.id, seconds)
+        end
+        assert(session:Move(match.id, "r" .. square))
+      end
+    end
+    equal("finished", match.status)
+    equal(1, Match.Result(match).winner)
+    return match
+  end
+
+  equal(nil, session:Best("minesweeper", "beginner"))
+  local first = win("beginner", 50)
+  equal(50, session:Best("minesweeper", "beginner"))
+  equal(true, session:SetBest(first, "beginner"))
+  equal(nil, session:Best("minesweeper", "expert"), "every level has its own")
+  local slower = win("beginner", 70)
+  equal(50, session:Best("minesweeper", "beginner"), "less is better")
+  equal(false, session:SetBest(slower, "beginner"))
+  local faster = win("beginner", 20)
+  equal(20, session:Best("minesweeper", "beginner"))
+  equal(true, session:SetBest(faster, "beginner"))
+  win("expert", 300)
+  equal(300, session:Best("minesweeper", "expert"))
+  equal(20, session:Best("minesweeper", "beginner"))
+end
+
+function tests.MinesweeperIsPlayedThroughWithoutLosingCount()
+  local won, lost = 0, 0
+  for seed = 1, 18 do
+    local level = ({ "beginner", "intermediate", "expert" })[seed % 3 + 1]
+    local game, state, private = minesweeper(level)
+    local luck = private.Random.New(seed)
+    local total = state.columns * state.rows
+    -- Careful for most of the game and reckless now and then, so that both ends are seen
+    local reckless = seed % 2 == 0
+    for turn = 1, 2000 do
+      if game.result(state) then
+        break
+      end
+      local moves = {}
+      for square = 0, total - 1 do
+        for _, kind in ipairs({ "r", "f", "c" }) do
+          local move = kind .. square
+          local safe = kind ~= "r" or not state.mine[square] or (reckless and turn > 25)
+          if game.validate(state, 1, move) and safe and (kind ~= "f" or turn % 4 == 0) then
+            moves[#moves + 1] = move
+          end
+        end
+      end
+      assert(#moves > 0, "a game that isn't over has a move")
+      local before = state.opened
+      local event = sweep(game, state, moves[luck:Roll(#moves)], private.Random.New(seed * 1000 + turn))
+      equal(turn, state.moves)
+      equal(state.opened - before, #(event.opened or {}), "the event says what was opened")
+      if not event.exploded then
+        minesweeperIsSound(state)
+      end
+      if event.won or event.exploded then
+        assert(game.result(state), "and that it is over")
+      end
+    end
+    local result = assert(game.result(state), "seed " .. seed .. " never ended")
+    if result.winner == 1 then
+      won = won + 1
+      equal(total - state.mines, state.opened)
+      equal(state.mines, state.flags, "every mine has its flag in the end")
+      equal(state.level, game.record(state, 9, result)[1].key)
+      equal(true, game.record(state, 9, result)[1].lower)
+    else
+      lost = lost + 1
+      equal(true, state.mine[state.hit])
+    end
+  end
+  assert(won > 0 and lost > 0, "both ways a game can end should come up: " .. won .. " won, " .. lost .. " lost")
+end
+
+-----------------------------
+-- Minesweeper on screen
+-----------------------------
+
+--- Opens the window on a new game of minesweeper
+--- @param level string?
+--- @return table player, string id, table MainFrame
+local function minesweeperOnScreen(level)
+  local world = World.New()
+  world.seed = 1
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  function StaticPopup_Show(which, _, _, data)
+    StaticPopupDialogs[which].OnAccept(nil, data)
+  end
+  local match = assert(player.session:Invite({}, "minesweeper", { options = { level = level } }))
+  MainFrame.Open(match.id)
+  return player, match.id, MainFrame
+end
+
+--- The field on screen: the board it is drawn on, and its frame
+--- @return table board, table frame
+local function shownField()
+  local frame = shownBoard()
+  return assert(frame.board, "the board on screen isn't a field"), frame
+end
+
+--- Lets time pass for everything on screen that does something with it
+--- @param seconds number
+local function fieldTime(seconds)
+  -- Only what the game put on its stage: the window around it keeps the clock, which a test sets itself
+  local stage = shownBoard().parent
+  local ticking = Client.Find(function(widget)
+    return widget.scripts.OnUpdate ~= nil and widget.parent == stage and widget:IsVisible()
+  end)
+  for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+    for _, widget in ipairs(ticking) do
+      widget:Fire("OnUpdate", 0.02)
+    end
+  end
+end
+
+--- Clicks a square of the field on screen
+--- @param square number
+--- @param button string? The left one if left out
+local function clickField(square, button)
+  local board, frame = shownField()
+  clickSquare(frame, square % board.columns, math.floor(square / board.columns), board.columns, button)
+end
+
+--- Whether a square of the field on screen still has its cover on
+--- @param square number
+--- @return boolean
+local function covered(square)
+  local board = shownField()
+  return board.squares[square].inlay.color[4] > 0
+end
+
+--- What the field on screen shows, a character a square from the bottom left: "#" covered, "F"
+--- flagged, "*" a mine, "X" a wrong flag, the number of an open square and "." for none
+--- @return string
+local function fieldShown()
+  local board = shownField()
+  local shown = {}
+  for square = 0, board.columns * board.rows - 1 do
+    local piece, label = board.pieces[square], board.labels[square]
+    local sign = ({ flag = "F", mine = "*", wrong = "X" })[piece or ""]
+    shown[#shown + 1] = sign or (covered(square) and "#" or (label and tostring(label) or "."))
+  end
+  return table.concat(shown)
+end
+
+--- What the field on screen should show for a position once nothing is on its way any more
+--- @param state table
+--- @return string
+local function fieldOf(state)
+  local lost = state.outcome and state.outcome.winner == 0
+  local shown = {}
+  for square = 0, state.columns * state.rows - 1 do
+    local sign = "#"
+    if state.open[square] then
+      sign = state.open[square] > 0 and tostring(state.open[square]) or "."
+    elseif state.flag[square] then
+      sign = (lost and not state.mine[square]) and "X" or "F"
+    elseif lost and state.mine[square] then
+      sign = "*"
+    end
+    shown[#shown + 1] = sign
+  end
+  return table.concat(shown)
+end
+
+--- What a box over the field says
+--- @param title string
+--- @return string
+local function statSays(title)
+  local found = Client.Find(function(widget)
+    return widget.caption ~= nil and widget.caption.text == title and widget:IsVisible()
+  end)
+  equal(1, #found, "boxes called " .. title)
+  return found[1].value.text
+end
+
+--- @param name string
+--- @return number How often a sound was played
+local function heard(name)
+  local count = 0
+  for _, sound in ipairs(Client.sounds) do
+    count = count + (sound == name and 1 or 0)
+  end
+  return count
+end
+
+function tests.WindowShowsAMinefield()
+  local player, id = minesweeperOnScreen()
+  local board, frame = shownField()
+  local state = player.private.Match.State(player.matches[id])
+  equal(9, board.columns)
+  equal(9, board.rows)
+  equal(string.rep("#", 81), fieldShown(), "every square covered")
+  equal(true, says("game_minesweeper"))
+  equal(true, says("minesweeper_progress"))
+  equal(false, says("status_your_turn"))
+  equal("10", statSays("minesweeper_mines"))
+  equal("0:00", statSays("stat_time"))
+  equal("stat_none", statSays("stat_best"))
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "undo" and widget:IsVisible()
+  end), "nothing can be taken back")
+  equal(false, state.laid)
+
+  -- The first click opens a patch, which ripples outward rather than being there at once
+  Client.sounds = {}
+  clickField(40)
+  equal("r40", logOf(player, id))
+  state = player.private.Match.State(player.matches[id])
+  assert(state.opened > 8)
+  equal(string.rep("#", 81), fieldShown(), "nothing of it yet")
+  local partly = false
+  for _ = 1, 100 do
+    fieldTime(0.02)
+    local shown = select(2, fieldShown():gsub("#", "#"))
+    partly = partly or (shown < 81 and shown > 81 - state.opened)
+  end
+  equal(true, partly, "it takes a while")
+  equal(fieldOf(state), fieldShown())
+  equal(false, covered(40))
+  equal(1, heard("cardSlide") + heard("IG_MAINMENU_OPTION_CHECKBOX_ON"))
+  assert(frame.width > 0 and frame.width == board.cell * 9)
+
+  -- The numbers are written in their colours
+  for square = 0, 80 do
+    local label = board.squares[square].label
+    local number = state.open[square]
+    if number and number > 0 then
+      equal(tostring(number), label.text)
+      assert(board.inks[square], "a number has a colour")
+    end
+  end
+
+  -- The clock runs from the first move on, and only while the game is looked at
+  ForeverGamesFrame.detail:Fire("OnUpdate", 61)
+  fieldTime(0.02)
+  equal("1:01", statSays("stat_time"))
+
+  -- Looking at it again changes nothing
+  ForeverGamesFrame:Hide()
+  ForeverGamesFrame:Show()
+  equal(fieldOf(state), fieldShown())
+end
+
+function tests.WindowFlagsAndChordsAMinefield()
+  local player, id = minesweeperOnScreen()
+  local Match, match = player.private.Match, player.matches[id]
+  clickField(40)
+  fieldTime(2)
+  local state = Match.State(match)
+  local board, frame = shownField()
+
+  -- A right click plants a flag, which pops in, and another takes it away again
+  local mine = nil
+  for square = 0, 80 do
+    mine = mine or (state.mine[square] and square or nil)
+  end
+  Client.sounds = {}
+  clickField(mine, "RightButton")
+  equal("r40,f" .. mine, logOf(player, id))
+  equal("flag", board.pieces[mine])
+  equal(true, board.pops[mine] ~= nil, "it pops in")
+  equal("9", statSays("minesweeper_mines"))
+  equal(1, heard("chipsCollide"))
+  settle(frame)
+  equal(nil, board.pops[mine])
+  equal(true, covered(mine))
+  clickField(mine, "RightButton")
+  equal(nil, board.pieces[mine])
+  equal("10", statSays("minesweeper_mines"))
+  equal(1, heard("IG_BACKPACK_CLOSE"))
+
+  -- A left click on a flag does nothing but say so, and neither does a right click on an open square
+  clickField(mine, "RightButton")
+  local moves = #match.log
+  Client.sounds = {}
+  clickField(mine)
+  equal(moves, #match.log)
+  equal(1, heard("IG_MAINMENU_OPTION_CHECKBOX_OFF"))
+  fieldTime(0.04)
+  assert(board.tints[mine], "the square lights up")
+  fieldTime(1)
+  equal(nil, board.tints[mine], "for a moment")
+  clickField(40, "RightButton")
+  equal(moves, #match.log)
+  equal(2, heard("IG_MAINMENU_OPTION_CHECKBOX_OFF"))
+  fieldTime(1)
+
+  -- Pointing at a number shows what it is about
+  local number, waiting = nil, nil
+  for square = 0, 80 do
+    if not number and (state.open[square] or 0) > 0 then
+      local hidden, flags = {}, 0
+      for other = 0, 80 do
+        local across, down = math.abs(other % 9 - square % 9), math.abs(math.floor(other / 9) - math.floor(square / 9))
+        local near = math.max(across, down) == 1
+        if near and state.flag[other] then
+          flags = flags + 1
+        elseif near and not state.open[other] then
+          hidden[#hidden + 1] = other
+        end
+      end
+      if flags == 0 and #hidden > 0 then
+        number, waiting = square, hidden
+      end
+    end
+  end
+  assert(number, "there should be a number with nothing flagged around it")
+  Client.cursor = { (number % 9 + 0.5) * board.cell, (math.floor(number / 9) + 0.5) * board.cell }
+  frame:Fire("OnUpdate", 0.02)
+  for _, square in ipairs(waiting) do
+    assert(board.tints[square], "square " .. square .. " should be pointed out")
+  end
+
+  -- A chord on a number without its flags is refused, by the middle button as well
+  Client.sounds = {}
+  moves = #match.log
+  press(frame)
+  release(frame)
+  frame:Fire("OnMouseDown", "MiddleButton")
+  equal(moves, #match.log)
+  equal(2, heard("IG_MAINMENU_OPTION_CHECKBOX_OFF"))
+  fieldTime(1)
+  Client.cursor = { -5, -5 }
+  frame:Fire("OnUpdate", 0.02)
+  equal(nil, next(board.tints), "nothing pointed out once the cursor is gone")
+end
+
+--- Plays the game on screen to the end by clicking, the mines being known to the test: flags a
+--- mine, chords where that can be done and opens a safe square where not
+--- @param player table
+--- @param id string
+--- @param withMiddle boolean Chord with the middle button rather than the left
+--- @return number chords How many were made
+local function clearFieldOnScreen(player, id, withMiddle)
+  local Match, match = player.private.Match, player.matches[id]
+  local game = player.private.Games.Get("minesweeper")
+  local chords = 0
+  for _ = 1, 600 do
+    local state = Match.State(match)
+    if match.status ~= "active" then
+      break
+    end
+    local total = state.columns * state.rows
+    local move = nil
+    for square = 0, total - 1 do
+      if not move and game.validate(state, 1, "c" .. square) then
+        -- Only where the flags are right, which they are: the test planted them
+        move = "c" .. square
+      end
+    end
+    for square = 0, total - 1 do
+      if not move and state.mine[square] and not state.flag[square] and state.moves % 3 == 0 then
+        move = "f" .. square
+      end
+    end
+    for square = 0, total - 1 do
+      if not move and not state.mine[square] and game.validate(state, 1, "r" .. square) then
+        move = "r" .. square
+      end
+    end
+    local kind, square = move:sub(1, 1), tonumber(move:sub(2))
+    local before = #match.log
+    if kind == "f" then
+      clickField(square, "RightButton")
+    elseif kind == "c" and withMiddle then
+      local board, frame = shownField()
+      Client.cursor = { (square % board.columns + 0.5) * board.cell, (math.floor(square / board.columns) + 0.5) * board.cell }
+      frame:Fire("OnUpdate", 0.02)
+      frame:Fire("OnMouseDown", "MiddleButton")
+    else
+      clickField(square)
+    end
+    chords = chords + (kind == "c" and 1 or 0)
+    equal(before + 1, #match.log, move .. " should have been played")
+    equal(move, match.log[#match.log])
+    -- Sometimes the next click comes before the last one has been shown to the end
+    if before % 2 == 0 then
+      fieldTime(1.5)
+      equal(fieldOf(Match.State(match)), fieldShown(), "after " .. move)
+    end
+  end
+  return chords
+end
+
+function tests.WindowPlaysMinesweeperToAWin()
+  local player, id, MainFrame = minesweeperOnScreen()
+  local Match, match = player.private.Match, player.matches[id]
+  clickField(40)
+  ForeverGamesFrame.detail:Fire("OnUpdate", 83)
+  Client.sounds = {}
+  local chords = clearFieldOnScreen(player, id, false)
+  assert(chords > 0, "some of it should have been chords")
+  equal("finished", match.status)
+  local state = Match.State(match)
+  equal(1, state.outcome.winner)
+  equal("status_won_with", MainFrame.Describe(match))
+
+  -- The mines that were left are flagged one after the other, under paper, and then it says so
+  local board, frame = shownField()
+  fieldTime(4)
+  settle(frame)
+  equal(fieldOf(state), fieldShown())
+  equal(10, select(2, fieldShown():gsub("F", "F")))
+  equal("0", statSays("minesweeper_mines"))
+  equal(true, says("minesweeper_won"))
+  equal(true, says("minesweeper_cleared_best"), "the first win is the best there is")
+  equal("1:23", statSays("stat_best"))
+  equal("1:23", statSays("stat_time"))
+  equal(1, heard("IG_QUEST_LIST_COMPLETE"))
+  equal(0, heard("dieThrow"))
+  assert(heard("chipsCollide") > 0 and heard("cardSlide") + heard("IG_MAINMENU_OPTION_CHECKBOX_ON") > 0)
+  ForeverGamesFrame.detail:Fire("OnUpdate", 30)
+  fieldTime(0.1)
+  equal("1:23", statSays("stat_time"), "the clock stops with the game")
+
+  -- Nothing more to click
+  local moves = #match.log
+  clickField(0)
+  clickField(0, "RightButton")
+  equal(moves, #match.log)
+
+  -- Another game: the words are gone, the field is covered again and the best time stays
+  Client.Button("play_again"):Fire("OnClick")
+  local another = nil
+  for other in pairs(player.matches) do
+    another = other ~= id and other or another
+  end
+  equal(true, MainFrame.IsViewing(another))
+  equal(false, says("minesweeper_won"))
+  equal(string.rep("#", 81), fieldShown())
+  equal("10", statSays("minesweeper_mines"))
+  equal("0:00", statSays("stat_time"))
+  equal("1:23", statSays("stat_best"))
+
+  -- A slower win is no record
+  clickField(40)
+  ForeverGamesFrame.detail:Fire("OnUpdate", 200)
+  clearFieldOnScreen(player, another, true)
+  fieldTime(4)
+  equal(true, says("minesweeper_won"))
+  equal(true, says("minesweeper_cleared_in"))
+  equal(false, says("minesweeper_cleared_best"))
+  equal("1:23", statSays("stat_best"))
+
+  -- The one that was won first is still there to look at, with what it says across it at once
+  MainFrame.Select(id)
+  equal(true, says("minesweeper_won"))
+  equal(true, says("minesweeper_cleared_best"))
+  equal(fieldOf(state), fieldShown())
+  equal(board, (shownField()))
+end
+
+function tests.WindowBlowsAMinefieldUp()
+  local player, id, MainFrame = minesweeperOnScreen("intermediate")
+  local Match, match = player.private.Match, player.matches[id]
+  local board, frame = shownField()
+  equal(16, board.columns)
+  clickField(120)
+  fieldTime(2)
+  local state = Match.State(match)
+
+  -- A flag where there is nothing, a flag where there is something, and then a mine
+  local mines, safe = {}, nil
+  for square = 0, 255 do
+    if state.mine[square] then
+      mines[#mines + 1] = square
+    elseif not state.open[square] then
+      safe = safe or square
+    end
+  end
+  clickField(safe, "RightButton")
+  clickField(mines[1], "RightButton")
+  fieldTime(1)
+  Client.sounds = {}
+  local hit = mines[#mines]
+  clickField(hit)
+  equal("finished", match.status)
+  state = Match.State(match)
+  equal(0, state.outcome.winner)
+  equal("status_solo_lost_with", MainFrame.Describe(match))
+
+  -- The one that was hit goes off first, then the rest away from it, then the wrong flag is turned over
+  fieldTime(0.02)
+  equal("mine", board.pieces[hit])
+  equal(false, covered(hit))
+  assert(board.tints[hit], "the culprit is pointed out")
+  equal(1, heard("dieThrow"))
+  equal(1, heard("IG_QUEST_FAILED"))
+  equal(false, says("minesweeper_lost"))
+  local shownMines = select(2, fieldShown():gsub("%*", "*"))
+  assert(shownMines < 39, "the others take their time, " .. shownMines .. " are there at once")
+  equal("flag", board.pieces[safe], "the wrong flag is still a flag")
+  local partly = false
+  for _ = 1, 150 do
+    fieldTime(0.02)
+    local count = select(2, fieldShown():gsub("%*", "*"))
+    partly = partly or (count > 1 and count < 39)
+  end
+  settle(frame)
+  equal(true, partly)
+  equal(fieldOf(state), fieldShown())
+  equal(39, select(2, fieldShown():gsub("%*", "*")), "every mine but the one that was flagged")
+  equal("wrong", board.pieces[safe])
+  equal("flag", board.pieces[mines[1]])
+  equal(true, covered(mines[1]))
+  assert(board.tints[hit], "the culprit stays pointed out")
+  equal(true, says("minesweeper_lost"))
+  equal(true, says("minesweeper_cleared_some"))
+  equal("38", statSays("minesweeper_mines"))
+  equal("stat_none", statSays("stat_best"))
+  equal(1, heard("dieThrow"), "once is enough")
+
+  -- Nothing more to click, and nothing to take back
+  local moves = #match.log
+  clickField(0)
+  clickField(0, "RightButton")
+  equal(moves, #match.log)
+  equal(false, player.session:CanUndo(match))
+
+  -- A game of another size has a field of its own, and coming back shows this one as it ended
+  local expert = assert(player.session:Invite({}, "minesweeper", { options = { level = "expert" } }))
+  MainFrame.Select(expert.id)
+  local wide = shownField()
+  equal(30, wide.columns)
+  equal(false, says("minesweeper_lost"))
+  equal(string.rep("#", 480), fieldShown())
+  equal("99", statSays("minesweeper_mines"))
+  MainFrame.Select(id)
+  equal(board, (shownField()))
+  equal(true, says("minesweeper_lost"))
+  equal(fieldOf(state), fieldShown())
+  assert(board.tints[hit])
+end
+
+function tests.WindowShowsAMoveThatIsCutShortAsItEndsUp()
+  local player, id = minesweeperOnScreen("expert")
+  local Match, match = player.private.Match, player.matches[id]
+  clickField(200)
+  local state = Match.State(match)
+  local board = shownField()
+  equal(string.rep("#", 480), fieldShown())
+
+  -- Hidden in the middle of it: there by the time it is looked at again
+  fieldTime(0.1)
+  local ticker = Client.Find(function(widget)
+    return widget.scripts.OnHide ~= nil and widget.scripts.OnUpdate ~= nil and widget.parent == board.frame.parent
+  end)
+  assert(#ticker >= 1)
+  for _, widget in ipairs(ticker) do
+    widget:Fire("OnHide")
+  end
+  equal(fieldOf(state), fieldShown())
+
+  -- The next click before the last one is over: nothing of the first is left behind
+  local closed = nil
+  for square = 0, 479 do
+    closed = closed or ((not state.open[square] and not state.mine[square]) and square or nil)
+  end
+  if closed then
+    clickField(closed)
+    clickField(closed == 0 and 1 or 0, "RightButton")
+    state = Match.State(match)
+    fieldTime(3)
+    equal(fieldOf(state), fieldShown())
+  end
+  -- Being told again and again that nothing changed starts nothing over
+  local MainFrame = player.private.MainFrame
+  MainFrame.Refresh()
+  MainFrame.Refresh()
+  equal(fieldOf(state), fieldShown())
+end
+
+function tests.WindowFitsAMinefieldIntoTheRoomItHas()
+  for _, level in ipairs({ "beginner", "intermediate", "expert" }) do
+    local player, id = minesweeperOnScreen(level)
+    local board, frame = shownField()
+    local stage = frame.parent
+    clickField(board.columns + 1)
+    fieldTime(2)
+    local state = player.private.Match.State(player.matches[id])
+    local normal = board.cell
+
+    local function fits(least)
+      equal(board.cell * board.columns, frame.width)
+      equal(board.cell * board.rows, frame.height)
+      local room = stage.width .. "x" .. stage.height
+      assert(frame.width <= stage.width and frame.height + 38 <= stage.height, level .. " doesn't fit into " .. room)
+      assert(board.cell >= least, level .. " squares are too small to play on: " .. board.cell)
+      assert(board.cell <= 56, "nor are they ever huge")
+      local boxes = Client.Find(function(widget)
+        return widget.caption ~= nil and widget:IsVisible()
+      end)
+      equal(3, #boxes)
+      assert(boxes[1].width * 3 <= stage.width, "the boxes fit side by side")
+      equal(fieldOf(state), fieldShown())
+    end
+    fits(14)
+    ForeverGamesFrame:SetSize(1800, 1300)
+    assert(board.cell > normal, "a bigger window should mean bigger squares")
+    fits(32)
+    ForeverGamesFrame:SetSize(764, 560)
+    fits(14)
+  end
+end
+
+function tests.WizardSetsAGameForOneUpBeforeItBegins()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Wizard = openWizard(alice)
+  pickGame("minesweeper")
+  equal(true, Wizard.IsOpen(), "there is something to choose first")
+  equal(0, #alice.session:List())
+  equal(true, says("wizard_step_solo"))
+  equal(true, says("minesweeper_option_level"))
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end), "but nobody to pick")
+  equal("minesweeper_level_beginner", select(2, ruleChoices("minesweeper_option_level")))
+  ruleChoices("minesweeper_option_level")["minesweeper_level_expert"]:Fire("OnClick")
+  equal(true, says("wizard_solo_note"))
+  Client.Button("wizard_play"):Fire("OnClick")
+  equal(false, Wizard.IsOpen())
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal("minesweeper", started.game)
+  equal("active", started.status)
+  equal("expert", started.options.level)
+  equal(30, alice.private.Match.State(started).columns)
+  equal(0, #world.queue, "nothing is sent to anyone")
+
+  -- The next one starts out set the same way, and a challenge is still called one
+  Wizard.Open()
+  pickGame("minesweeper")
+  equal("minesweeper_level_expert", select(2, ruleChoices("minesweeper_option_level")))
+  Client.Button("Back"):Fire("OnClick")
+  pickGame("chess")
+  equal(true, says("wizard_step_opponent"))
+  equal(1, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "wizard_send" and widget:IsVisible()
+  end))
+  equal(1, #Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end), "with somebody to pick")
+end
+
+-----------------------------
+-- What games for one share
+-----------------------------
+
+--- A game for one that is nothing but counting, to try what the engine does for such games on:
+--- "u" counts one up, "w" wins it and "x" loses it
+--- @param private table
+--- @param shown table? Filled with what the view is asked to show
+local function registerCounting(private, shown)
+  private.Games.Register({
+    id = "counting",
+    name = "Counting",
+    genre = "solo",
+    version = 1,
+    seats = 1,
+    undo = true,
+    clock = "move",
+    newState = function()
+      return { count = 0 }
+    end,
+    turn = function()
+      return 1
+    end,
+    validate = function(_, _, move)
+      return move == "u" or move == "w" or move == "x"
+    end,
+    apply = function(state, _, move)
+      state.count = state.count + (move == "u" and 1 or 0)
+      state.outcome = move ~= "u" and { winner = move == "w" and 1 or 0 } or nil
+    end,
+    result = function(state)
+      return state.outcome
+    end,
+    progress = function()
+      return "so far"
+    end,
+    record = function(state, seconds, result)
+      local records = { { key = "score", value = state.count } }
+      if result and result.winner == 1 then
+        records[2] = { key = "time", value = seconds, lower = true }
+      end
+      return records
+    end,
+    createView = function()
+      return {
+        Layout = function() end,
+        Update = function(_, view)
+          shown.view = view
+        end,
+      }
+    end,
+  })
+end
+
+function tests.GameForOneIsTimedAndKeepsTheBest()
+  local world = World.New()
+  local records = {}
+  local alice = world:AddPlayer("Alice-Realm")
+  alice.session.env.records = records
+  registerCounting(alice.private)
+  local session = alice.session
+
+  local match = assert(session:Invite({}, "counting"))
+  equal(nil, session:Best("counting", "score"))
+  session:Spend(match.id, 5)
+  equal(0, session:Elapsed(match), "the clock starts with the first move")
+  assert(session:Move(match.id, "u"))
+  assert(session:Move(match.id, "u"))
+  session:Spend(match.id, 5)
+  session:Spend(match.id, 2.5)
+  equal(7.5, session:Elapsed(match))
+  equal(2, session:Best("counting", "score"))
+  equal(true, session:SetBest(match, "score"))
+  equal(nil, session:Best("counting", "time"), "only a game that was won has a time")
+  assert(session:Move(match.id, "w"))
+  equal(7.5, session:Best("counting", "time"))
+  session:Spend(match.id, 5)
+  equal(7.5, session:Elapsed(match), "what is over is off the clock")
+  equal(2, records.counting.score, "kept where it is saved")
+
+  -- Only what is better is kept: more of a score, less of a time
+  local slower = assert(session:Invite({}, "counting"))
+  assert(session:Move(slower.id, "u"))
+  session:Spend(slower.id, 20)
+  assert(session:Move(slower.id, "w"))
+  equal(2, session:Best("counting", "score"))
+  equal(7.5, session:Best("counting", "time"))
+  equal(false, session:SetBest(slower, "score"))
+  equal(false, session:SetBest(slower, "time"))
+  local faster = assert(session:Invite({}, "counting"))
+  for _ = 1, 3 do
+    assert(session:Move(faster.id, "u"))
+  end
+  session:Spend(faster.id, 3)
+  assert(session:Move(faster.id, "w"))
+  equal(3, session:Best("counting", "score"))
+  equal(3, session:Best("counting", "time"))
+  equal(true, session:SetBest(faster, "time"))
+
+  -- A game without any of it is left alone
+  local other = assert(session:Invite({}, "solitaire"))
+  assert(session:Move(other.id, "d"))
+  session:Spend(other.id, 5)
+  equal(0, session:Elapsed(other))
+  session:Spend("nope", 5)
+end
+
+function tests.WindowTimesAGameForOneAndSaysHowItWasLost()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local shown = {}
+  registerCounting(alice.private, shown)
+  local MainFrame = openWindow(alice)
+  local match = assert(alice.session:Invite({}, "counting"))
+  MainFrame.Open(match.id)
+
+  equal(0, shown.view.clock())
+  ForeverGamesFrame.detail:Fire("OnUpdate", 2)
+  equal(0, shown.view.clock(), "nothing played yet")
+  assert(alice.session:Move(match.id, "u"))
+  ForeverGamesFrame.detail:Fire("OnUpdate", 2)
+  ForeverGamesFrame.detail:Fire("OnUpdate", 1)
+  equal(3, shown.view.clock())
+  local best, mine = shown.view.best("score")
+  equal(1, best)
+  equal(true, mine)
+  equal(nil, (shown.view.best("time")))
+
+  assert(alice.session:Move(match.id, "x"))
+  equal("status_solo_lost_with", MainFrame.Describe(match), "lost, which isn't giving up")
+  ForeverGamesFrame.detail:Fire("OnUpdate", 4)
+  equal(3, shown.view.clock())
+
+  local won = assert(alice.session:Invite({}, "counting"))
+  assert(alice.session:Move(won.id, "w"))
+  equal("status_won_with", MainFrame.Describe(won))
+  local quit = assert(alice.session:Invite({}, "counting"))
+  assert(alice.session:Resign(quit.id))
+  equal("status_gave_up", MainFrame.Describe(quit))
+end
+
+--- Loads some of the window's building blocks on their own, over a fresh fake client
+--- @param files string[]
+--- @return table private
+local function loadWidgets(files)
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } } }
+  local private = { L = setmetatable({}, {
+    __index = function(_, key)
+      return key
+    end,
+  }) }
+  for _, file in ipairs(files) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  return private
+end
+
+function tests.KeysAreOnlyTakenUnderTheCursorAndOutOfCombat()
+  local Widgets = loadWidgets({ "GUI/Widgets.lua" }).Widgets
+  local frame = CreateFrame("Frame", nil, UIParent)
+  local pressed = {}
+  Widgets.Keys(frame, function(key)
+    pressed[#pressed + 1] = key
+    return key == "LEFT"
+  end)
+  equal(true, frame.keyboard)
+  equal(true, frame.propagates)
+
+  frame:Fire("OnKeyDown", "LEFT")
+  equal(false, frame.propagates, "a key that was used goes no further")
+  frame:Fire("OnKeyDown", "W")
+  equal(true, frame.propagates, "any other does what it always does")
+  equal("LEFT,W", table.concat(pressed, ","))
+
+  Client.over = false
+  frame:Fire("OnKeyDown", "LEFT")
+  equal(true, frame.propagates, "not while the cursor is somewhere else")
+  equal(2, #pressed)
+  Client.over = true
+
+  -- In combat every key is the game client's
+  frame:Fire("OnKeyDown", "LEFT")
+  equal(false, frame.propagates)
+  frame:Fire("OnEvent", "PLAYER_REGEN_DISABLED")
+  equal(true, frame.propagates)
+  equal(false, frame.keyboard)
+  Client.combat = true
+  frame:Fire("OnKeyDown", "LEFT")
+  equal(true, frame.propagates)
+  equal(3, #pressed)
+  Client.combat = false
+  frame:Fire("OnEvent", "PLAYER_REGEN_ENABLED")
+  equal(true, frame.keyboard)
+
+  -- One that is made in combat waits for it to be over
+  Client.combat = true
+  local late = CreateFrame("Frame", nil, UIParent)
+  Widgets.Keys(late, function()
+    return true
+  end)
+  equal(nil, late.keyboard)
+  Client.combat = false
+  late:Fire("OnEvent", "PLAYER_REGEN_ENABLED")
+  equal(true, late.keyboard)
+  equal(true, late.propagates)
+end
+
+function tests.AnimatorEasesAndClocksAreWritten()
+  local Widgets = loadWidgets({ "GUI/Widgets.lua" }).Widgets
+  equal("0:00", Widgets.Time(0))
+  equal("0:07", Widgets.Time(7.9))
+  equal("12:34", Widgets.Time(754))
+  equal("1:02:03", Widgets.Time(3723))
+
+  for name, ease in pairs(Widgets.Ease) do
+    equal(0, math.floor(ease(0) * 1000 + 0.5), name .. " starts where it was")
+    equal(name == "swell" and 0 or 1000, math.floor(ease(1) * 1000 + 0.5), name .. " ends where it is going")
+  end
+  assert(Widgets.Ease.back(0.7) > 1, "past the end on the way")
+
+  local frame = CreateFrame("Frame", nil, UIParent)
+  local animator = Widgets.Animator(frame)
+  local plain, eased = {}, {}
+  animator:Play(1, function(progress)
+    plain[#plain + 1] = progress
+  end)
+  animator:Play(1, function(progress)
+    eased[#eased + 1] = progress
+  end, { ease = Widgets.Ease.out })
+  frame:Fire("OnUpdate", 0.5)
+  frame:Fire("OnUpdate", 0.5)
+  equal("0.5,1", table.concat(plain, ","))
+  equal("0.875,1", table.concat(eased, ","))
+  equal(false, animator:Busy())
+
+  local stat = Widgets.Stat(UIParent, "stat_score", 80)
+  stat:Set(12)
+  equal("12", stat.value.text)
+  equal("stat_score", stat.caption.text)
+end
+
+function tests.EffectsComeAndGo()
+  local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Effects.lua" })
+  local stage = CreateFrame("Frame", nil, UIParent)
+  stage:SetSize(400, 300)
+  local effects = private.Effects.New(stage)
+  effects.frame:SetSize(400, 300)
+  equal(false, effects:Busy())
+
+  effects:Confetti()
+  effects:Flash({ 1, 0, 0 })
+  effects:Jolt(stage)
+  effects:Float("+8", 100, 100)
+  effects:Float("+16", 120, 100, { delay = 0.1 })
+  effects:Banner("status_won", "so far")
+  equal(true, effects:Busy())
+  equal(true, effects:HasBanner())
+  for _ = 1, 250 do
+    effects.frame:Fire("OnUpdate", 0.02)
+  end
+  equal(false, effects:Busy(), "it all comes to an end")
+  equal(true, effects.title:IsVisible(), "but for the words")
+  equal("status_won", effects.title.text)
+  equal(false, effects.flash:IsShown())
+  for _, paper in ipairs(effects.papers) do
+    equal(false, paper:IsShown())
+  end
+  equal(2, #effects.floats, "one drifting number for each at a time")
+  effects:Float("+4", 100, 100)
+  equal(2, #effects.floats, "and they are used again")
+
+  effects:Clear()
+  equal(false, effects:Busy())
+  equal(false, effects:HasBanner())
+  equal(false, effects.title:IsShown())
+  effects:Banner("status_solo_lost", nil, { instant = true })
+  equal(false, effects:Busy())
+  equal(true, effects.title:IsShown())
+end
+
+function tests.BoardTellsARightClickOnASquareAndColoursWhatItWrites()
+  local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Board.lua" })
+  local board = private.Board.New(UIParent, { columns = 3, rows = 3, labelScale = 0.6 })
+  board:SetSize(90)
+  local right, waved = {}, {}
+  local input = {
+    onRightClick = function(square)
+      right[#right + 1] = square
+    end,
+    onCancel = function(button)
+      waved[#waved + 1] = button or "none"
+    end,
+  }
+  board:SetInput(input)
+  board:SetEnabled(true)
+
+  -- The bottom left square is 0, the cursor is counted up from the bottom of the screen
+  Client.cursor = { 45, 45 }
+  board.frame:Fire("OnMouseDown", "RightButton")
+  Client.cursor = { 75, 15 }
+  board.frame:Fire("OnMouseDown", "RightButton")
+  equal("4,2", table.concat(right, ","))
+  board.frame:Fire("OnMouseDown", "MiddleButton")
+  Client.cursor = { 200, 200 }
+  board.frame:Fire("OnMouseDown", "RightButton")
+  equal("MiddleButton,RightButton", table.concat(waved, ","), "anything else is still a wave off")
+  input.onRightClick = nil
+  Client.cursor = { 45, 45 }
+  board.frame:Fire("OnMouseDown", "RightButton")
+  equal(3, #waved)
+  equal(2, #right)
+
+  local blue = { 0.2, 0.4, 1 }
+  local inks = {}
+  board:SetLabels({ [4] = 3, [5] = 1 }, { [4] = blue })
+  local label = board.squares[4].label
+  function label:SetTextColor(r, g, b)
+    inks[#inks + 1] = r .. "," .. g .. "," .. b
+  end
+  equal("3", label.text)
+  board:SetLabels({ [4] = 3 }, { [4] = blue })
+  equal(0, #inks, "nothing is done about what didn't change")
+  board:SetLabels({ [4] = 2 })
+  equal("2", label.text)
+  equal("1,1,1", table.concat(inks, " "), "white unless it says otherwise")
+  equal("", board.squares[5].label.text)
+end
+
+-----------------------------
+-- Sudoku
+-----------------------------
+
+do
+  local GRADES = { easy = 1, medium = 2, hard = 3, expert = 4 }
+  -- What making a puzzle is held to. The work it may take, which is counted and so comes out the
+  -- same wherever the tests run: what the game allows itself, and the one thing it was in the
+  -- middle of when that ran out. And the time that takes, with a lot of room to spare for a
+  -- machine that is busy: it is a few thousandths of a second for an easy puzzle and between
+  -- ten and twenty for the others, with never more than about thirty
+  local WORK_MOST, SECONDS_MOST = 8000 + 2500, 0.25
+
+  --- A game of sudoku to try the rules on, made from a seed
+  --- @param seed number?
+  --- @param rules table?
+  --- @return table game, table state, table private
+  local function sudoku(seed, rules)
+    local private = loadEngine()
+    local game = private.Games.Get("sudoku")
+    return game, game.newState(1, private.Random.New(seed or 1), rules), private
+  end
+
+  --- @param cell number
+  --- @return string How moves name a square
+  local function squareName(cell)
+    return (math.floor((cell - 1) / 9) + 1) .. ((cell - 1) % 9 + 1)
+  end
+
+  --- @param cell number
+  --- @return number row, number column, number box Where a square is, each counted from 0
+  local function whereIs(cell)
+    local row, column = math.floor((cell - 1) / 9), (cell - 1) % 9
+    return row, column, math.floor(row / 3) * 3 + math.floor(column / 3)
+  end
+
+  --- @param one number
+  --- @param other number
+  --- @return boolean Whether two squares share a row, a column or a box
+  local function sharesUnit(one, other)
+    local row, column, box = whereIs(one)
+    local otherRow, otherColumn, otherBox = whereIs(other)
+    return row == otherRow or column == otherColumn or box == otherBox
+  end
+
+  --- @param state table
+  --- @param from number? The first square to look at
+  --- @return number? cell The first square that has nothing in it
+  local function emptySquare(state, from)
+    for cell = from or 1, 81 do
+      if state.grid[cell] == 0 then
+        return cell
+      end
+    end
+    return nil
+  end
+
+  --- @param state table
+  --- @param cell number
+  --- @return number A digit that doesn't belong in a square
+  local function wrongDigit(state, cell)
+    return state.solution[cell] % 9 + 1
+  end
+
+  --- Whether a game of sudoku is what it should be whatever was done to it
+  --- @param state table
+  local function sudokuIsSound(state)
+    local filled = 0
+    for cell = 1, 81 do
+      local digit = state.grid[cell]
+      filled = filled + (digit ~= 0 and 1 or 0)
+      if state.given[cell] or state.hinted[cell] then
+        equal(state.solution[cell], digit, "what was filled in for the player stays")
+      end
+      for note = 1, 9 do
+        assert(digit == 0 or not state.notes[(cell - 1) * 9 + note], "notes are only in empty squares")
+      end
+    end
+    equal(filled, state.filled)
+  end
+
+  function tests.SudokuPuzzlesHaveOneSolutionAndAreAsHardAsTheySay()
+    local private = loadEngine()
+    local Sudoku, Random = private.Sudoku, private.Random
+    local seeds = 40
+    for _, level in ipairs(Sudoku.LEVELS) do
+      local stock, squares = 0, 0
+      for seed = 1, seeds do
+        local started = os.clock()
+        local puzzle, solution, made = Sudoku.Generate(Random.New(seed * 104729), level)
+        local took = os.clock() - started
+        assert(made.work <= WORK_MOST, level .. " " .. seed .. " took " .. made.work .. " to make")
+        assert(took <= SECONDS_MOST, level .. " " .. seed .. " took " .. took .. " seconds to make")
+        stock = stock + (made.stock and 1 or 0)
+
+        local count, found = Sudoku.Count(puzzle)
+        equal(1, count, level .. " " .. seed .. " solutions")
+        equal(table.concat(solution), table.concat(found), "the solution it comes with is the one it has")
+        equal(GRADES[level], Sudoku.Grade(puzzle), level .. " " .. seed .. " is as hard as it says")
+        for cell = 1, 81 do
+          assert(puzzle[cell] == 0 or puzzle[cell] == solution[cell])
+          squares = squares + (puzzle[cell] ~= 0 and 1 or 0)
+          if level == "easy" then
+            equal(puzzle[cell] ~= 0, puzzle[82 - cell] ~= 0, "an easy one looks the same from the other side")
+          end
+        end
+      end
+      -- An easy one comes with a lot more to go on than the others
+      if level == "easy" then
+        equal(0, stock, "an easy puzzle is always made")
+        assert(squares / seeds >= 36 and squares / seeds <= 40, "easy puzzles come with " .. squares / seeds)
+      else
+        assert(stock <= seeds / 2, "most " .. level .. " puzzles should be made, " .. stock .. " weren't")
+        assert(squares / seeds >= 22 and squares / seeds <= 31, level .. " puzzles come with " .. squares / seeds)
+      end
+    end
+  end
+
+  function tests.SudokuPuzzlesFromStockAreSoundHoweverTheyAreMixed()
+    local private = loadEngine()
+    local Sudoku, Random = private.Sudoku, private.Random
+    for _, level in ipairs(Sudoku.LEVELS) do
+      local stock = Sudoku.AllStock()[level]
+      assert(#stock >= 4, "a few to choose from")
+      for index, puzzle in ipairs(stock) do
+        equal(1, (Sudoku.Count(puzzle)), level .. " " .. index)
+        equal(GRADES[level], Sudoku.Grade(puzzle), level .. " " .. index)
+      end
+      local seen = {}
+      for seed = 1, 12 do
+        local puzzle = Sudoku.Stock(Random.New(seed), level)
+        equal(1, (Sudoku.Count(puzzle)))
+        equal(GRADES[level], Sudoku.Grade(puzzle), "mixed up it is as hard as it was")
+        seen[table.concat(puzzle)] = true
+      end
+      local different = 0
+      for _ in pairs(seen) do
+        different = different + 1
+      end
+      equal(12, different, "and never the same puzzle twice")
+    end
+  end
+
+  function tests.SudokuSolverCountsSolutionsAndStopsAtTwo()
+    local private = loadEngine()
+    local Sudoku = private.Sudoku
+    local puzzle, solution = Sudoku.Generate(private.Random.New(77), "medium")
+    equal(1, (Sudoku.Count(puzzle)))
+    equal(table.concat(solution), table.concat(select(2, Sudoku.Count(solution))), "a full grid is its own solution")
+
+    -- Nothing to go on at all: as many as it is asked to count
+    local empty = {}
+    for cell = 1, 81 do
+      empty[cell] = 0
+    end
+    equal(2, (Sudoku.Count(empty)))
+    equal(5, (Sudoku.Count(empty, 5)))
+    equal(nil, Sudoku.Grade(empty))
+
+    -- A full grid with squares taken out from the bottom, until there is more than one way to
+    -- finish it. How many there are is counted the slow and simple way to compare with
+    local function count(grid, from)
+      for cell = from, 81 do
+        if grid[cell] == 0 then
+          local total = 0
+          for digit = 1, 9 do
+            local fits = true
+            for other = 1, 81 do
+              fits = fits and (other == cell or not sharesUnit(other, cell) or grid[other] ~= digit)
+            end
+            if fits then
+              grid[cell] = digit
+              total = total + count(grid, cell + 1)
+            end
+          end
+          grid[cell] = 0
+          return total
+        end
+      end
+      return 1
+    end
+    local holey, known, gone = { unpack(solution) }, 1, 0
+    while known <= 3 do
+      holey[81 - gone], gone = 0, gone + 1
+      assert(gone < 40, "two whole rows gone leave more than one way")
+      local before = known
+      known = count({ unpack(holey) }, 1)
+      assert(known >= before)
+      equal(math.min(known, 2), (Sudoku.Count(holey)), gone .. " squares gone")
+      equal(known == 1 and 1 or nil, Sudoku.Grade(holey) and 1, "more than one way is no puzzle")
+    end
+    equal(known, (Sudoku.Count(holey, 1000)), "every way is counted, and once")
+    equal(3, (Sudoku.Count(holey, 3)), "up to as many as were asked for")
+    local _, one = Sudoku.Count(holey, 1)
+    for cell = 1, 81 do
+      assert(holey[cell] == 0 or holey[cell] == one[cell], "a way to finish it leaves what is there")
+    end
+    equal(1, (Sudoku.Count(one)))
+
+    -- A digit twice in a row can't be finished, and neither can a square nothing is left for
+    local twice = { unpack(empty) }
+    twice[1], twice[9] = 5, 5
+    equal(0, (Sudoku.Count(twice)))
+    equal(nil, Sudoku.Grade(twice))
+    local stuck = { unpack(empty) }
+    for column = 2, 9 do
+      stuck[column] = column - 1
+    end
+    stuck[10] = 9
+    equal(0, (Sudoku.Count(stuck)), "the first square can take neither 9 nor anything else")
+
+    -- More to go on never makes a puzzle harder
+    local hard = Sudoku.Generate(private.Random.New(5), "expert")
+    local grade = Sudoku.Grade(hard)
+    local _, answer = Sudoku.Count(hard)
+    for cell = 1, 81 do
+      if hard[cell] == 0 and cell % 4 == 0 then
+        hard[cell] = answer[cell]
+        local easier = Sudoku.Grade(hard)
+        assert(easier <= grade, "a square more made it harder")
+        grade = easier
+      end
+    end
+  end
+
+  function tests.SudokuIsTheSameGameFromTheSameSeed()
+    local _, first = sudoku(7, { level = "hard" })
+    local game, second, private = sudoku(7, { level = "hard" })
+    equal(table.concat(first.grid), table.concat(second.grid))
+    equal(table.concat(first.solution), table.concat(second.solution))
+    local _, otherSeed = sudoku(8, { level = "hard" })
+    local _, otherLevel = sudoku(7, { level = "easy" })
+    assert(table.concat(first.grid) ~= table.concat(otherSeed.grid), "another seed, another puzzle")
+    assert(table.concat(first.grid) ~= table.concat(otherLevel.grid), "another difficulty, another puzzle")
+
+    -- Put together again, as it is whenever a move is taken back, it is the same puzzle and
+    -- none of what was done to the one before
+    local cell = emptySquare(second)
+    game.apply(second, 1, squareName(cell) .. second.solution[cell])
+    local again = game.newState(1, private.Random.New(7), { level = "hard" })
+    equal(table.concat(first.grid), table.concat(again.grid))
+    equal(0, again.grid[cell])
+    equal(again.filled, first.filled)
+  end
+
+  function tests.SudokuIsSetUpTheWayItWasAskedFor()
+    local game, state, private = sudoku(3)
+    equal("medium", state.level, "unless somebody says otherwise")
+    equal(true, state.check)
+    equal(0, state.mistakes)
+    equal(0, state.hints)
+    equal(nil, game.result(state))
+    equal(1, game.turn(state))
+    equal("sudoku_progress", game.progress(state))
+    equal(true, game.undo)
+    equal("open", game.clock)
+    sudokuIsSound(state)
+
+    local Games = private.Games
+    equal("level=expert+check=0", Games.EncodeOptions(game, { level = "expert", check = false }))
+    equal("hard", Games.DecodeOptions(game, "level=hard").level)
+    equal(false, select(2, Games.DecodeOptions(game, "level=silly")))
+    equal("sudoku_level_easy", Games.OptionLabel(game.options[1], "easy"))
+
+    local given = {}
+    for _, level in ipairs(private.Sudoku.LEVELS) do
+      local made = game.newState(1, private.Random.New(11), { level = level, check = false })
+      equal(level, made.level)
+      equal(false, made.check)
+      given[level] = made.filled
+      local count = 0
+      for cell = 1, 81 do
+        count = count + (made.given[cell] and 1 or 0)
+        equal(made.given[cell] and made.solution[cell] or 0, made.grid[cell])
+      end
+      equal(made.filled, count)
+    end
+    assert(given.easy > given.medium and given.easy > given.hard and given.easy > given.expert, "an easy one comes with the most")
+  end
+
+  function tests.SudokuWritesRubsOutAndPencilsIn()
+    local game, state = sudoku(4, { level = "easy" })
+    local cell = emptySquare(state)
+    local name, right = squareName(cell), state.solution[cell]
+    local filled = state.filled
+
+    -- A digit that is right
+    equal(true, (game.validate(state, 1, name .. right)))
+    local event = game.apply(state, 1, name .. right)
+    equal(cell, event.cell)
+    equal(right, event.digit)
+    equal(0, event.was)
+    equal(nil, event.wrong)
+    equal(right, state.grid[cell])
+    equal(filled + 1, state.filled)
+    equal(0, state.mistakes)
+    equal("invalid_move", select(2, game.validate(state, 1, name .. right)), "it is there already")
+
+    -- One that isn't, written over it
+    local wrong = wrongDigit(state, cell)
+    event = game.apply(state, 1, name .. wrong)
+    equal(true, event.wrong)
+    equal(right, event.was)
+    equal(wrong, state.grid[cell])
+    equal(filled + 1, state.filled, "the square was full before")
+    equal(1, state.mistakes)
+
+    -- Rubbed out
+    equal("sudoku_filled", select(2, game.validate(state, 1, "n" .. name .. "3")), "no notes in a square that has a digit")
+    event = game.apply(state, 1, name .. "0")
+    equal(0, event.digit)
+    equal(wrong, event.was)
+    equal(0, state.grid[cell])
+    equal(filled, state.filled)
+    equal(1, state.mistakes, "a mistake that was made stays made")
+    equal("invalid_move", select(2, game.validate(state, 1, name .. "0")), "nothing there to rub out")
+
+    -- Notes go in and come out again, and rubbing the square out takes them all
+    event = game.apply(state, 1, "n" .. name .. "3")
+    equal(3, event.note)
+    equal(true, event.on)
+    equal(true, state.notes[(cell - 1) * 9 + 3])
+    game.apply(state, 1, "n" .. name .. "8")
+    event = game.apply(state, 1, "n" .. name .. "3")
+    equal(false, event.on)
+    equal(nil, state.notes[(cell - 1) * 9 + 3])
+    equal(filled, state.filled, "a note fills nothing")
+    equal(true, (game.validate(state, 1, name .. "0")))
+    game.apply(state, 1, name .. "0")
+    equal(nil, state.notes[(cell - 1) * 9 + 8])
+    game.apply(state, 1, "n" .. name .. "8")
+    game.apply(state, 1, name .. right)
+    equal(nil, state.notes[(cell - 1) * 9 + 8], "and so does writing a digit into it")
+    sudokuIsSound(state)
+
+    -- What the puzzle came with stays, and so does everything that isn't a move
+    local given = nil
+    for other = 1, 81 do
+      given = given or (state.given[other] and other)
+    end
+    local fixed = squareName(given)
+    for _, move in ipairs({ fixed .. "5", fixed .. "0", "n" .. fixed .. "5", "h" .. fixed }) do
+      equal("sudoku_fixed", select(2, game.validate(state, 1, move)), move)
+    end
+    for _, move in ipairs({ "", "5", "55", "5555", "015", "105", "n110", "n11", "h1", "h115", "x115", "11a", "1 15" }) do
+      equal("invalid_move", select(2, game.validate(state, 1, move)), "move " .. move)
+    end
+    equal("not_your_turn", select(2, game.validate(state, 2, name .. "0")))
+  end
+
+  function tests.SudokuTidiesTheNotesADigitMakesImpossible()
+    for _, check in ipairs({ true, false }) do
+      local game, state = sudoku(6, { level = "medium", check = check })
+      local cell = emptySquare(state)
+      local digit = state.solution[cell]
+      -- A square in its row, one in its column, one in its box and one that has nothing to do with it
+      local row, column, box = whereIs(cell)
+      local near, far = {}, nil
+      for other = 1, 81 do
+        if other ~= cell and state.grid[other] == 0 then
+          local otherRow, otherColumn, otherBox = whereIs(other)
+          if otherRow == row then
+            near.row = near.row or other
+          elseif otherColumn == column then
+            near.column = near.column or other
+          elseif otherBox == box then
+            near.box = near.box or other
+          else
+            far = far or other
+          end
+        end
+      end
+      local pencilled = { far }
+      for _, other in pairs(near) do
+        pencilled[#pencilled + 1] = other
+      end
+      for _, other in ipairs(pencilled) do
+        game.apply(state, 1, "n" .. squareName(other) .. digit)
+        game.apply(state, 1, "n" .. squareName(other) .. (digit % 9 + 1))
+      end
+
+      -- A wrong digit that is pointed out leaves the notes alone, it is about to go again
+      local wrong = wrongDigit(state, cell)
+      for _, other in ipairs(pencilled) do
+        game.apply(state, 1, "n" .. squareName(other) .. wrong)
+        game.apply(state, 1, "n" .. squareName(other) .. wrong)
+      end
+      local event = game.apply(state, 1, squareName(cell) .. digit)
+      table.sort(event.cleared)
+      local expected = {}
+      for _, other in pairs(near) do
+        expected[#expected + 1] = other
+        equal(nil, state.notes[(other - 1) * 9 + digit])
+        equal(true, state.notes[(other - 1) * 9 + digit % 9 + 1], "only the notes of that digit")
+      end
+      table.sort(expected)
+      equal(table.concat(expected, ","), table.concat(event.cleared, ","))
+      equal(true, state.notes[(far - 1) * 9 + digit], "and only where it matters")
+
+      local other = near.row or near.column or near.box
+      local theirs = wrongDigit(state, other)
+      local third = nil
+      for peer = 1, 81 do
+        if not third and peer ~= other and peer ~= cell and sharesUnit(peer, other) and state.grid[peer] == 0 then
+          third = peer
+        end
+      end
+      game.apply(state, 1, "n" .. squareName(third) .. theirs)
+      event = game.apply(state, 1, squareName(other) .. theirs)
+      equal(true, event.wrong)
+      equal(not check, event.cleared ~= nil, "a mistake nobody points out tidies up like any digit")
+      equal(check or nil, state.notes[(third - 1) * 9 + theirs])
+      sudokuIsSound(state)
+    end
+  end
+
+  function tests.SudokuFillsASquareInWhenAsked()
+    local game, state, private = sudoku(9, { level = "hard" })
+    local cell = emptySquare(state)
+    equal(cell, private.Sudoku.HintFor(state, cell), "the square the player is on")
+    local event = game.apply(state, 1, "h" .. squareName(cell))
+    equal(true, event.hint)
+    equal(state.solution[cell], event.digit)
+    equal(state.solution[cell], state.grid[cell])
+    equal(1, state.hints)
+    equal(0, state.mistakes)
+    equal(true, state.hinted[cell])
+    for _, move in ipairs({ squareName(cell) .. "0", squareName(cell) .. wrongDigit(state, cell), "h" .. squareName(cell) }) do
+      equal("sudoku_fixed", select(2, game.validate(state, 1, move)), "it is there for good")
+    end
+
+    -- A wrong digit is something to put right, a right one isn't
+    local other = emptySquare(state)
+    game.apply(state, 1, squareName(other) .. wrongDigit(state, other))
+    equal(other, private.Sudoku.HintFor(state, other))
+    equal(true, (game.validate(state, 1, "h" .. squareName(other))))
+    game.apply(state, 1, squareName(other) .. state.solution[other])
+    equal("invalid_move", select(2, game.validate(state, 1, "h" .. squareName(other))))
+
+    -- With the player on a square that needs nothing it is the one that leaves the least choice
+    local best = private.Sudoku.HintFor(state, cell)
+    assert(best and state.grid[best] == 0)
+    local function choice(square)
+      local seen, count = {}, 9
+      for peer = 1, 81 do
+        local digit = state.grid[peer]
+        if peer ~= square and sharesUnit(peer, square) and digit ~= 0 and not seen[digit] then
+          seen[digit], count = true, count - 1
+        end
+      end
+      return count
+    end
+    for square = 1, 81 do
+      assert(state.grid[square] ~= 0 or choice(square) >= choice(best), "square " .. square .. " leaves less choice")
+    end
+    equal(best, private.Sudoku.HintFor(state), "and so it is with the player on none")
+    sudokuIsSound(state)
+  end
+
+  function tests.SudokuSaysWhatADigitCompletedAndIsWonByTheLast()
+    local game, state, private = sudoku(12, { level = "easy" })
+    local Sudoku = private.Sudoku
+    equal("1,2,3,4,5,6,7,8,9", table.concat(Sudoku.Unit("r1"), ","))
+    equal("3,12,21,30,39,48,57,66,75", table.concat(Sudoku.Unit("c3"), ","))
+    equal("31,32,33,40,41,42,49,50,51", table.concat(Sudoku.Unit("b5"), ","))
+
+    -- A digit twice in a unit is told on every square that has it
+    local cell = emptySquare(state)
+    local clash = nil
+    for other = 1, 9 do
+      local peer = math.floor((cell - 1) / 9) * 9 + other
+      clash = clash or (state.given[peer] and peer)
+    end
+    equal(nil, next(Sudoku.Clashes(state.grid)))
+    equal(9, Sudoku.Left(state.grid)[state.grid[clash]] + select(2, table.concat(state.grid):gsub(state.grid[clash], "")))
+    game.apply(state, 1, squareName(cell) .. state.grid[clash])
+    local clashes = Sudoku.Clashes(state.grid)
+    equal(true, clashes[cell])
+    equal(true, clashes[clash])
+    game.apply(state, 1, squareName(cell) .. "0")
+    equal(1, state.mistakes)
+
+    -- Filled in from the top: every row is done by its last square, the columns and boxes
+    -- as their last square comes
+    local completed, moves = {}, 0
+    for square = 1, 81 do
+      if state.grid[square] == 0 then
+        equal(nil, game.result(state))
+        local event = game.apply(state, 1, squareName(square) .. state.solution[square])
+        moves = moves + 1
+        for _, unit in ipairs(event.units or {}) do
+          assert(not completed[unit], unit .. " was done twice")
+          completed[unit] = true
+          for _, member in ipairs(Sudoku.Unit(unit)) do
+            assert(state.grid[member] ~= 0, unit .. " was done before it was full")
+          end
+        end
+        equal(emptySquare(state) == nil or nil, event.won)
+      end
+    end
+    assert(moves > 30)
+    for _, kind in ipairs({ "r", "c", "b" }) do
+      for index = 1, 9 do
+        -- One that came full isn't anything a move did
+        local full = true
+        for _, member in ipairs(Sudoku.Unit(kind .. index)) do
+          full = full and state.given[member] == true
+        end
+        equal(not full, completed[kind .. index] == true, kind .. index)
+      end
+    end
+    equal(1, game.result(state).winner)
+    equal(81, state.filled)
+    equal("invalid_move", select(2, game.validate(state, 1, "h11")), "nothing more to do")
+    sudokuIsSound(state)
+
+    -- Full but wrong isn't won, and a unit with a wrong digit in it isn't done where that is pointed out
+    for _, check in ipairs({ true, false }) do
+      local other = game.newState(1, private.Random.New(12), { level = "easy", check = check })
+      local last, lastEvent = nil, nil
+      for square = 1, 81 do
+        if other.grid[square] == 0 then
+          last = square
+        end
+      end
+      for square = 1, 81 do
+        if other.grid[square] == 0 then
+          -- The last one gets the digit of another square of its row: full, with one twice
+          local digit = square == last and other.solution[square % 9 == 0 and square - 1 or square + 1] or other.solution[square]
+          lastEvent = game.apply(other, 1, squareName(square) .. digit)
+        end
+      end
+      equal(81, other.filled)
+      equal(nil, game.result(other))
+      equal(nil, lastEvent.won)
+      equal(nil, lastEvent.units, "a digit twice completes nothing")
+      equal(true, lastEvent.wrong)
+      lastEvent = game.apply(other, 1, squareName(last) .. other.solution[last])
+      equal(true, lastEvent.won)
+      equal(1, game.result(other).winner)
+    end
+  end
+
+  function tests.SudokuIsPlayedThroughWithoutComingApart()
+    for seed = 1, 6 do
+      local level = ({ "easy", "medium", "hard", "expert" })[seed % 4 + 1]
+      local game, state, private = sudoku(seed * 31, { level = level, check = seed % 2 == 0 })
+      local dice = private.Random.New(seed)
+      local given = table.concat(state.grid)
+      local mistakes, done = 0, 0
+      -- Anything at all, anywhere: whatever the rules let through leaves a game that is sound
+      for _ = 1, 600 do
+        local cell, digit = dice:Roll(81), dice:Roll(9)
+        local kind = dice:Roll(10)
+        local move = squareName(cell) .. digit
+        if kind <= 2 then
+          move = "n" .. move
+        elseif kind == 3 then
+          move = squareName(cell) .. "0"
+        elseif kind == 4 and dice:Roll(6) == 1 then
+          move = "h" .. squareName(cell)
+        end
+        if game.validate(state, 1, move) and not game.result(state) then
+          local event = game.apply(state, 1, move)
+          done = done + 1
+          equal(cell, event.cell)
+          assert(state.mistakes >= mistakes, "mistakes are never taken back")
+          mistakes = state.mistakes
+          sudokuIsSound(state)
+        end
+      end
+      assert(done > 200, "most of it should have been allowed")
+      for cell = 1, 81 do
+        if given:sub(cell, cell) ~= "0" then
+          equal(given:sub(cell, cell), tostring(state.grid[cell]), "what it came with is what it comes with")
+        end
+      end
+      -- And however it was left, it can still be finished
+      for cell = 1, 81 do
+        if not game.result(state) and state.grid[cell] ~= state.solution[cell] then
+          game.apply(state, 1, squareName(cell) .. state.solution[cell])
+        end
+      end
+      equal(1, game.result(state).winner)
+      sudokuIsSound(state)
+    end
+  end
+
+  function tests.SudokuKeepsTheBestTimeForEachDifficulty()
+    local world = World.New()
+    local alice = world:AddPlayer("Alice-Realm")
+    local session, Match = alice.session, alice.private.Match
+
+    --- Plays a game to the end
+    --- @param level string
+    --- @param seconds number How long it takes
+    --- @param hint boolean? Have a square filled in on the way
+    --- @return table match
+    local function solve(level, seconds, hint)
+      local match = assert(session:Invite({}, "sudoku", { options = { level = level } }))
+      equal(level ~= "medium" and level or nil, match.options and match.options.level)
+      session:Spend(match.id, seconds)
+      local state = Match.State(match)
+      equal(level, state.level)
+      for cell = 1, 81 do
+        if state.grid[cell] == 0 then
+          assert(session:Move(match.id, (hint and "h" or "") .. squareName(cell) .. (hint and "" or state.solution[cell])))
+          hint = false
+        end
+      end
+      equal("finished", match.status)
+      equal(1, Match.Result(match).winner)
+      return match
+    end
+
+    equal(nil, session:Best("sudoku", "easy"))
+    local first = solve("easy", 90)
+    equal(90, session:Best("sudoku", "easy"), "the clock runs from when the game is first looked at")
+    equal(true, session:SetBest(first, "easy"))
+    solve("easy", 120)
+    equal(90, session:Best("sudoku", "easy"), "slower is no better")
+    local faster = solve("easy", 45)
+    equal(45, session:Best("sudoku", "easy"))
+    equal(true, session:SetBest(faster, "easy"))
+
+    -- Every difficulty has its own, and a game with a hint in it is nothing to beat
+    equal(nil, session:Best("sudoku", "hard"))
+    local helped = solve("hard", 10, true)
+    equal(1, Match.State(helped).hints)
+    equal(nil, session:Best("sudoku", "hard"))
+    solve("hard", 300)
+    equal(300, session:Best("sudoku", "hard"))
+    equal(45, session:Best("sudoku", "easy"))
+
+    -- A move taken back was never made: the puzzle is the same one, and the mistake is gone
+    local match = assert(session:Invite({}, "sudoku"))
+    local before = table.concat(Match.State(match).grid)
+    local cell = emptySquare(Match.State(match))
+    assert(session:Move(match.id, squareName(cell) .. wrongDigit(Match.State(match), cell)))
+    equal(1, Match.State(match).mistakes)
+    assert(session:Undo(match.id))
+    equal(before, table.concat(Match.State(match).grid))
+    equal(0, Match.State(match).mistakes)
+    equal("sudoku_fixed", select(2, session:Move(match.id, "h" .. squareName(select(2, before:find("[1-9]"))))))
+  end
+
+  function tests.WizardSetsUpAGameForOne()
+    local world = World.New()
+    local alice = world:AddPlayer("Alice-Realm")
+    local wizard = openWizard(alice)
+    pickGame("sudoku")
+    equal(true, wizard.IsOpen(), "there is something to choose first")
+    equal(true, says("wizard_step_solo"))
+    equal(false, says("wizard_who"), "but nobody to play it with")
+    equal("sudoku_level_medium", select(2, ruleChoices("sudoku_option_level")))
+    equal("option_on", select(2, ruleChoices("sudoku_option_check")))
+    equal(false, says("wizard_seat"))
+    equal(false, says("wizard_turn"))
+
+    ruleChoices("sudoku_option_level")["sudoku_level_expert"]:Fire("OnClick")
+    equal("sudoku_level_expert", select(2, ruleChoices("sudoku_option_level")))
+    local play = Client.Button("wizard_play")
+    equal(true, play.enabled)
+    play:Fire("OnClick")
+    equal(false, wizard.IsOpen())
+    local started
+    for _, match in pairs(alice.matches) do
+      started = match
+    end
+    equal("sudoku", started.game)
+    equal("active", started.status)
+    equal("expert", started.options.level)
+    equal(nil, started.options.check)
+    equal(0, #world.queue, "nothing is sent to anybody")
+
+    -- The next one starts out set the same way, and a game against someone is still sent
+    wizard.Open()
+    pickGame("sudoku")
+    equal("sudoku_level_expert", select(2, ruleChoices("sudoku_option_level")))
+    Client.Button("Back"):Fire("OnClick")
+    pickGame("chess")
+    equal(true, says("wizard_who"))
+    equal("wizard_send", Client.Button("wizard_send").text)
+  end
+end
+
+-----------------------------
+-- Sudoku on screen
+-----------------------------
+
+do
+  --- Loads the grid and its keys on their own, over a fresh fake client
+  --- @return table NumberGrid
+  local function loadNumberGrid()
+    Client.Install()
+    ForeverGames = { db = { profile = { sound = true } } }
+    local private = { L = setmetatable({}, {
+      __index = function(_, key)
+        return key
+      end,
+    }) }
+    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/NumberGrid.lua" }) do
+      assert(loadfile(file))(ADDON_NAME, private)
+    end
+    return private.NumberGrid
+  end
+
+  --- Moves the cursor onto a square of a grid
+  --- @param grid table
+  --- @param square number
+  local function pointAtSquare(grid, square)
+    local x, y = grid:CenterOf(square)
+    -- The cursor is counted up from the bottom of the screen, where every widget sits
+    Client.cursor = { x, grid.frame.height - y }
+  end
+
+  --- @param grid table
+  --- @param square number
+  --- @param button string?
+  local function clickOnGrid(grid, square, button)
+    pointAtSquare(grid, square)
+    grid.frame:Fire("OnMouseDown", button or "LeftButton")
+    grid.frame:Fire("OnMouseUp", button or "LeftButton")
+  end
+
+  --- Lets time pass for whatever is on the move in a grid
+  --- @param grid table
+  --- @param seconds number
+  local function passGridTime(grid, seconds)
+    for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+      grid.motion:Fire("OnUpdate", 0.02)
+    end
+  end
+
+  function tests.NumberGridDrawsFiguresNotesAndWhatIsPointedOut()
+    local NumberGrid = loadNumberGrid()
+    local grid = NumberGrid.New(UIParent, { columns = 9, rows = 9, boxColumns = 3, boxRows = 3 })
+    equal(81, #grid.squares)
+    grid:SetSize(400)
+    assert(grid.cell >= 40 and grid.cell == math.floor(grid.cell), "whole squares that make use of the room, got " .. grid.cell)
+    assert(grid.frame.width <= 400 and grid.frame.width > 400 - 9, "as large as fits, got " .. grid.frame.width)
+    equal(grid.frame.width, grid.frame.height)
+    assert(grid.thick > grid.thin, "the lines between boxes are the heavy ones")
+
+    -- Squares lie in reading order, with more room between two boxes than between two squares
+    local first, second, fourth, tenth = grid.squares[1], grid.squares[2], grid.squares[4], grid.squares[10]
+    equal(grid.thick, first.x)
+    equal(grid.thick, first.y)
+    equal(first.x + grid.cell + grid.thin, second.x)
+    equal(grid.squares[3].x + grid.cell + grid.thick, fourth.x)
+    equal(first.y + grid.cell + grid.thin, tenth.y)
+    equal(first.x, tenth.x)
+    local last = grid.squares[81]
+    equal(grid.frame.width, last.x + grid.cell + grid.thick)
+    equal(1, grid:SquareAt(first.x, first.y))
+    equal(81, grid:SquareAt(last.x + grid.cell - 1, last.y + grid.cell - 1))
+    equal(nil, grid:SquareAt(first.x + grid.cell, first.y), "a line is no square")
+    equal(nil, grid:SquareAt(-1, 5))
+    equal(nil, grid:SquareAt(grid.frame.width + 1, 5))
+
+    -- A grid that isn't square, without boxes
+    local strip = NumberGrid.New(UIParent, { columns = 4, rows = 2 })
+    strip:SetSize(200, 300)
+    assert(strip.frame.width <= 200 and strip.frame.height < strip.frame.width)
+    equal(5, strip:SquareAt(strip.squares[5].x, strip.squares[5].y))
+
+    -- Figures in their colours. What didn't change isn't touched again
+    local blue = { 0.4, 0.7, 1 }
+    grid:SetFigures({ [1] = 5, [2] = "7" }, { [2] = blue })
+    equal("5", first.figure.text)
+    equal("7", second.figure.text)
+    local writes = 0
+    function first.figure:SetText()
+      writes = writes + 1
+    end
+    function second.figure:SetTextColor()
+      writes = writes + 1
+    end
+    grid:SetFigures({ [1] = 5, [2] = "7" }, { [2] = blue })
+    equal(0, writes)
+    grid:SetFigures({ [2] = "7" }, { [2] = blue })
+    equal(1, writes, "a square that was emptied")
+
+    -- Notes sit where their number puts them, three to a row, and are made as they are needed
+    grid:SetNotes({ [3] = "159" })
+    local notes = grid.squares[3].notes
+    equal("1", notes[1].text)
+    equal(true, notes[5]:IsShown())
+    equal(nil, notes[2])
+    local third = grid.squares[3]
+    local function at(note)
+      return note.anchors[1][4] - third.x, -note.anchors[1][5] - third.y
+    end
+    local oneX, oneY = at(notes[1])
+    local fiveX, fiveY = at(notes[5])
+    local nineX, nineY = at(notes[9])
+    assert(oneX < fiveX and fiveX < nineX and oneY < fiveY and fiveY < nineY, "from the top left corner to the bottom right")
+    assert(oneX > 0 and oneY > 0 and nineX < grid.cell and nineY < grid.cell, "inside their square")
+    grid:SetNotes({ [3] = "19" }, "9")
+    equal(false, notes[5]:IsShown())
+    equal(true, notes[9]:IsShown())
+    grid:SetNotes({})
+    equal(false, notes[1]:IsShown())
+
+    -- Washes, and the frame around the square the player is on
+    local red, gold = { 1, 0, 0, 0.5 }, { 1, 0.8, 0, 0.3 }
+    grid:SetTints({ [1] = red, [81] = gold })
+    equal(true, first.tint:IsShown())
+    equal(true, last.tint:IsShown())
+    equal(false, second.tint:IsShown())
+    grid:SetTints({ [81] = gold })
+    equal(false, first.tint:IsShown())
+    equal(false, grid.cursorEdges[1]:IsShown())
+    grid:Select(10)
+    equal(10, grid.selected)
+    equal(true, grid.cursorEdges[1]:IsShown())
+    equal(tenth.x, grid.cursorEdges[1].anchors[1][4])
+    equal(-tenth.y, grid.cursorEdges[1].anchors[1][5])
+    grid:Select(nil)
+    equal(false, grid.cursorEdges[4]:IsShown())
+
+    -- Resized, everything is where it belongs again
+    grid:Select(10)
+    grid:SetSize(820)
+    assert(grid.cell > 80)
+    equal(grid.squares[10].x, grid.cursorEdges[1].anchors[1][4])
+    equal(grid.cell, grid.squares[10].paper.width)
+  end
+
+  function tests.NumberGridTellsClicksAndMovesWhatItIsAskedTo()
+    local NumberGrid = loadNumberGrid()
+    local grid = NumberGrid.New(UIParent, { columns = 9, rows = 9, boxColumns = 3, boxRows = 3 })
+    grid:SetSize(450)
+    local clicked, hovered = {}, {}
+    grid:SetInput({
+      onClick = function(square, button)
+        clicked[#clicked + 1] = square .. button
+      end,
+      onHover = function(square)
+        hovered[#hovered + 1] = square or "none"
+      end,
+    })
+
+    clickOnGrid(grid, 1)
+    clickOnGrid(grid, 81, "RightButton")
+    pointAtSquare(grid, 41)
+    grid.frame:Fire("OnMouseDown", "LeftButton")
+    equal(true, grid.press:IsShown(), "a square gives while it is pressed")
+    grid.frame:Fire("OnMouseUp", "LeftButton")
+    equal(false, grid.press:IsShown())
+    equal("1LeftButton,81RightButton,41LeftButton", table.concat(clicked, ","))
+
+    -- The square under the cursor is lit, and the game is told once
+    grid.frame:Fire("OnUpdate", 0.02)
+    grid.frame:Fire("OnUpdate", 0.02)
+    equal(true, grid.hover:IsShown())
+    pointAtSquare(grid, 42)
+    grid.frame:Fire("OnUpdate", 0.02)
+    Client.cursor = { 2000, 2000 }
+    grid.frame:Fire("OnUpdate", 0.02)
+    equal(false, grid.hover:IsShown())
+    equal("41,42,none", table.concat(hovered, ","))
+
+    -- A grid that is off takes nothing
+    pointAtSquare(grid, 5)
+    grid.frame:Fire("OnUpdate", 0.02)
+    grid:SetEnabled(false)
+    equal(false, grid.hover:IsShown())
+    clickOnGrid(grid, 5)
+    equal(3, #clicked)
+    grid:SetEnabled(true)
+
+    -- A figure pops into its square: small at first, a little too large on the way, then as it is
+    grid:SetFigures({ [5] = 3 })
+    equal(false, grid:Busy())
+    grid:Pop(5)
+    equal(true, grid:Busy())
+    local square = grid.squares[5]
+    local smallest, largest = 1, 0
+    for _ = 1, 30 do
+      grid.motion:Fire("OnUpdate", 0.02)
+      smallest, largest = math.min(smallest, square.scale), math.max(largest, square.scale)
+    end
+    assert(smallest < 0.6 and largest > 1, "from " .. smallest .. " past its size to " .. largest)
+    equal(1, square.scale)
+    equal(1, square.holder.scale)
+    equal(false, grid:Busy())
+
+    -- A square shakes its head and comes to rest where it was
+    grid:Shake(5)
+    local furthest = 0
+    for _ = 1, 40 do
+      grid.motion:Fire("OnUpdate", 0.02)
+      furthest = math.max(furthest, math.abs(square.dx))
+    end
+    assert(furthest > 2, "it should be seen to move, got " .. furthest)
+    assert(math.abs(square.dx) < 0.0001)
+    equal(false, grid:Busy())
+
+    -- Squares light up one after the other
+    local glow = { 0.3, 0.9, 0.4, 0.5 }
+    for index = 1, 9 do
+      grid:Flash(index, glow, (index - 1) * 0.1)
+    end
+    equal(nil, grid.squares[9].flash and grid.squares[9].flash:IsShown() or nil, "not yet")
+    passGridTime(grid, 0.2)
+    equal(true, grid.squares[1].flash:IsShown())
+    equal(false, grid.squares[9].flash:IsShown())
+    assert(grid.squares[1].scale > 1, "its figure swells with it")
+    passGridTime(grid, 0.5)
+    equal(false, grid.squares[1].flash:IsShown())
+    equal(true, grid:Busy())
+    -- Settled, everything is as it ends up at once
+    grid:Settle()
+    equal(false, grid:Busy())
+    for index = 1, 9 do
+      equal(false, grid.squares[index].flash:IsShown())
+      assert(math.abs(grid.squares[index].scale - 1) < 0.0001)
+    end
+    -- And hidden, nothing is left on its way
+    grid:Pop(7)
+    grid.motion:Fire("OnHide")
+    equal(false, grid:Busy())
+    equal(1, grid.squares[7].scale)
+  end
+
+  function tests.NumberPadLaysItsKeysOutAndSaysHowTheyStand()
+    local NumberGrid = loadNumberGrid()
+    local pressed = {}
+    local pad = NumberGrid.Pad(UIParent, 9, { "notes", "erase" }, function(figure)
+      pressed[#pressed + 1] = figure
+    end, function(tool)
+      pressed[#pressed + 1] = tool
+    end)
+    equal(9, #pad.keys)
+    equal("7", pad.keys[7].label.text)
+
+    -- Three to a row with the tools under them, or all in one row
+    local width, height = pad:Layout(3, 40, 4)
+    equal(3 * 40 + 2 * 4, width)
+    equal(4 * 40 + 3 * 4, height)
+    equal(width, pad.frame.width)
+    equal(44, pad.keys[5].anchors[1][4])
+    equal(-44, pad.keys[5].anchors[1][5])
+    equal(-3 * 44, pad.tools.erase.anchors[1][5])
+    equal(62, pad.tools.notes.width, "the tools share the width")
+    equal(66, pad.tools.erase.anchors[1][4])
+    width, height = pad:Layout(9, 30, 2)
+    equal(9 * 30 + 8 * 2, width)
+    equal(62, height)
+    equal(0, pad.keys[9].anchors[1][5])
+
+    pad.keys[4]:Fire("OnClick")
+    pad.tools.notes:Fire("OnClick")
+    equal("4,notes", table.concat(pressed, ","))
+
+    -- A key gives while it is held, says something small about itself, and can be on or dimmed
+    local key = pad.keys[4]
+    key:Fire("OnMouseDown")
+    equal(true, key.press:IsShown())
+    key:Fire("OnMouseUp")
+    equal(false, key.press:IsShown())
+    key:Set(4, 6)
+    equal("6", key.caption.text)
+    key:Set(4)
+    equal("", key.caption.text)
+    key:SetDim(true)
+    equal(0.35, key.alpha)
+    key:Fire("OnClick")
+    equal(3, #pressed, "a dimmed key still says it was pressed")
+    key:SetDim(false)
+    equal(1, key.alpha)
+    pad.tools.notes:SetOn(true)
+    equal(true, pad.tools.notes.on)
+  end
+
+  --- Opens the window on a new game of sudoku
+  --- @param options table? How it is set up
+  --- @return table player, string id, table MainFrame
+  local function sudokuOnScreen(options)
+    local world = World.New()
+    world.seed = 1
+    local player = world:AddPlayer("Alice-Realm")
+    player.session.env.records = {}
+    local MainFrame = openWindow(player)
+    function StaticPopup_Show(which, _, _, data)
+      StaticPopupDialogs[which].OnAccept(nil, data)
+    end
+    local match = assert(player.session:Invite({}, "sudoku", { options = options or { level = "easy" } }))
+    MainFrame.Open(match.id)
+    return player, match.id, MainFrame
+  end
+
+  --- The grid of the game on screen
+  --- @return table grid
+  local function shownGrid()
+    local found = Client.Find(function(widget)
+      return widget.numberGrid ~= nil and widget:IsVisible()
+    end)
+    equal(1, #found, "grids on screen")
+    return found[1].numberGrid
+  end
+
+  --- A key of the pad on screen, by what it says
+  --- @param text string|number
+  --- @return table
+  local function padKey(text)
+    local found = Client.Find(function(widget)
+      local isKey = widget.kind == "Button" and widget.label ~= nil and widget.caption ~= nil
+      return isKey and widget.label.text == tostring(text) and widget:IsVisible()
+    end)
+    equal(1, #found, "keys saying " .. text)
+    return found[1]
+  end
+
+  --- What one of the boxes over the grid says
+  --- @param title string What it counts
+  --- @return string
+  local function statSays(title)
+    local found = Client.Find(function(widget)
+      return widget.caption ~= nil and widget.value ~= nil and widget.caption.text == title and widget:IsVisible()
+    end)
+    equal(1, #found, "boxes that count " .. title)
+    return found[1].value.text
+  end
+
+  --- Presses a key of the keyboard with the cursor over the game
+  --- @param key string
+  --- @return boolean used Whether the game kept it
+  local function typeKey(key)
+    local found = Client.Find(function(widget)
+      return widget.scripts.OnKeyDown ~= nil and widget:IsVisible()
+    end)
+    equal(1, #found, "frames that take keys")
+    found[1]:Fire("OnKeyDown", key)
+    return found[1].propagates == false
+  end
+
+  --- Lets time pass for everything on the stage of the game on screen
+  --- @param seconds number
+  local function passStageTime(seconds)
+    local stage = shownGrid().frame.parent
+    local moving = Client.Find(function(widget)
+      local parent = widget.parent
+      while parent and parent ~= stage do
+        parent = parent.parent
+      end
+      return parent == stage and widget.scripts.OnUpdate ~= nil
+    end)
+    for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+      for _, widget in ipairs(moving) do
+        widget:Fire("OnUpdate", 0.02)
+      end
+    end
+  end
+
+  --- @param cell number
+  --- @return string How moves name a square
+  local function squareName(cell)
+    return (math.floor((cell - 1) / 9) + 1) .. ((cell - 1) % 9 + 1)
+  end
+
+  --- @param state table
+  --- @param skip number? How many to pass over
+  --- @return number cell A square that has nothing in it
+  local function emptySquare(state, skip)
+    skip = skip or 0
+    for cell = 1, 81 do
+      if state.grid[cell] == 0 then
+        if skip == 0 then
+          return cell
+        end
+        skip = skip - 1
+      end
+    end
+    error("no empty square left")
+  end
+
+  function tests.WindowShowsASudoku()
+    local player, id = sudokuOnScreen()
+    local state = player.private.Match.State(player.matches[id])
+    local grid = shownGrid()
+
+    equal(true, says("game_sudoku"))
+    equal(false, says("status_your_turn"))
+    equal(true, says("sudoku_progress"))
+    equal(false, Client.Button("undo").enabled, "nothing to take back yet")
+    equal("sudoku_level_easy", statSays("sudoku_option_level"))
+    equal("0:00", statSays("stat_time"))
+    equal("0", statSays("sudoku_mistakes"))
+    equal("stat_none", statSays("stat_best"), "no best time yet")
+    equal(true, says("sudoku_notes"))
+    equal(true, says("sudoku_erase"))
+    equal(true, says("sudoku_hint"))
+
+    -- What the puzzle came with is written, the rest is empty, and nothing is on the move
+    local given = nil
+    for cell = 1, 81 do
+      equal(state.grid[cell] ~= 0 and tostring(state.grid[cell]) or "", grid.squares[cell].figure.text or "")
+      given = given or (state.given[cell] and cell)
+    end
+    equal(false, grid:Busy())
+    equal(nil, grid.selected)
+    equal(false, grid.squares[given].tint:IsShown())
+
+    -- The keys say how many of each digit are still to be written
+    local left = player.private.Sudoku.Left(state.grid)
+    for digit = 1, 9 do
+      local key = padKey(digit)
+      equal(left[digit] > 0 and tostring(left[digit]) or "", key.caption.text)
+      equal(left[digit] <= 0, key.dim)
+    end
+    equal(false, padKey("sudoku_notes").on)
+    equal("option_off", padKey("sudoku_notes").caption.text)
+
+    -- The clock runs while the game is looked at
+    ForeverGamesFrame.detail:Fire("OnUpdate", 61)
+    passStageTime(0.02)
+    equal("1:01", statSays("stat_time"))
+  end
+
+  function tests.WindowPlaysSudoku()
+    local player, id, MainFrame = sudokuOnScreen()
+    local Match = player.private.Match
+    local match = player.matches[id]
+    local state = Match.State(match)
+    local grid = shownGrid()
+    local cell = emptySquare(state)
+    local right, wrong = state.solution[cell], state.solution[cell] % 9 + 1
+
+    -- Nothing can be written before a square is picked: the keys say no
+    padKey(right):Fire("OnClick")
+    equal(true, typeKey(tostring(right)))
+    equal("", logOf(player, id))
+    equal("IG_MAINMENU_OPTION_CHECKBOX_OFF", Client.sounds[#Client.sounds])
+
+    -- Clicking a square puts the player on it: it, its row, its column and its box are pointed out
+    clickOnGrid(grid, cell)
+    equal(cell, grid.selected)
+    equal(true, grid.cursorEdges[1]:IsShown())
+    local row, column = math.floor((cell - 1) / 9), (cell - 1) % 9
+    local washed = 0
+    for other = 1, 81 do
+      local otherRow, otherColumn = math.floor((other - 1) / 9), (other - 1) % 9
+      local sameBox = math.floor(otherRow / 3) == math.floor(row / 3) and math.floor(otherColumn / 3) == math.floor(column / 3)
+      equal(otherRow == row or otherColumn == column or sameBox, grid.squares[other].tint:IsShown(), "square " .. other)
+      washed = washed + (grid.squares[other].tint:IsShown() and 1 or 0)
+    end
+    equal(21, washed)
+    assert(grid.tints[cell] ~= grid.tints[cell % 9 == 0 and cell - 1 or cell + 1], "the square itself stands out from the rest")
+
+    -- A wrong digit pops in, shakes its head, turns red and is counted
+    equal(true, typeKey(tostring(wrong)))
+    equal(squareName(cell) .. wrong, logOf(player, id))
+    state = Match.State(match)
+    equal(tostring(wrong), grid.squares[cell].figure.text)
+    equal(true, grid:Busy())
+    local shook = 0
+    for _ = 1, 40 do
+      grid.motion:Fire("OnUpdate", 0.02)
+      shook = math.max(shook, math.abs(grid.squares[cell].dx))
+    end
+    assert(shook > 1, "a wrong digit should shake")
+    equal(false, grid:Busy())
+    equal(1, grid.squares[cell].scale)
+    equal("IG_QUEST_LOG_ABANDON_QUEST", Client.sounds[#Client.sounds])
+    equal("1", statSays("sudoku_mistakes"))
+    local wrongInk = grid.inks[cell]
+    equal(true, Client.Button("undo").enabled)
+
+    -- Every square that holds the same digit is pointed out with it, and one that clashes in red
+    local sameTint, clashTint, clashes = nil, nil, player.private.Sudoku.Clashes(state.grid)
+    for other = 1, 81 do
+      if other ~= cell and state.grid[other] == wrong then
+        assert(grid.squares[other].tint:IsShown(), "square " .. other .. " holds the same digit")
+        if clashes[other] then
+          clashTint = grid.tints[other]
+        else
+          sameTint = grid.tints[other]
+        end
+      end
+    end
+    assert(sameTint or clashTint, "the digit is somewhere else in the puzzle")
+    assert(sameTint ~= clashTint)
+
+    -- Backspace rubs it out, the right digit goes in from the pad, the same key takes it out again
+    equal(true, typeKey("BACKSPACE"))
+    equal("", grid.squares[cell].figure.text or "")
+    equal("cardSlide", Client.sounds[#Client.sounds])
+    equal(false, grid:Busy(), "nothing to show about a square rubbed out")
+    equal(true, typeKey("DELETE"), "nothing left to rub out, which the square says")
+    equal(true, grid:Busy())
+    passGridTime(grid, 1)
+    equal(2, #match.log)
+    local before = tonumber(padKey(right).caption.text)
+    padKey(right):Fire("OnClick")
+    equal(squareName(cell) .. right, match.log[3])
+    equal("cardPlace", Client.sounds[#Client.sounds])
+    equal(before - 1, tonumber(padKey(right).caption.text) or 0)
+    assert(grid.inks[cell] ~= wrongInk, "a right digit isn't red")
+    local givenInk = nil
+    for other = 1, 81 do
+      givenInk = givenInk or (state.given[other] and grid.inks[other])
+    end
+    assert(grid.inks[cell] ~= givenInk, "and is told apart from what the puzzle came with")
+    passGridTime(grid, 1)
+    padKey(right):Fire("OnClick")
+    equal(squareName(cell) .. "0", match.log[4])
+    equal(true, typeKey("NUMPAD" .. right), "the number pad of the keyboard writes too")
+    equal(squareName(cell) .. right, match.log[5])
+    passGridTime(grid, 1)
+
+    -- The arrow keys move from square to square, and around the edges
+    clickOnGrid(grid, 1)
+    equal(true, typeKey("LEFT"))
+    equal(9, grid.selected)
+    typeKey("UP")
+    equal(81, grid.selected)
+    typeKey("RIGHT")
+    equal(73, grid.selected)
+    typeKey("DOWN")
+    equal(1, grid.selected)
+    typeKey("DOWN")
+    typeKey("RIGHT")
+    equal(11, grid.selected)
+    equal(false, typeKey("W"), "any other key is the game client's")
+    equal(false, typeKey("ESCAPE"))
+    Client.over = false
+    equal(false, typeKey("LEFT"), "and so is every key while the cursor is somewhere else")
+    equal(11, grid.selected)
+    Client.over = true
+    -- A right click and the player is on no square, an arrow starts from the middle
+    clickOnGrid(grid, 20, "RightButton")
+    equal(nil, grid.selected)
+    typeKey("LEFT")
+    equal(41, grid.selected)
+
+    -- What the puzzle came with can't be written over: the square shakes its head
+    local given = nil
+    for other = 1, 81 do
+      given = given or (state.given[other] and other)
+    end
+    clickOnGrid(grid, given)
+    local moves = #match.log
+    typeKey(tostring(state.solution[given] % 9 + 1))
+    typeKey("BACKSPACE")
+    padKey("sudoku_erase"):Fire("OnClick")
+    equal(moves, #match.log)
+    equal(true, grid:Busy())
+    passGridTime(grid, 1)
+    equal(0, #ForeverGames.printed, "what the game wouldn't allow was never asked of it")
+
+    -- Notes: a key turns pencilling on and says so, digits are pencilled in and out again
+    local other = emptySquare(Match.State(match))
+    clickOnGrid(grid, other)
+    equal(true, typeKey("N"))
+    equal(true, padKey("sudoku_notes").on)
+    equal("option_on", padKey("sudoku_notes").caption.text)
+    typeKey("2")
+    typeKey("NUMPAD7")
+    padKey(5):Fire("OnClick")
+    equal("n" .. squareName(other) .. "5", match.log[#match.log])
+    local notes = grid.squares[other].notes
+    equal(true, notes[2]:IsShown())
+    equal(true, notes[5]:IsShown())
+    equal(true, notes[7]:IsShown())
+    equal("", grid.squares[other].figure.text or "")
+    typeKey("2")
+    equal(false, notes[2]:IsShown())
+    equal(false, grid:Busy())
+    -- Space turns it off again, and now a digit is written
+    equal(true, typeKey("SPACE"))
+    equal(false, padKey("sudoku_notes").on)
+    padKey("sudoku_notes"):Fire("OnClick")
+    equal(true, padKey("sudoku_notes").on)
+    padKey("sudoku_notes"):Fire("OnClick")
+    typeKey(tostring(Match.State(match).solution[other]))
+    equal(false, notes[5]:IsShown(), "the notes make way for the digit")
+    equal(tostring(Match.State(match).solution[other]), grid.squares[other].figure.text)
+    passGridTime(grid, 1)
+
+    -- Undo takes the digit back, puts the player on its square and brings the notes back
+    clickOnGrid(grid, 1)
+    Client.Button("undo"):Fire("OnClick")
+    equal(other, grid.selected)
+    equal("", grid.squares[other].figure.text or "")
+    equal(true, notes[5]:IsShown())
+    equal(true, grid:Busy(), "the square lights up to say what was taken back")
+    passGridTime(grid, 1)
+    equal(false, grid:Busy())
+
+    -- A hint fills in the square the player is on, for good
+    moves = #match.log
+    padKey("sudoku_hint"):Fire("OnClick")
+    equal("h" .. squareName(other), match.log[moves + 1])
+    equal(tostring(Match.State(match).solution[other]), grid.squares[other].figure.text)
+    assert(grid.inks[other] ~= grid.inks[cell] and grid.inks[other] ~= givenInk, "and shows it was")
+    typeKey("BACKSPACE")
+    equal(moves + 1, #match.log)
+    passGridTime(grid, 1)
+
+    -- Looked at again, nothing moves and the player is where they were
+    ForeverGamesFrame:Hide()
+    ForeverGamesFrame:Show()
+    equal(other, shownGrid().selected)
+    equal(false, grid:Busy())
+    MainFrame.Refresh()
+    equal(false, grid:Busy(), "being asked to show the same again starts nothing")
+  end
+
+  function tests.WindowCelebratesASudokuThatIsSolved()
+    local player, id, MainFrame = sudokuOnScreen()
+    local Match = player.private.Match
+    local match = player.matches[id]
+    local grid = shownGrid()
+    ForeverGamesFrame.detail:Fire("OnUpdate", 125)
+
+    -- Solved the way a player would: a click on the square and a key for the digit
+    local state = Match.State(match)
+    local swept, sounded = false, false
+    local lastCell = nil
+    for cell = 1, 81 do
+      if state.grid[cell] == 0 then
+        lastCell = cell
+        clickOnGrid(grid, cell)
+        equal(true, typeKey(tostring(state.solution[cell])))
+        local event = Match.Events(match)[#match.log]
+        if event.units and not event.won then
+          -- A row, column or box that is done lights up from the square that finished it
+          local far = player.private.Sudoku.Unit(event.units[1])
+          far = far[1] == cell and far[9] or far[1]
+          passGridTime(grid, 0.06)
+          assert(grid.squares[cell].flash:IsShown(), "the square that finished it should be lit")
+          equal(false, grid.squares[far].flash ~= nil and grid.squares[far].flash:IsShown(), "before the far end of it is")
+          swept = true
+          sounded = sounded or Client.sounds[#Client.sounds] == "IG_QUEST_LIST_COMPLETE"
+        end
+        if match.status == "active" then
+          grid:Settle()
+        end
+        state = Match.State(match)
+      end
+    end
+    equal(true, swept)
+    equal(true, sounded)
+    equal("finished", match.status)
+    equal(1, Match.Result(match).winner)
+    equal(true, says("status_won_with"))
+
+    -- A wave goes over the grid, paper rains, and the words say how long it took
+    equal("UI_EPICLOOT_TOAST", Client.sounds[#Client.sounds])
+    equal(true, grid:Busy())
+    equal(false, says("sudoku_solved"), "the words wait for the wave")
+    passStageTime(0.3)
+    assert(grid.squares[1].flash:IsShown() or grid.squares[2].flash:IsShown(), "the wave starts in the top left corner")
+    -- And hasn't got to the far corner yet. A square the last digit had nothing to do with
+    local far = nil
+    for cell = 81, 60, -1 do
+      local row, column = math.floor((cell - 1) / 9), (cell - 1) % 9
+      local lastRow, lastColumn = math.floor((lastCell - 1) / 9), (lastCell - 1) % 9
+      local sameBox = math.floor(row / 3) == math.floor(lastRow / 3) and math.floor(column / 3) == math.floor(lastColumn / 3)
+      if not far and row ~= lastRow and column ~= lastColumn and not sameBox and row + column >= 12 then
+        far = cell
+      end
+    end
+    equal(false, grid.squares[far].flash ~= nil and grid.squares[far].flash:IsShown())
+    passStageTime(0.5)
+    equal(true, grid.squares[far].flash:IsShown(), "now it has")
+    passStageTime(0.9)
+    equal(true, says("sudoku_solved"))
+    equal(true, says("sudoku_time_best"), "a first time is a best time")
+    equal("2:05", statSays("stat_best"), "the best time is on show")
+    equal("2:05", statSays("stat_time"))
+    passStageTime(6)
+    equal(false, grid:Busy())
+    equal(true, says("sudoku_solved"), "the words stay")
+    for cell = 1, 81 do
+      equal(tostring(state.solution[cell]), grid.squares[cell].figure.text)
+      equal(1, grid.squares[cell].scale)
+      equal(false, grid.squares[cell].flash ~= nil and grid.squares[cell].flash:IsShown())
+    end
+
+    -- Nothing can be done to it any more
+    local moves = #match.log
+    clickOnGrid(grid, 5)
+    equal(nil, grid.selected)
+    equal(false, typeKey("5"))
+    equal(false, typeKey("LEFT"))
+    padKey(5):Fire("OnClick")
+    padKey("sudoku_hint"):Fire("OnClick")
+    padKey("sudoku_notes"):Fire("OnClick")
+    equal(false, padKey("sudoku_notes").on)
+    equal(true, padKey(5).dim)
+    equal(moves, #match.log)
+    equal(0, #Client.Find(function(widget)
+      return widget.kind == "Button" and widget.text == "undo" and widget:IsVisible()
+    end))
+
+    -- Another game: the words are gone, and it is a puzzle of the same difficulty
+    Client.Button("play_again"):Fire("OnClick")
+    equal(2, #player.session:List())
+    equal(false, MainFrame.IsViewing(id))
+    equal(false, says("sudoku_solved"))
+    equal("sudoku_level_easy", statSays("sudoku_option_level"))
+    equal("0:00", statSays("stat_time"))
+    equal("2:05", statSays("stat_best"), "with the time to beat")
+    equal(false, shownGrid():Busy())
+    -- And back at the one that is solved they are there at once
+    MainFrame.Open(id)
+    equal(true, says("sudoku_solved"))
+    equal(true, says("sudoku_time_best"))
+    equal(false, shownGrid():Busy())
+    passStageTime(0.1)
+    equal(true, says("sudoku_solved"))
+
+    -- A game with a hint in it says so instead, and is no time to beat
+    local hinted = assert(player.session:Invite({}, "sudoku", { options = { level = "easy" } }))
+    MainFrame.Open(hinted.id)
+    equal(false, says("sudoku_solved"))
+    padKey("sudoku_hint"):Fire("OnClick")
+    equal(1, #hinted.log, "with the player on no square it is the one that was closest")
+    equal(Match.Events(hinted)[1].cell, shownGrid().selected)
+    state = Match.State(hinted)
+    for cell = 1, 81 do
+      if state.grid[cell] == 0 then
+        clickOnGrid(grid, cell)
+        typeKey(tostring(state.solution[cell]))
+      end
+    end
+    equal("finished", hinted.status)
+    passStageTime(3)
+    equal(true, says("sudoku_time_hints"))
+    equal(false, says("sudoku_time_best"))
+    equal(125, player.session:Best("sudoku", "easy"))
+  end
+
+  function tests.WindowFitsSudokuIntoTheRoomItHas()
+    sudokuOnScreen()
+    local grid = shownGrid()
+    local stage = grid.frame.parent
+    local pad = padKey(1).parent
+
+    --- Where a widget is on the stage: left, top, right, bottom, counted from its top left corner
+    local function box(widget)
+      local anchor = widget.anchors[1]
+      equal(stage, anchor[2])
+      return anchor[4], -anchor[5], anchor[4] + widget.width, -anchor[5] + widget.height
+    end
+    --- Everything is on the stage, nothing lies over anything else, and it is in the middle
+    --- @return boolean beside Whether the pad is next to the grid
+    local function fits()
+      local left, top, right, bottom = box(grid.frame)
+      local padLeft, padTop, padRight, padBottom = box(pad)
+      for _, edge in ipairs({ left, top, padLeft, padTop }) do
+        assert(edge >= 0 and edge == math.floor(edge), "on the stage and on a whole unit, got " .. edge)
+      end
+      assert(right <= stage.width and padRight <= stage.width, "too wide for " .. stage.width)
+      assert(bottom <= stage.height and padBottom <= stage.height, "too high for " .. stage.height)
+      local beside = padLeft >= right
+      assert(beside or padTop >= bottom, "the keys lie over the grid")
+      local stats = Client.Find(function(widget)
+        return widget.caption ~= nil and widget.value ~= nil and widget.parent == stage and widget:IsVisible()
+      end)
+      equal(4, #stats)
+      local last = nil
+      for _, stat in ipairs(stats) do
+        local statLeft, statTop, statRight, statBottom = box(stat)
+        assert(statLeft >= 0 and statRight <= stage.width and statTop >= 0, "the boxes are on the stage")
+        assert(statBottom <= top, "and over the grid")
+        assert(not last or statLeft >= last, "next to each other")
+        last = statRight
+      end
+      local farRight = math.max(right, padRight)
+      assert(math.abs(left - (stage.width - farRight)) <= 1, "as much room on the left as on the right")
+      for digit = 1, 9 do
+        assert(padKey(digit).width >= 20, "keys big enough to hit")
+      end
+      return beside
+    end
+
+    equal(true, fits(), "the window as it comes is wider than high")
+    local usual = grid.cell
+    ForeverGamesFrame:SetSize(1500, 1100)
+    equal(true, fits())
+    assert(grid.cell > usual * 1.3, "a bigger window should mean a bigger grid, got " .. grid.cell .. " from " .. usual)
+    equal(false, grid:Busy(), "which is simply there")
+    ForeverGamesFrame:SetSize(764, 560)
+    fits()
+    assert(grid.cell >= 26, "squares should stay usable in the smallest window, got " .. grid.cell)
+    -- Higher than wide, the keys go under the grid
+    ForeverGamesFrame:SetSize(764, 1100)
+    equal(false, fits())
+    assert(grid.frame.width > stage.width * 0.8, "and the grid gets the width")
+  end
+
+  function tests.SudokuFitsAnyStage()
+    local world = World.New()
+    local player = world:AddPlayer("Alice-Realm")
+    openWindow(player)
+    local stage = CreateFrame("Frame", nil, UIParent)
+    local view = player.private.Games.Get("sudoku").createView(stage)
+    for _, size in ipairs({ { 480, 380 }, { 380, 480 }, { 640, 640 }, { 2400, 1300 }, { 500, 1600 } }) do
+      stage:SetSize(size[1], size[2])
+      view:Layout(size[1], size[2])
+      local grid, pad = view.grid.frame, view.pad.frame
+      local left, top = grid.anchors[1][4], -grid.anchors[1][5]
+      local padLeft, padTop = pad.anchors[1][4], -pad.anchors[1][5]
+      local label = size[1] .. "x" .. size[2]
+      assert(left >= 0 and top >= 46, "the grid is off a stage of " .. label)
+      assert(left + grid.width <= size[1] and top + grid.height <= size[2], "the grid is off a stage of " .. label)
+      assert(padLeft >= 0 and padLeft + pad.width <= size[1], "the keys are off a stage of " .. label)
+      assert(padTop + pad.height <= size[2], "the keys are off a stage of " .. label)
+      assert(padLeft >= left + grid.width or padTop >= top + grid.height, "the keys lie over the grid on " .. label)
+      if size[1] ~= size[2] then
+        equal(size[1] > size[2] and "beside" or "under", view.mode, label)
+      end
+      assert(view.grid.cell >= 22, "squares of " .. view.grid.cell .. " on " .. label)
+      assert(grid.width >= math.min(size[1], size[2] - 46) * 0.6, "the grid makes use of " .. label)
+    end
+  end
+
+  function tests.WindowKeepsWhereThePlayerWasInEverySudoku()
+    local player, id, MainFrame = sudokuOnScreen()
+    local Match = player.private.Match
+    local grid = shownGrid()
+    local first = emptySquare(Match.State(player.matches[id]), 3)
+    clickOnGrid(grid, first)
+    typeKey("N")
+    typeKey("4")
+    equal(true, padKey("sudoku_notes").on)
+
+    -- Another game starts with the player on no square, writing digits
+    local other = assert(player.session:Invite({}, "sudoku", { options = { level = "medium" } }))
+    MainFrame.Open(other.id)
+    equal(nil, grid.selected)
+    equal(false, padKey("sudoku_notes").on)
+    equal("sudoku_level_medium", statSays("sudoku_option_level"))
+    for cell = 1, 81 do
+      local digit = Match.State(other).grid[cell]
+      equal(digit ~= 0 and tostring(digit) or "", grid.squares[cell].figure.text or "")
+    end
+    local second = emptySquare(Match.State(other), 7)
+    clickOnGrid(grid, second)
+    typeKey(tostring(Match.State(other).solution[second]))
+    equal(true, grid:Busy())
+
+    -- Back in the first nothing of the other is left over, and the player is where they were
+    MainFrame.Open(id)
+    equal(false, grid:Busy(), "what was on the move was about the other game")
+    equal(first, grid.selected)
+    equal(true, padKey("sudoku_notes").on)
+    equal(true, grid.squares[first].notes[4]:IsShown())
+    MainFrame.Open(other.id)
+    equal(second, grid.selected)
+    equal(false, padKey("sudoku_notes").on)
+    equal(false, grid.squares[first].notes[4]:IsShown())
+
+    -- A game that was given up shows no words and takes nothing
+    assert(player.session:Resign(other.id))
+    equal(false, says("sudoku_solved"))
+    equal(nil, grid.selected)
+    equal(false, typeKey("5"))
+  end
+
+  function tests.WindowLeavesMistakesAloneWhenAskedTo()
+    local player, id = sudokuOnScreen({ level = "easy", check = false })
+    local Match = player.private.Match
+    local match = player.matches[id]
+    local state = Match.State(match)
+    local grid = shownGrid()
+    equal("stat_none", statSays("sudoku_mistakes"))
+
+    -- A wrong digit that clashes with nothing looks like any other
+    local cell, wrong = nil, nil
+    for other = 1, 81 do
+      for digit = 1, 9 do
+        if not cell and state.grid[other] == 0 and digit ~= state.solution[other] then
+          local trial = { unpack(state.grid) }
+          trial[other] = digit
+          if not player.private.Sudoku.Clashes(trial)[other] then
+            cell, wrong = other, digit
+          end
+        end
+      end
+    end
+    assert(cell, "somewhere a wrong digit fits in")
+    clickOnGrid(grid, cell)
+    typeKey(tostring(wrong))
+    equal(1, Match.State(match).mistakes)
+    equal("cardPlace", Client.sounds[#Client.sounds], "it sounds like any other")
+    local shook = 0
+    for _ = 1, 40 do
+      grid.motion:Fire("OnUpdate", 0.02)
+      shook = math.max(shook, math.abs(grid.squares[cell].dx))
+    end
+    equal(0, shook)
+    local ink = grid.inks[cell]
+    local right = emptySquare(Match.State(match))
+    clickOnGrid(grid, right)
+    typeKey(tostring(state.solution[right]))
+    equal(ink, grid.inks[right], "and is written like any other")
+    equal("stat_none", statSays("sudoku_mistakes"), "nothing is counted out loud")
+    grid:Settle()
+
+    -- One that is twice in a row, column or box is marked all the same
+    local clash = nil
+    for other = 1, 81 do
+      local sameRow = math.floor((other - 1) / 9) == math.floor((right - 1) / 9)
+      clash = clash or (other ~= right and state.given[other] and sameRow and other)
+    end
+    typeKey(tostring(state.grid[clash]))
+    equal(grid.tints[clash], grid.tints[cell] ~= grid.tints[clash] and grid.tints[clash] or nil)
+    equal(true, grid.squares[clash].tint:IsShown())
+    clickOnGrid(grid, cell)
+    equal(grid.tints[clash], grid.tints[right], "both of them")
+    assert(grid.tints[clash] ~= grid.tints[cell])
+  end
 end
 
 -----------------------------

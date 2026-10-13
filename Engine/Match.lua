@@ -51,6 +51,8 @@ local _, private = ...
 --- @field unread boolean? Something happened that the player hasn't looked at yet
 --- @field declineReason string?
 --- @field hidden boolean? Kept only to answer repeated messages, not shown to the player
+--- @field played number? Seconds a game for one has been played for, where the game is timed
+--- @field bests table<string, boolean>? The records this match set, by key (GameRecord)
 
 --- @class MatchResult
 --- @field winner number Seat of the winner, 0 for a draw

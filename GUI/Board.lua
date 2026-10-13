@@ -50,6 +50,7 @@ local _, private = ...
 --- @field files (string|string[])? One character per column, written along the bottom edge. A list where one character isn't enough
 --- @field ranks (string|string[])? One character per row, written up the left edge
 --- @field label number[]? Colour of the edge labels, for a board where the other square colour doesn't stand out
+--- @field labelScale number? How big what SetLabels writes on a square is, as a fraction of the square
 
 --- @class BoardInput
 --- @field pickable (fun(square: number): boolean)? Whether the player may pick up what is on a square
@@ -57,6 +58,7 @@ local _, private = ...
 --- @field onMove fun(from: number, to: number, dropped: boolean)? A piece was put on one of its targets. dropped says it was dragged there, so it is already where it belongs and shouldn't glide
 --- @field place (fun(square: number): number?)? For games where pieces are placed: the square a click on this one puts a piece on, nil for none. Usually the square itself, but a game may let the player point at a whole column. The squares that stand for themselves get marked
 --- @field onPlace fun(square: number)? The player clicked to place a piece on this square
+--- @field onRightClick fun(square: number)? The player clicked a square with the right button, for a game where that does something of its own: planting a flag, say. It then isn't a wave off (onCancel)
 --- @field onCancel fun(button: string?)? The player clicked away from what they were doing, or waved it off with another mouse button, which is then said
 --- @field onHover fun(square: number?)? The cursor came onto this square, or with nil left the board. Only while the board is enabled
 
@@ -111,6 +113,7 @@ local SHIMMER = { 3.1, 4.7 }
 local SHIMMER_FROM, SHIMMER_TO = 0.1, 0.85
 -- A piece that is where it belongs, as a distance from its square
 local HERE = { 0, 0 }
+local WHITE = { 1, 1, 1 }
 
 --- @param parent Frame
 --- @param options BoardOptions
@@ -144,6 +147,8 @@ function Board.New(parent, options)
   local light, dark = options.light or LIGHT, options.dark or DARK
   local inlay = options.inlay
   self.inlayScale = inlay and inlay.scale or 1
+  self.labelScale = options.labelScale or LABEL_SCALE
+  self.inks = {}
   self.inlayColor = inlay and inlay.color
   if options.lines then
     -- Shows through between the squares, which are drawn a little smaller for it
@@ -382,7 +387,7 @@ function Board:arrange()
     end
 
     if parts.label then
-      parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(cell * LABEL_SCALE)), "OUTLINE")
+      parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(cell * self.labelScale)), "OUTLINE")
       parts.label:ClearAllPoints()
       parts.label:SetPoint("CENTER", self.frame, "TOPLEFT", x + cell / 2, -(y + cell / 2))
     end
@@ -610,7 +615,8 @@ end
 
 --- Writes on squares, over whatever stands there: how many pieces a pile is of, say
 --- @param labels table<number, string|number> Text by square. Copied, the caller can reuse the table
-function Board:SetLabels(labels)
+--- @param colors table<number, number[]>? What colour each is written in, white where it doesn't say. Copied as well
+function Board:SetLabels(labels, colors)
   for _, square in ipairs(self.all) do
     local text = labels[square]
     local parts = self.squares[square]
@@ -619,12 +625,17 @@ function Board:SetLabels(labels)
       if text and not parts.label then
         local x, y = self:OffsetOf(square)
         parts.label = self.frame:CreateFontString(nil, "OVERLAY")
-        parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(self.cell * LABEL_SCALE)), "OUTLINE")
+        parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(self.cell * self.labelScale)), "OUTLINE")
         parts.label:SetPoint("CENTER", self.frame, "TOPLEFT", x + self.cell / 2, -(y + self.cell / 2))
       end
       if parts.label then
         parts.label:SetText(text and tostring(text) or "")
       end
+    end
+    local ink = colors and colors[square] or nil
+    if parts.label and ink ~= self.inks[square] then
+      self.inks[square] = ink
+      parts.label:SetTextColor(unpack(ink or WHITE))
     end
   end
 end
@@ -776,7 +787,10 @@ function Board:onMouseDown(button)
     -- Any other button means "never mind"
     self:cancelDrag()
     self:Select(nil)
-    if input.onCancel then
+    local over = (button == "RightButton" and input.onRightClick) and self:SquareAt(self:cursor()) or nil
+    if over then
+      input.onRightClick(over)
+    elseif input.onCancel then
       input.onCancel(button)
     end
     return

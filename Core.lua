@@ -35,6 +35,8 @@ local defaults = {
     favourites = {},
     -- How the player last set the rules of each game in the wizard, by game id
     rules = {},
+    -- The best the player ever did at the games played alone, by game id
+    records = {},
   },
 }
 
@@ -54,6 +56,7 @@ function ForeverGames:OnEnable()
   private.session = private.Session.New({
     me = Transport.PlayerName(),
     matches = self.db.char.matches,
+    records = self.db.profile.records,
     send = Transport.Send,
     now = time,
     random = math.random,
@@ -246,7 +249,8 @@ function ForeverGames:HandleSlashCommand(input)
         game = candidate
       end
     end
-    local match, err = private.session:Invite({}, game and game.id)
+    -- Set up the way the player last set it up in the wizard
+    local match, err = private.session:Invite({}, game and game.id, { options = game and self.db.profile.rules[game.id] })
     if match then
       MainFrame.Open(match.id)
     else

@@ -4,8 +4,8 @@ A World of Warcraft Forever addon for playing classic games against your friends
 your own pace. Make a move, go pull a boss, come back later.
 
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
-Chinese Checkers, which is for up to six, and Crazy Eights, which is too. And Solitaire, for when
-nobody is around.
+Chinese Checkers, which is for up to six, and Crazy Eights, which is too. And Solitaire, Minesweeper
+Sudoku and 2048, for when nobody is around.
 
 ## Usage
 
@@ -25,6 +25,8 @@ nobody is around.
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
 - A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
+  One with something to set up, like how hard Minesweeper is, asks for that first, and
+  `/fg play` goes by what you said last.
   It waits for as long as you like, **Undo** takes back a move, and as many more as you press
   it for, **Start Another** swaps it for a new one and **Give Up** takes it off your list
 - Drag the corner of the window to make it any size, the board grows with it. **Focus** hides
@@ -59,6 +61,26 @@ nobody is around.
   will have it if not, and a right click only ever sends it home. Click the stock to turn a
   card, and again when it is empty to go through it once more. When nothing is left face down,
   **Finish** plays the rest out for you
+- Minesweeper asks how hard you want it before it begins: a small field with ten mines, a
+  bigger one with forty, or a wide one with ninety-nine. Left click a square to open it, the
+  first one is always safe. Right click to plant a flag on a square you think is mined, and
+  again to take it away. Once a number has its flags, a left or a middle click on it opens the
+  rest around it. Point at a number to see which squares it is still about. The clock starts
+  with your first click, and your best time at each difficulty is kept
+- In 2048, push the tiles with the arrow keys or W, A, S and D while the cursor is over the
+  game, drag across the board, or click the arrows next to it. Two tiles worth the same that
+  meet become one worth both. Making 2048 wins the game but doesn't end it: it goes on until
+  nothing moves, and your best score and biggest tile are kept for every size of board. The
+  board is four by four unless you pick three or five when you set the game up, and on three
+  the tile to make is 256
+- Sudoku asks how hard a puzzle you want before it begins, from Easy to Expert, and whether
+  wrong digits should be pointed out as you write them. Click a square, or move to it with the
+  arrow keys, and write with the digits on your keyboard or the keys next to the grid: each key
+  says how many of its digit are still missing. The same digit again takes it back out, and so
+  does Backspace. **Notes** (or N, or the space bar) switches to pencilling small digits into a
+  square, which are tidied away as the digits they are about get written. **Hint** fills in
+  the square you are on, though a game with a hint in it doesn't count for your best time.
+  The keys are only the game's while the cursor is over it, and never in combat
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -114,6 +136,16 @@ nothing: that catches mistakes in what the window does, not in how it looks.
     they are now and turning over on the way, one after the other when they are dealt. The
     player drags cards from pile to pile, alone or with what lies on them, or clicks them, and
     what can't stay where it was let go goes back
+  - `SlideGrid.lua` tiles that slide about on a grid, for games where what lies on the squares
+    travels: it is told which tiles went where, where those that met became one and what turned
+    up, and shows it, getting there at once when the next move comes before the last has
+    finished. Tiles are tinted and written on, so they are sharp at any size. Played on by
+    dragging across it
+  - `NumberGrid.lua` a grid to write figures into, for puzzles solved with a pencil: thin lines
+    between squares and heavy ones between boxes, a figure in a square or small ones pencilled
+    into it, squares washed in a colour, a frame around the one the player is on, figures that
+    pop in, squares that shake their head or light up one after the other. With it a pad of
+    keys to write with, which say something small about themselves and can be dimmed or on
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`
@@ -170,14 +202,24 @@ than two players and a board that isn't a grid. `Games/Backgammon.lua` rolls dic
 its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
 hides what a player chose rather than what they were dealt, on two boards at once, with pieces
 several squares long. `Games/Solitaire.lua` is for one, on a card table (`GUI/CardTable.lua`)
-that does all of its moving and animating.
+that does all of its moving and animating. `Games/Minesweeper.lua` is for one as well, with a
+difficulty to pick before it begins (`options`), a clock and a best time that the engine keeps
+(`clock`, `record`), a way to lose (`winner = 0`), and moves that are shown spreading across
+the board with `Widgets.Animator` and `GUI/Effects.lua`. `Games/2048.lua` has a board the
+player picks the size of, a best score that is kept, and tiles that slide
+and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everything that moved.
+`Games/Sudoku.lua` is played on a grid of numbers
+(`GUI/NumberGrid.lua`). It makes its own puzzles, which takes a solver that has to be quick: a
+game is put together again from its moves every time it is loaded, so `newState` runs often.
 
 The round pieces, the star Chinese Checkers is played on and the icons of the games played with
 them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
 `Tools/make_tables.py`, the sea, ships and pegs of Battleship by `Tools/make_fleet.py`. The cards,
 dice and sounds are converted by `Tools/convert_kenney.py`, and what a card table needs besides
 (a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
-`Tools/make_cards.py`.
+`Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
+`Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
+The icon of Sudoku is drawn by `Tools/make_sudoku.py`.
 
 ## Credits
 

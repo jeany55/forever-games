@@ -21,7 +21,8 @@
 --
 -- A game can also be for one (`seats = 1`), see Games/Solitaire.lua. There is nobody to
 -- challenge and nothing to send: it begins as soon as it is picked, it is always the player's
--- turn, and with `undo` a move can be taken back.
+-- turn, and with `undo` a move can be taken back. The engine can keep the time it is played for
+-- (`clock`) and remember the best the player ever did at it (`record`): see Games/Minesweeper.lua.
 --
 -- A game can let whoever sets it up change some of its rules (`options`): what a bonus is worth,
 -- whether taking is compulsory. What they chose travels with the challenge and is kept with the
@@ -44,6 +45,8 @@ local _, private = ...
 --- @field events MatchEvent[] What every log entry did, events[ply] led to this position
 --- @field fresh boolean The player hasn't seen this position before
 --- @field changed boolean This isn't the position the view was last asked to show
+--- @field clock fun(): number For a game that is timed (`clock`): how many seconds it has been played for by now. Asked whenever the view likes, it goes on counting between updates
+--- @field best fun(key: string): number?, boolean For a game that keeps records (`record`): the best there ever was under a key, and whether it was this match that set it
 --- @field played MatchEvent? The move to show being made: set when the position follows from the last one shown by that move, or when the opponent made it while the player wasn't looking
 
 --- @class GameViewObject
@@ -59,6 +62,12 @@ local _, private = ...
 --- @field default number|string|boolean What it is unless somebody says otherwise. Changing it changes the rules: bump `version`
 --- @field label (fun(value: number|string): string)? How a choice is shown, the value itself if left out
 --- @field when (fun(rules: table<string, any>): boolean)? Whether it matters with the rest set the way it is. One that doesn't isn't offered
+
+--- Something a game for one is played for: a score to beat, a time to get under
+--- @class GameRecord
+--- @field key string What it is the best of, e.g. "score" or the name of a difficulty. Letters, digits and underscores
+--- @field value number
+--- @field lower boolean? Less is better, as with a time
 
 --- @class GameDefinition
 --- @field id string Unique id sent over the wire, letters and digits only
@@ -82,6 +91,8 @@ local _, private = ...
 --- @field seatLabel (fun(seat: number, seats: number): string)? Short label for a seat in a game of this many players, e.g. "X"
 --- @field undo boolean? For a game for one: the player may take moves back, as many as they like. The window has the button, and the view is shown the position before with `changed` set
 --- @field progress (fun(state: table): string?)? For a game for one: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
+--- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
+--- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
 
 --- @class Games
 local Games = {}

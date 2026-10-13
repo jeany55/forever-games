@@ -103,8 +103,11 @@ function MainFrame.Describe(match)
     local progress = game.progress and game.progress(Match.State(match))
     if not result then
       return progress or L["status_solo"]
-    elseif result.winner ~= match.me then
+    elseif result.reason == "resign" then
       return L["status_gave_up"]
+    elseif result.winner ~= match.me then
+      -- The game itself said it was over, and not well
+      return progress and L["status_solo_lost_with"]:format(progress) or L["status_solo_lost"]
     end
     return progress and L["status_won_with"]:format(progress) or L["status_won"]
   end
@@ -974,6 +977,12 @@ local function refreshDetail(match, fresh)
           report(err)
         end
       end,
+      clock = function()
+        return private.session:Elapsed(match)
+      end,
+      best = function(key)
+        return private.session:Best(match.game, key), private.session:SetBest(match, key)
+      end,
       ply = ply,
       live = live,
       events = events,
@@ -1095,6 +1104,8 @@ local function create()
   frame:SetSize(math.max(MIN_WIDTH, window.width), math.max(MIN_HEIGHT, window.height))
   frame:SetPoint("CENTER")
   frame:SetFrameStrata("HIGH")
+  -- The cast bar shares this strata, so the window is lifted over it when opened or clicked
+  frame:SetToplevel(true)
   frame:SetMovable(true)
   frame:SetClampedToScreen(true)
   frame:EnableMouse(true)
@@ -1102,6 +1113,7 @@ local function create()
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   frame:SetScript("OnShow", function()
+    frame:Raise()
     PlaySound(SOUNDKIT.IG_MAINMENU_OPEN)
     local since = private.presence:SinceAnnounce()
     if not since or since > STALE_AFTER then
@@ -1130,6 +1142,12 @@ local function create()
   frame.listPanel = createListPanel(frame.body)
   frame.detail = createDetailPanel(frame.body)
   frame.empty = createEmptyPanel(frame.body)
+  -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend
+  frame.detail:SetScript("OnUpdate", function(_, elapsed)
+    if selectedId and not review and not Wizard.IsOpen() then
+      private.session:Spend(selectedId, elapsed)
+    end
+  end)
   arrange(false)
   createResizeGrip()
 

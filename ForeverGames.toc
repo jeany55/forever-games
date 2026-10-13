@@ -20,6 +20,9 @@ Engine\Match.lua
 Engine\Session.lua
 Engine\Presence.lua
 GUI\Widgets.lua
+GUI\Effects.lua
+GUI\SlideGrid.lua
+GUI\NumberGrid.lua
 GUI\Board.lua
 GUI\Cards.lua
 GUI\CardTable.lua
@@ -39,6 +42,9 @@ Games\CrazyEights.lua
 Games\Battleship.lua
 Games\Words.lua
 Games\Solitaire.lua
+Games\Minesweeper.lua
+Games\2048.lua
+Games\Sudoku.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua

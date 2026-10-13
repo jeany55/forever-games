@@ -4,7 +4,7 @@
 -- and catch the mistakes a typo or a wrong assumption about the engine would cause, it says
 -- nothing about how any of it looks.
 
-local Client = { cursor = { 0, 0 }, mouseDown = false, sounds = {}, widgets = {} }
+local Client = { cursor = { 0, 0 }, mouseDown = false, combat = false, over = true, sounds = {}, widgets = {} }
 
 local Widget = {}
 
@@ -17,8 +17,22 @@ end
 
 local methods = {}
 
+-- The client has a frame take the mouse as soon as it is given something to do with it
+local MOUSE_SCRIPTS = { OnMouseDown = true, OnMouseUp = true, OnEnter = true, OnLeave = true }
+
 function methods:SetScript(name, handler)
   self.scripts[name] = handler
+  if handler and MOUSE_SCRIPTS[name] then
+    self.mouse = true
+  end
+end
+
+function methods:EnableMouse(enabled)
+  self.mouse = enabled and true or false
+end
+
+function methods:IsMouseEnabled()
+  return self.mouse == true
 end
 
 function methods:GetScript(name)
@@ -74,6 +88,21 @@ function methods:GetCenter()
   return self.width / 2, self.height / 2
 end
 
+-- Where a widget was put is remembered the way it was said: every SetPoint since the last
+-- ClearAllPoints, as what it was called with
+function methods:SetPoint(...)
+  self.anchors = self.anchors or {}
+  self.anchors[#self.anchors + 1] = { ... }
+end
+
+function methods:ClearAllPoints()
+  self.anchors = nil
+end
+
+function methods:SetScale(scale)
+  self.scale = scale
+end
+
 function methods:SetAlpha(alpha)
   self.alpha = alpha
 end
@@ -122,6 +151,19 @@ function methods:IsVisible()
   return true
 end
 
+--- The cursor is over every widget there is, or with Client.over unset over none of them
+function methods:IsMouseOver()
+  return Client.over
+end
+
+function methods:SetPropagateKeyboardInput(propagate)
+  self.propagates = propagate
+end
+
+function methods:EnableKeyboard(enabled)
+  self.keyboard = enabled
+end
+
 function methods:SetText(text)
   self.text = text
 end
@@ -140,6 +182,14 @@ end
 
 function methods:SetEnabled(enabled)
   self.enabled = enabled
+end
+
+function methods:SetVertexColor(red, green, blue, alpha)
+  self.color = { red, green, blue, alpha or 1 }
+end
+
+function methods:GetVertexColor()
+  return unpack(self.color or { 1, 1, 1, 1 })
 end
 
 function methods:SetVerticalScroll(scroll)
@@ -170,6 +220,11 @@ end
 function Client.Install()
   Client.widgets, Client.sounds = {}, {}
   Client.cursor, Client.mouseDown = { 0, 0 }, false
+  Client.combat, Client.over = false, true
+
+  function InCombatLockdown()
+    return Client.combat
+  end
 
   function CreateFrame(kind, name, parent, template)
     local frame = newWidget(kind, parent)

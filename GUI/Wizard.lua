@@ -8,7 +8,8 @@
 -- A game for more than two has its players picked one after the other, as many as it can seat.
 -- What a game lets be changed about its rules is set on the second step too, and goes out with
 -- the challenge. The next game of the same kind starts out set the same way.
--- A game for one has nobody to pick, and begins as soon as it is chosen.
+-- A game for one has nobody to pick, and begins as soon as it is chosen. One that has rules to
+-- set goes on to the second step all the same, with only those on it.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -184,7 +185,8 @@ local function targetName()
 end
 
 local function send()
-  local match, err = private.session:Invite(opponents(), chosenGame.id, { options = chosenRules, seat = chosenSeat })
+  local others = Games.IsSolo(chosenGame) and {} or opponents()
+  local match, err = private.session:Invite(others, chosenGame.id, { options = chosenRules, seat = chosenSeat })
   if not match then
     panel.error:SetText(L["err_" .. err])
     return
@@ -193,11 +195,11 @@ local function send()
   Wizard.Close(match.id)
 end
 
---- The game was chosen. One that is played alone begins there and then, anything else goes on
---- to who it is played with
+--- The game was chosen. One that is played alone begins there and then unless it has rules to
+--- set, anything else goes on to who it is played with and how
 --- @param game GameDefinition
 local function pick(game)
-  if Games.IsSolo(game) then
+  if Games.IsSolo(game) and #(game.options or {}) == 0 then
     local match = private.session:Invite({}, game.id)
     Wizard.Close(match and match.id)
     return
@@ -826,7 +828,7 @@ local function refreshRules()
   rules.description:SetText(chosenGame.description or "")
 
   -- Seats are only for the asking between two, a crowd draws them
-  local seated = #opponents() <= 1 and Games.CanSeat(chosenGame, 2)
+  local seated = not Games.IsSolo(chosenGame) and #opponents() <= 1 and Games.CanSeat(chosenGame, 2)
   local lines = {}
   if seated then
     lines[1] = seatLine()
@@ -883,6 +885,10 @@ local function refreshRules()
   rules.reset:SetShown(changed)
   rules.usual:SetShown(#lines == 0)
   rules.note:SetText(L[Games.Chosen(chosenGame, chosenRules) and "wizard_rules_changed" or "wizard_rules_usual"])
+  if Games.IsSolo(chosenGame) and Games.Chosen(chosenGame, chosenRules) then
+    -- Nobody to challenge, nobody to be shown what was changed
+    rules.note:SetText(L["wizard_solo_note"])
+  end
   rules.note:SetShown(#lines > 0)
   rules.note:ClearAllPoints()
   rules.note:SetPoint("TOPLEFT", RULES_INSET, -OPTIONS_TOP - #lines * OPTION_ROW_HEIGHT - 8)
@@ -1046,6 +1052,21 @@ refresh = function()
     panel.step:SetText(L["wizard_step_game"])
     panel.summary:SetText("")
     refreshGames()
+    return
+  end
+
+  -- A game for one has nobody to pick: its rules have the step to themselves
+  local solo = Games.IsSolo(chosenGame)
+  panel.who:SetShown(not solo)
+  panel.rules:ClearAllPoints()
+  panel.rules:SetPoint(solo and "TOP" or "TOPRIGHT")
+  panel.rules:SetPoint(solo and "BOTTOM" or "BOTTOMRIGHT")
+  panel.sendButton:SetText(L[solo and "wizard_play" or "wizard_send"])
+  if solo then
+    panel.step:SetText(L["wizard_step_solo"]:format(chosenGame.name))
+    refreshRules()
+    panel.sendButton:SetEnabled(true)
+    panel.summary:SetText(chosenGame.name)
     return
   end
 

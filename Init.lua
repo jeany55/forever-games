@@ -15,6 +15,9 @@ local _, private = ...
 --- @field Presence Presence Presence class, the running instance is private.presence
 --- @field presence Presence
 --- @field Widgets Widgets
+--- @field Effects Effects
+--- @field SlideGrid SlideGrid
+--- @field NumberGrid NumberGrid
 --- @field Board Board
 --- @field Viewport Viewport
 --- @field Drag Drag
@@ -22,6 +25,7 @@ local _, private = ...
 --- @field CardTable CardTable
 --- @field Tiles Tiles
 --- @field Lexicon Lexicon
+--- @field Sudoku Sudoku What makes and solves the puzzles of Games/Sudoku.lua
 --- @field Wizard Wizard
 --- @field Transport Transport
 --- @field Toast Toast

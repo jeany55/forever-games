@@ -58,8 +58,6 @@ function Drag.New(parent)
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
   frame:SetFrameLevel(parent:GetFrameLevel() + 50)
-  -- Only in the way of the mouse while something is in hand: the next click is then ours
-  frame:EnableMouse(false)
   self.frame = frame
   self.texture = frame:CreateTexture(nil, "OVERLAY")
   self.texture:Hide()
@@ -81,6 +79,9 @@ function Drag.New(parent)
   frame:SetScript("OnHide", function()
     self:Cancel(true)
   end)
+  -- Only in the way of the mouse while something is in hand: the next click is then ours. Said
+  -- last, as giving a frame something to do on a click makes it take them
+  frame:EnableMouse(false)
   return self
 end
 

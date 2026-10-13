@@ -38,6 +38,7 @@ local _, private = ...
 --- @field now fun(): number
 --- @field random fun(max: number): number
 --- @field notify fun(event: string, match: Match)
+--- @field records table<string, table<string, number>>? The best the player ever did at the games played alone, by game id and key. Persisted. Forgotten with the session if left out
 
 --- @class Session
 --- @field env SessionEnv
@@ -71,6 +72,7 @@ function Session.New(env)
   for _, match in pairs(env.matches) do
     Match.Upgrade(match)
   end
+  env.records = env.records or {}
   return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {} }, Session)
 end
 
@@ -468,6 +470,7 @@ function Session:appendOwn(id, entry)
   end
   match.unread = nil
   self:pushAll(match)
+  self:record(match)
   self:touch(match, "changed")
   return true
 end
@@ -519,6 +522,73 @@ function Session:AcceptDraw(id)
     return false, "no_draw"
   end
   return self:appendOwn(id, Match.DrawAcceptEntry(match.me))
+end
+
+-----------------------------
+-- Records and the clock
+-----------------------------
+-- A game played alone has nobody to beat but the player's own best. A game that says what is
+-- worth remembering (GameDefinition.record) has it kept here, and one that is timed
+-- (GameDefinition.clock) has its seconds counted by whoever shows it: the session only keeps them.
+
+--- Remembers whatever of a game for one is the best the player ever did
+--- @param match Match
+function Session:record(match)
+  local game = Games.Get(match.game)
+  if not game or not game.record or not Match.IsSolo(match) then
+    return
+  end
+  local records = game.record(Match.State(match), match.played or 0, Match.Result(match))
+  for _, record in ipairs(records or {}) do
+    local bests = self.env.records[game.id] or {}
+    self.env.records[game.id] = bests
+    local best = bests[record.key]
+    local better = best == nil or (record.lower and record.value < best) or (not record.lower and record.value > best)
+    if better then
+      bests[record.key] = record.value
+      match.bests = match.bests or {}
+      match.bests[record.key] = true
+    end
+  end
+end
+
+--- The best the player ever did at a game
+--- @param gameId string
+--- @param key string See GameRecord
+--- @return number? nil if there is none yet
+function Session:Best(gameId, key)
+  local bests = self.env.records[gameId]
+  return bests and bests[key]
+end
+
+--- Whether it was this match that set a record
+--- @param match Match
+--- @param key string
+--- @return boolean
+function Session:SetBest(match, key)
+  return match.bests ~= nil and match.bests[key] == true
+end
+
+--- How long a game for one has been played for
+--- @param match Match
+--- @return number seconds
+function Session:Elapsed(match)
+  return match.played or 0
+end
+
+--- Counts time spent playing a game for one that is timed. Nothing is said about it: a clock
+--- that is shown is asked for the time, it isn't told
+--- @param id string
+--- @param seconds number
+function Session:Spend(id, seconds)
+  local match = self.env.matches[id]
+  local game = match and Games.Get(match.game)
+  if not game or not game.clock or not Match.IsSolo(match) or match.status ~= "active" then
+    return
+  end
+  if game.clock == "open" or #match.log > 0 then
+    match.played = (match.played or 0) + seconds
+  end
 end
 
 --- Whether the local player can take their last move back: only in a game they play alone
