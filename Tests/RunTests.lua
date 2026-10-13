@@ -557,6 +557,27 @@ function tests.PresenceForgetsPlayersWhoGoQuiet()
   equal("", names(world.players.Alice))
 end
 
+function tests.PresenceKeepsLookingRightAfterLogin()
+  -- Bob's friends list isn't known to Alice's client until a little after login
+  local friends = {}
+  local world = presenceWorld({ Alice = false, Bob = false }, { Alice = friends })
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("", names(world.players.Alice))
+
+  friends[1] = "Bob"
+  world.clock = world.clock + 30
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("", names(world.players.Alice), "too soon to announce again")
+
+  world.clock = world.clock + 30
+  world.players.Alice:Tick()
+  world:Deliver()
+  equal("Bob=friend", names(world.players.Alice))
+  equal("Alice=friend", names(world.players.Bob))
+end
+
 function tests.PresenceLeavesGameMessagesAlone()
   local world = presenceWorld({ Alice = "Knights", Bob = "Knights" }, {})
   equal(false, world.players.Alice:Handle("Bob", "1:MOV:abc:1:1:5", false))
