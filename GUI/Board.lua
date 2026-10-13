@@ -3,11 +3,14 @@
 --------------------------
 -- A grid of squares with pieces on it, for any game played on one. It draws at whatever size it
 -- is given, lets the player move a piece by dragging it or by clicking it and then where it
--- goes, shows where a picked up piece may go, and glides pieces between squares.
+-- goes, shows where a picked up piece may go, and glides pieces between squares. Games where
+-- pieces are put down rather than moved get the squares they may go on marked, and pieces that
+-- drop into place or turn over.
 --
--- The board knows nothing about rules. A game hands it the pieces to show and three functions:
--- which squares hold something the player may pick up, where a picked up piece may go, and what
--- to do once it has been put down. See Games/Chess.lua.
+-- The board knows nothing about rules. A game hands it the pieces to show and a few functions.
+-- For pieces that move: which squares hold something the player may pick up, where a picked up
+-- piece may go, and what to do once it has been put down, see Games/Chess.lua. For pieces that
+-- are placed: where a click on a square puts one, and what to do then, see Games/Reversi.lua.
 --
 -- Squares are numbered row by row from the bottom left as the first player sees it, starting at
 -- 0. Flipping the board turns it around for the player sitting opposite.
@@ -19,15 +22,21 @@ local _, private = ...
 --- @field columns number
 --- @field rows number
 --- @field light number[]? Colour of the light squares
---- @field dark number[]? Colour of the dark squares, the bottom left one is dark
+--- @field dark number[]? Colour of the dark squares, the bottom left one is dark. Give both the same colour for a plain board
+--- @field lines number[]? Colour of a thin line drawn between the squares, for a plain board
+--- @field inlay { texture: string, color: number[], scale: number }? Something drawn on every square under its piece, like the holes of a rack
+--- @field mark number[]? Colour of the marks on squares a piece may go to
 --- @field files string? One character per column, written along the bottom edge
 --- @field ranks string? One character per row, written up the left edge
+--- @field label number[]? Colour of the edge labels, for a board where the other square colour doesn't stand out
 
 --- @class BoardInput
 --- @field pickable (fun(square: number): boolean)? Whether the player may pick up what is on a square
 --- @field targets (fun(square: number): table<number, any>)? Squares the piece on a square may go to, as keys
 --- @field onMove fun(from: number, to: number, dropped: boolean)? A piece was put on one of its targets. dropped says it was dragged there, so it is already where it belongs and shouldn't glide
---- @field onClick fun(square: number)? A square was clicked that isn't part of moving a piece, for games where pieces are placed
+--- @field place (fun(square: number): number?)? For games where pieces are placed: the square a click on this one puts a piece on, nil for none. Usually the square itself, but a game may let the player point at a whole column. The squares that stand for themselves get marked
+--- @field onPlace fun(square: number)? The player clicked to place a piece on this square
+--- @field onCancel fun()? The player clicked away from what they were doing, or waved it off with another mouse button
 
 --- @class Board
 --- @field frame Frame
@@ -37,17 +46,29 @@ Board.__index = Board
 private.Board = Board
 
 local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Board\\"
+local DISCS = "Interface\\AddOns\\ForeverGames\\Images\\Discs\\"
+-- Piece textures come in these sizes: the client only reads power of two textures and doesn't
+-- build mipmaps for them
+local TEXTURE_SIZES = { 64, 128, 256 }
 local LIGHT = { 0.86, 0.80, 0.66 }
 local DARK = { 0.45, 0.32, 0.23 }
 local SELECTED = { 0.25, 0.7, 0.3, 0.55 }
 local MARK = { 0.2, 0.75, 0.25, 0.85 }
--- Seconds a piece takes to glide to its square
+-- Seconds a piece takes to glide to its square, or to the next square on its way there
 local GLIDE = 0.18
+-- Seconds a dropped piece takes to fall past the first square, it gets faster from there
+local FALL = 0.14
+-- Seconds a piece takes to turn over
+local FLIP = 0.3
+-- How narrow a piece gets while it turns over, it can't have no width at all
+local FLIP_EDGE = 0.06
 -- How far the cursor has to travel with the button held before a click becomes a drag
 local DRAG_DISTANCE = 4
 -- A piece being carried is drawn a little larger, as if lifted off the board
 local CARRIED_SCALE = 1.15
 local DOT_SCALE = 0.3
+-- A piece that is where it belongs, as a distance from its square
+local HERE = { 0, 0 }
 
 --- @param parent Frame
 --- @param options BoardOptions
@@ -61,13 +82,21 @@ function Board.New(parent, options)
   self.cell = 0
   self.flipped = false
   self.enabled = false
-  self.pieces, self.shown, self.tints, self.targets, self.glides = {}, {}, {}, {}, {}
+  self.pieces, self.shown, self.tints, self.targets, self.glides, self.flips = {}, {}, {}, {}, {}, {}
 
   local frame = CreateFrame("Frame", nil, parent)
   frame:EnableMouse(true)
   self.frame = frame
 
   local light, dark = options.light or LIGHT, options.dark or DARK
+  local inlay = options.inlay
+  self.inlayScale = inlay and inlay.scale or 1
+  if options.lines then
+    -- Shows through between the squares, which are drawn a little smaller for it
+    self.lines = frame:CreateTexture(nil, "BACKGROUND", nil, -1)
+    self.lines:SetAllPoints()
+    self.lines:SetColorTexture(unpack(options.lines))
+  end
   self.squares = {}
   for square = 0, self.count - 1 do
     local isDark = (square % self.columns + math.floor(square / self.columns)) % 2 == 0
@@ -76,13 +105,19 @@ function Board.New(parent, options)
     parts.background = frame:CreateTexture(nil, "BACKGROUND")
     parts.background:SetColorTexture(unpack(isDark and dark or light))
 
+    if inlay then
+      parts.inlay = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
+      parts.inlay:SetTexture(inlay.texture)
+      parts.inlay:SetVertexColor(unpack(inlay.color))
+    end
+
     -- Colours the whole square: the selection, or whatever the game wants pointed out
     parts.tint = frame:CreateTexture(nil, "BORDER")
     parts.tint:Hide()
 
     -- Says the picked up piece may go here: a dot on an empty square, a ring around a piece
     parts.mark = frame:CreateTexture(nil, "ARTWORK", nil, 1)
-    parts.mark:SetVertexColor(unpack(MARK))
+    parts.mark:SetVertexColor(unpack(options.mark or MARK))
     parts.mark:Hide()
 
     parts.piece = frame:CreateTexture(nil, "ARTWORK", nil, 2)
@@ -103,7 +138,7 @@ function Board.New(parent, options)
   for index = 1, self.ranks and self.rows or 0 do
     self.rankLabels[index] = frame:CreateFontString(nil, "BORDER")
   end
-  self.labelColors = { light, dark }
+  self.labelColors = options.label and { options.label, options.label } or { light, dark }
 
   frame:SetScript("OnMouseDown", function(_, button)
     self:onMouseDown(button)
@@ -188,18 +223,25 @@ end
 
 function Board:layout()
   local cell = self.cell
+  -- Room left around each square for the lines between them
+  local inset = self.lines and math.max(1, math.floor(cell * 0.02)) or 0
   for square = 0, self.count - 1 do
     local parts = self.squares[square]
     local x, y = self:OffsetOf(square)
 
     parts.background:ClearAllPoints()
-    parts.background:SetPoint("TOPLEFT", x, -y)
-    parts.background:SetSize(cell, cell)
+    parts.background:SetPoint("TOPLEFT", x + inset, -(y + inset))
+    parts.background:SetSize(cell - 2 * inset, cell - 2 * inset)
     parts.tint:ClearAllPoints()
-    parts.tint:SetPoint("TOPLEFT", x, -y)
-    parts.tint:SetSize(cell, cell)
+    parts.tint:SetPoint("TOPLEFT", x + inset, -(y + inset))
+    parts.tint:SetSize(cell - 2 * inset, cell - 2 * inset)
     parts.mark:ClearAllPoints()
     parts.mark:SetPoint("CENTER", self.frame, "TOPLEFT", x + cell / 2, -(y + cell / 2))
+    if parts.inlay then
+      parts.inlay:ClearAllPoints()
+      parts.inlay:SetPoint("CENTER", self.frame, "TOPLEFT", x + cell / 2, -(y + cell / 2))
+      parts.inlay:SetSize(cell * self.inlayScale, cell * self.inlayScale)
+    end
 
     if not self.glides[square] and not (self.drag and self.drag.square == square) then
       self:placePiece(square)
@@ -254,6 +296,8 @@ end
 
 --- Tints and target marks
 function Board:refreshMarks()
+  -- With nothing picked up, the squares a piece may be placed on are marked the same way
+  local place = self.enabled and self.selected == nil and self.input and self.input.place or nil
   for square = 0, self.count - 1 do
     local parts = self.squares[square]
     local tint = square == self.selected and SELECTED or self.tints[square]
@@ -262,7 +306,7 @@ function Board:refreshMarks()
     end
     parts.tint:SetShown(tint ~= nil)
 
-    local isTarget = self.targets[square] ~= nil
+    local isTarget = self.targets[square] ~= nil or (place ~= nil and place(square) == square)
     if isTarget then
       local occupied = self.pieces[square] ~= nil
       local size = self.cell * (occupied and 1 or DOT_SCALE)
@@ -277,11 +321,57 @@ end
 -- Public
 -----------------------------
 
---- Fits the board into a square of this side. Squares are a whole number of units, so the board
---- can come out a little smaller: read the result from board.cell.
---- @param side number
-function Board:SetSize(side)
-  local cell = math.max(1, math.floor(side / math.max(self.columns, self.rows)))
+--- The size to use of a texture that comes in several, for drawing it at this many screen pixels
+--- @param pixels number?
+--- @return number
+function Board.TextureSize(pixels)
+  -- The smallest one that doesn't have to be stretched much: the client doesn't smooth a
+  -- texture it shrinks a lot, and a small one blown up is blurry
+  for _, size in ipairs(TEXTURE_SIZES) do
+    if size >= (pixels or 0) * 0.85 then
+      return size
+    end
+  end
+  return TEXTURE_SIZES[#TEXTURE_SIZES]
+end
+
+--- A round playing piece from the shared set, see Tools/make_discs.py for what there is
+--- @param name string
+--- @param pixels number? Screen pixels it will be drawn at
+--- @return string
+function Board.Disc(name, pixels)
+  return DISCS .. Board.TextureSize(pixels) .. "\\" .. name
+end
+
+--- A piece with a line of text next to it, for a score or a count of what was taken
+--- @param parent Frame
+--- @param height number
+--- @return Frame tally Set(texture, text) fills it
+function Board.Tally(parent, height)
+  local tally = CreateFrame("Frame", nil, parent)
+  tally:SetHeight(height)
+  local icon = tally:CreateTexture(nil, "ARTWORK")
+  icon:SetSize(height, height)
+  icon:SetPoint("LEFT")
+  local label = tally:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  label:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+  tally.label = label
+
+  --- @param texture string
+  --- @param text string
+  function tally:Set(texture, text)
+    icon:SetTexture(texture)
+    label:SetText(text)
+  end
+  return tally
+end
+
+--- Fits the board into this much room. Squares are a whole number of units, so the board can
+--- come out a little smaller: read the result from board.cell.
+--- @param width number
+--- @param height number? As high as wide if left out
+function Board:SetSize(width, height)
+  local cell = math.max(1, math.floor(math.min(width / self.columns, (height or width) / self.rows)))
   if cell == self.cell then
     return
   end
@@ -339,6 +429,7 @@ function Board:SetEnabled(enabled)
     self:Select(nil)
     self.hover:Hide()
   end
+  self:refreshMarks()
 end
 
 --- Picks a square's piece up or, with nil, puts down whatever is picked up
@@ -357,27 +448,59 @@ end
 --- always holds the position as it ends up, a glide only changes how it gets drawn meanwhile.
 --- @param square number Where the piece is now
 --- @param from number Where it should appear to come from
-function Board:Glide(square, from)
+--- @param via number[]? Squares it stops at on the way, in order
+function Board:Glide(square, from, via)
   local x, y = self:OffsetOf(square)
-  local fromX, fromY = self:OffsetOf(from)
-  self:glideFrom(square, fromX - x, fromY - y)
+  local points = {}
+  for index = 0, via and #via or 0 do
+    local pointX, pointY = self:OffsetOf(index == 0 and from or via[index])
+    points[#points + 1] = { pointX - x, pointY - y }
+  end
+  self:animate(square, points, GLIDE, false)
+end
+
+--- Makes the piece on a square fall into it from above the board. Call it after SetPieces
+--- @param square number
+function Board:Drop(square)
+  local _, y = self:OffsetOf(square)
+  local height = y + self.cell
+  -- Falling from rest, the time goes with the square root of the height
+  self:animate(square, { { 0, -height } }, FALL * math.sqrt(height / math.max(1, self.cell)), true)
+end
+
+--- Makes the piece on a square turn over into what it is now. Call it after SetPieces
+--- @param square number
+--- @param from any What it was before, as given to SetPieces
+--- @param delay number? Seconds to wait first, to turn a row of pieces over one after the other
+function Board:Flip(square, from, delay)
+  local path = self.textureFor(from, self:pixels())
+  self.flips[square] = { elapsed = -(delay or 0), turned = false }
+  self.squares[square].piece:SetTexture(path)
 end
 
 --- @param square number
---- @param dx number Where it starts, as a distance from its square
---- @param dy number
-function Board:glideFrom(square, dx, dy)
-  self.glides[square] = { dx = dx, dy = dy, elapsed = 0 }
+--- @param points number[][] Where it starts and where it stops on the way, as distances from its square
+--- @param seconds number How long each stretch takes
+--- @param falling boolean Whether it speeds up on the way instead of settling
+function Board:animate(square, points, seconds, falling)
+  self.glides[square] = { points = points, seconds = seconds, falling = falling, elapsed = 0 }
   -- Above the pieces it passes on the way
   self.squares[square].piece:SetDrawLayer("ARTWORK", 3)
-  self:placePiece(square, dx, dy)
+  self:placePiece(square, points[1][1], points[1][2])
 end
 
---- Puts every piece that is still on its way straight onto its square
+--- Puts every piece that is still moving or turning the way it ends up
 function Board:StopGlides()
   for square in pairs(self.glides) do
     self.glides[square] = nil
     self.squares[square].piece:SetDrawLayer("ARTWORK", 2)
+    self:placePiece(square)
+  end
+  for square in pairs(self.flips) do
+    self.flips[square] = nil
+    if self.shown[square] then
+      self.squares[square].piece:SetTexture(self.shown[square])
+    end
     self:placePiece(square)
   end
 end
@@ -407,6 +530,9 @@ function Board:onMouseDown(button)
     -- Any other button means "never mind"
     self:cancelDrag()
     self:Select(nil)
+    if input.onCancel then
+      input.onCancel()
+    end
     return
   end
 
@@ -427,8 +553,11 @@ function Board:onMouseDown(button)
     self.drag = { square = square, x = x, y = y, carried = false, again = again }
   else
     self:Select(nil)
-    if input.onClick then
-      input.onClick(square)
+    local to = input.place and input.place(square)
+    if to then
+      input.onPlace(to)
+    elseif input.onCancel then
+      input.onCancel()
     end
   end
 end
@@ -459,7 +588,7 @@ function Board:onMouseUp(button)
   else
     -- Not somewhere it can go: back to its square from where it was let go, still picked up
     local squareX, squareY = self:OffsetOf(drag.square)
-    self:glideFrom(drag.square, x - self.cell / 2 - squareX, y - self.cell / 2 - squareY)
+    self:animate(drag.square, { { x - self.cell / 2 - squareX, y - self.cell / 2 - squareY } }, GLIDE, false)
   end
 end
 
@@ -467,15 +596,35 @@ end
 function Board:onUpdate(elapsed)
   for square, glide in pairs(self.glides) do
     glide.elapsed = glide.elapsed + elapsed
-    local progress = math.min(1, glide.elapsed / GLIDE)
-    if progress >= 1 then
+    local stretch = math.floor(glide.elapsed / glide.seconds) + 1
+    local from = glide.points[stretch]
+    if not from then
       self.glides[square] = nil
       self.squares[square].piece:SetDrawLayer("ARTWORK", 2)
       self:placePiece(square)
     else
-      -- Fast at first, settling onto the square
-      local left = (1 - progress) ^ 3
-      self:placePiece(square, glide.dx * left, glide.dy * left)
+      local to = glide.points[stretch + 1] or HERE
+      local progress = glide.elapsed / glide.seconds - (stretch - 1)
+      -- A glide is fast at first and settles onto the square, a fall starts slow
+      local left = glide.falling and 1 - progress ^ 2 or (1 - progress) ^ 3
+      self:placePiece(square, to[1] + (from[1] - to[1]) * left, to[2] + (from[2] - to[2]) * left)
+    end
+  end
+
+  for square, flip in pairs(self.flips) do
+    flip.elapsed = flip.elapsed + elapsed
+    local progress = math.max(0, flip.elapsed / FLIP)
+    local piece = self.squares[square].piece
+    if progress >= 1 then
+      self.flips[square] = nil
+      self:placePiece(square)
+    else
+      if progress >= 0.5 and not flip.turned then
+        -- Edge on: from here it shows its other side
+        flip.turned = true
+        piece:SetTexture(self.shown[square])
+      end
+      piece:SetWidth(self.cell * math.max(FLIP_EDGE, math.abs(1 - 2 * progress)))
     end
   end
 
@@ -509,6 +658,11 @@ function Board:onUpdate(elapsed)
       useful = self.targets[over] ~= nil
     else
       useful = self.targets[over] ~= nil or (input.pickable ~= nil and input.pickable(over))
+      if not useful and input.place then
+        -- Light up where the piece would end up, which needn't be where the cursor is
+        over = input.place(over)
+        useful = over ~= nil
+      end
     end
   end
   if useful then

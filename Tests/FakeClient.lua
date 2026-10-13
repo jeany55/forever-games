@@ -114,6 +114,10 @@ function methods:GetText()
   return self.text
 end
 
+function methods:GetStringWidth()
+  return #(self.text or "") * 6
+end
+
 function methods:SetTexture(texture)
   self.texture = texture
 end

@@ -119,6 +119,9 @@ local function toastText(event, match)
     return L["toast_invite"]:format(opponent, gameName(match))
   elseif event == "accepted" and not Match.IsMyTurn(match) then
     return L["toast_accepted"]:format(opponent, gameName(match))
+  elseif event == "moved" and not Match.IsMyTurn(match) then
+    -- They moved and get to move again, nothing to do yet
+    return nil
   elseif event == "accepted" or event == "moved" then
     return L["toast_your_turn"]:format(gameName(match), opponent)
   elseif event == "draw" then

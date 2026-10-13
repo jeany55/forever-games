@@ -501,9 +501,8 @@ end
 -- the pieces, which squares to point out, asking what a pawn promotes to, and the trays of
 -- captured pieces above and below the board.
 
+-- Each piece comes in several sizes, see Tools/convert_pieces.py
 local TEXTURES = "Interface\\AddOns\\ForeverGames\\Images\\Chess\\"
--- Each piece comes in these sizes, see Tools/convert_pieces.py
-local TEXTURE_SIZES = { 64, 128, 256 }
 local LAST_MOVE = { 0.95, 0.85, 0.25, 0.4 }
 local CHECK = { 0.9, 0.15, 0.15, 0.6 }
 local TRAY_HEIGHT = 22
@@ -518,16 +517,7 @@ local SOUNDS = { move = "IG_ABILITY_ICON_DROP", capture = "IG_BACKPACK_CLOSE", c
 --- @param pixels number? Screen pixels it will be drawn at
 --- @return string
 local function textureFor(piece, pixels)
-  -- The smallest one that doesn't have to be stretched much: the client doesn't smooth a
-  -- texture it shrinks a lot, and a small one blown up is blurry
-  local size = TEXTURE_SIZES[#TEXTURE_SIZES]
-  for _, candidate in ipairs(TEXTURE_SIZES) do
-    if candidate >= (pixels or 0) * 0.85 then
-      size = candidate
-      break
-    end
-  end
-  return TEXTURES .. size .. "\\" .. (ownerOf(piece) == WHITE and "w" or "b") .. piece:upper()
+  return TEXTURES .. private.Board.TextureSize(pixels) .. "\\" .. (ownerOf(piece) == WHITE and "w" or "b") .. piece:upper()
 end
 
 --- Legal destinations of the piece on a square
@@ -550,7 +540,6 @@ end
 --- @field stage Frame
 --- @field board Board
 --- @field view GameView? What was last asked for
---- @field shown { id: string, ply: number }? The position that is on the board
 --- @field pending { from: number, to: number }? A promotion waiting for the player to pick a piece
 --- @field dropped boolean? The move being played was dragged, so the piece is already there
 local View = {}
@@ -776,15 +765,10 @@ end
 
 --- @param view GameView
 function View:Update(view)
-  local before = self.shown
-  local sameMatch = before ~= nil and before.id == view.match.id
-  local changed = not sameMatch or before.ply ~= view.ply
-  local stepped = sameMatch and view.ply == before.ply + 1
   self.view = view
-  self.shown = { id = view.match.id, ply = view.ply }
 
   local board = self.board
-  if changed then
+  if view.changed then
     -- What was picked up or being chosen belonged to the position that was showing
     self.pending = nil
     board:Select(nil)
@@ -798,12 +782,9 @@ function View:Update(view)
   board:SetEnabled(view.canMove)
   self:draw()
 
-  -- Show how the position came about when it follows from the one before, or when the
-  -- opponent moved while the player wasn't looking
   --- @type ChessEvent?
-  local event = view.events[view.ply]
-  local arrived = view.fresh and view.live and event ~= nil and event.seat ~= view.seat
-  if changed and event and event.kind == "move" and (stepped or arrived) then
+  local event = view.played
+  if event then
     if not self.dropped then
       board:Glide(event.to, event.from)
     end
@@ -818,6 +799,7 @@ private.Games.Register({
   id = "chess",
   name = L["game_chess"],
   description = L["game_chess_description"],
+  genre = "strategy",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\chess",
   -- 2: draws by agreement
   version = 2,

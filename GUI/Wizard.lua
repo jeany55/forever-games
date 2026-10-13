@@ -2,7 +2,7 @@
 --  New game wizard
 --------------------------
 -- Two steps: pick a game, then pick who to play. Lives inside the main window and takes over its
--- content while open.
+-- content while open. The games are a list that scrolls, narrowed down by typing or by genre.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -16,6 +16,8 @@ local Wizard = {}
 private.Wizard = Wizard
 
 local CARD_WIDTH, CARD_HEIGHT = 350, 96
+local CARD_GAP = 12
+local GAME_COLUMNS = 2
 local PLAYER_ROW_HEIGHT = 26
 local COLUMN_WIDTH = 350
 
@@ -26,6 +28,9 @@ local panel
 local onClose
 --- @type GameDefinition?
 local chosenGame
+-- Genre the list of games is narrowed down to
+--- @type string?
+local chosenGenre
 -- Opponent picked from the list of available players, full name
 --- @type string?
 local chosenPlayer
@@ -61,10 +66,10 @@ end
 -- Step 1: game
 -----------------------------
 
+--- A game to pick. Cards are reused for whatever games the search leaves, see fillGameRow
 --- @param parent Frame
---- @param game GameDefinition
 --- @return Button
-local function createGameCard(parent, game)
+local function createGameCard(parent)
   local card = Widgets.Panel(parent, "Button")
   card:SetSize(CARD_WIDTH, CARD_HEIGHT)
 
@@ -72,35 +77,153 @@ local function createGameCard(parent, game)
   hover:SetAllPoints()
   hover:SetColorTexture(1, 0.82, 0, 0.12)
 
-  local icon = Widgets.Icon(card, game.icon or private.ICON, 64)
-  icon:SetPoint("LEFT", 16, 0)
+  card.icon = Widgets.Icon(card, private.ICON, 64)
+  card.icon:SetPoint("LEFT", 16, 0)
 
-  local name = Widgets.Label(card, "GameFontNormalLarge", game.name)
-  name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 14, -4)
+  card.name = Widgets.Label(card, "GameFontNormalLarge")
+  card.name:SetPoint("TOPLEFT", card.icon, "TOPRIGHT", 14, -4)
 
-  local description = Widgets.Label(card, "GameFontHighlightSmall", game.description)
-  description:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -6)
-  description:SetWidth(CARD_WIDTH - 110)
-  description:SetJustifyV("TOP")
-  description:SetTextColor(unpack(Widgets.GREY))
+  card.genre = Widgets.Label(card, "GameFontDisableSmall")
+  card.genre:SetPoint("TOPRIGHT", -10, -10)
 
-  card:SetScript("OnClick", function()
-    chosenGame = game
+  card.description = Widgets.Label(card, "GameFontHighlightSmall")
+  card.description:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -6)
+  card.description:SetWidth(CARD_WIDTH - 110)
+  card.description:SetJustifyV("TOP")
+  card.description:SetTextColor(unpack(Widgets.GREY))
+
+  card:SetScript("OnClick", function(self)
+    chosenGame = self.game
     refresh()
   end)
   return card
+end
+
+--- One line of the list of games, a card per column
+--- @param content Frame
+--- @return Frame
+local function createGameRow(content)
+  local row = CreateFrame("Frame", nil, content)
+  row.cards = {}
+  for column = 1, GAME_COLUMNS do
+    row.cards[column] = createGameCard(row)
+    row.cards[column]:SetPoint("TOPLEFT", (column - 1) * (CARD_WIDTH + CARD_GAP), 0)
+  end
+  return row
+end
+
+--- @param row Frame
+--- @param games GameDefinition[] The games on this line, one per column
+local function fillGameRow(row, games)
+  for column, card in ipairs(row.cards) do
+    local game = games[column]
+    card.game = game
+    card:SetShown(game ~= nil)
+    if game then
+      card.icon:SetTexture(game.icon or private.ICON)
+      card.name:SetText(game.name)
+      card.genre:SetText(game.genre and L["genre_" .. game.genre] or "")
+      card.description:SetText(game.description or "")
+    end
+  end
+end
+
+--- A button that narrows the list down to one genre, or with no genre shows them all again
+--- @param parent Frame
+--- @param genre string?
+--- @return Button
+local function createGenreButton(parent, genre)
+  local button = Widgets.Panel(parent, "Button")
+  button.genre = genre
+
+  local label = Widgets.Label(button, "GameFontHighlightSmall", genre and L["genre_" .. genre] or L["wizard_all_games"])
+  label:SetPoint("CENTER")
+  button.label = label
+  button:SetSize(label:GetStringWidth() + 24, 24)
+
+  local hover = button:CreateTexture(nil, "HIGHLIGHT")
+  hover:SetAllPoints()
+  hover:SetColorTexture(1, 0.82, 0, 0.12)
+
+  button:SetScript("OnClick", function()
+    chosenGenre = genre
+    refresh()
+  end)
+  return button
+end
+
+--- The games the search box and the chosen genre leave
+--- @return GameDefinition[]
+local function matchingGames()
+  return Games.Search(panel.searchBox:GetText(), chosenGenre)
 end
 
 --- @param parent Frame
 --- @return Frame
 local function createGameStep(parent)
   local step = CreateFrame("Frame", nil, parent)
-  for index, game in ipairs(Games.List()) do
-    local card = createGameCard(step, game)
-    local column, row = (index - 1) % 2, math.floor((index - 1) / 2)
-    card:SetPoint("TOPLEFT", column * (CARD_WIDTH + 12), -row * (CARD_HEIGHT + 12))
+
+  panel.searchBox = CreateFrame("EditBox", nil, step, "InputBoxTemplate")
+  panel.searchBox:SetSize(200, 24)
+  panel.searchBox:SetPoint("TOPLEFT", 8, 0)
+  panel.searchBox:SetAutoFocus(false)
+  panel.searchBox:SetMaxLetters(40)
+  panel.searchBox:SetScript("OnEscapePressed", panel.searchBox.ClearFocus)
+  panel.searchBox:SetScript("OnTextChanged", function()
+    refresh()
+  end)
+  -- With the list down to one game there is nothing left to choose
+  panel.searchBox:SetScript("OnEnterPressed", function()
+    local games = matchingGames()
+    if #games == 1 then
+      chosenGame = games[1]
+      refresh()
+    end
+  end)
+
+  -- Says what the box is for until something is typed into it
+  panel.searchHint = Widgets.Label(panel.searchBox, "GameFontDisable", L["wizard_search"])
+  panel.searchHint:SetPoint("LEFT", 2, 0)
+
+  panel.genreButtons = { createGenreButton(step) }
+  for _, genre in ipairs(Games.Genres()) do
+    panel.genreButtons[#panel.genreButtons + 1] = createGenreButton(step, genre)
   end
+  for index, button in ipairs(panel.genreButtons) do
+    if index == 1 then
+      button:SetPoint("LEFT", panel.searchBox, "RIGHT", 14, 0)
+    else
+      button:SetPoint("LEFT", panel.genreButtons[index - 1], "RIGHT", 6, 0)
+    end
+  end
+
+  panel.games = Widgets.List(step, GAME_COLUMNS * (CARD_WIDTH + CARD_GAP), CARD_HEIGHT + CARD_GAP, createGameRow)
+  panel.games.frame:SetPoint("TOPLEFT", 0, -36)
+  panel.games.frame:SetPoint("BOTTOMRIGHT")
+
+  panel.noGames = Widgets.Label(step, "GameFontDisable", L["wizard_no_games"])
+  panel.noGames:SetPoint("TOPLEFT", 8, -52)
   return step
+end
+
+--- Shows the games that match what is being looked for
+local function refreshGames()
+  local games = matchingGames()
+  local rows = {}
+  for index, game in ipairs(games) do
+    local row = math.ceil(index / GAME_COLUMNS)
+    rows[row] = rows[row] or {}
+    table.insert(rows[row], game)
+  end
+  panel.games:Update(rows, fillGameRow)
+  panel.noGames:SetShown(#games == 0)
+  panel.searchHint:SetShown(panel.searchBox:GetText() == "")
+
+  for _, button in ipairs(panel.genreButtons) do
+    local chosen = button.genre == chosenGenre
+    button:SetBackdropBorderColor(1, chosen and 0.82 or 1, chosen and 0 or 1, chosen and 0.9 or 0.1)
+    button.label:SetTextColor(1, chosen and 0.82 or 1, chosen and 0 or 1)
+  end
 end
 
 -----------------------------
@@ -222,6 +345,7 @@ refresh = function()
   if not choosingOpponent then
     panel.step:SetText(L["wizard_step_game"])
     panel.summary:SetText("")
+    refreshGames()
     return
   end
 
@@ -312,8 +436,9 @@ function Wizard.IsOpen()
 end
 
 function Wizard.Open()
-  chosenGame, chosenPlayer = nil, nil
+  chosenGame, chosenPlayer, chosenGenre = nil, nil, nil
   panel.nameBox:SetText("")
+  panel.searchBox:SetText("")
   panel:Show()
   refresh()
 end

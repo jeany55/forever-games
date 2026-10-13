@@ -5,7 +5,18 @@
 -- sessions together through a fake network that can drop messages or take a player offline.
 
 local ADDON_NAME = "ForeverGames"
-local ENGINE_FILES = { "Engine/Codec.lua", "Engine/Games.lua", "Engine/Match.lua", "Engine/Session.lua", "Engine/Presence.lua", "Games/TicTacToe.lua", "Games/Chess.lua" }
+local ENGINE_FILES = {
+  "Engine/Codec.lua",
+  "Engine/Games.lua",
+  "Engine/Match.lua",
+  "Engine/Session.lua",
+  "Engine/Presence.lua",
+  "Games/TicTacToe.lua",
+  "Games/Chess.lua",
+  "Games/ConnectFour.lua",
+  "Games/Reversi.lua",
+  "Games/Checkers.lua",
+}
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
@@ -734,6 +745,292 @@ function tests.ChessMatchBetweenTwoPlayers()
 end
 
 -----------------------------
+-- More games
+-----------------------------
+
+--- Plays a line of any game from its starting position, asserting every move is legal
+--- @param id string Game id
+--- @param line string Space separated moves
+--- @return table state, table game, table[] events What each move did
+local function gameAfter(id, line)
+  local game = loadEngine().Games.Get(id)
+  local state, events = game.newState(), {}
+  for move in line:gmatch("%S+") do
+    local seat = game.turn(state)
+    local ok, err = game.validate(state, seat, move)
+    assert(ok, "Move " .. move .. " rejected: " .. tostring(err))
+    events[#events + 1] = game.apply(state, seat, move)
+  end
+  return state, game, events
+end
+
+--- Counts the positions a number of moves deep, the usual check on a move generator
+--- @param game table
+--- @param state table
+--- @param depth number
+--- @param movesOf fun(state: table): string[]
+--- @return number
+local function countPositions(game, state, depth, movesOf)
+  if depth == 0 then
+    return 1
+  end
+  local count = 0
+  for _, move in ipairs(movesOf(state)) do
+    local after = copy(state)
+    game.apply(after, game.turn(after), move)
+    count = count + countPositions(game, after, depth - 1, movesOf)
+  end
+  return count
+end
+
+function tests.ConnectFourFourInAColumnWins()
+  local state, game, events = gameAfter("connectfour", "4 5 4 5 4 5")
+  equal(nil, game.result(state))
+  equal(3, events[1].square, "the first disc lands at the bottom of the column")
+  equal(10, events[3].square, "the next one on top of it")
+
+  state = gameAfter("connectfour", "4 5 4 5 4 5 4")
+  equal(1, game.result(state).winner)
+  table.sort(state.line)
+  equal("3,10,17,24", table.concat(state.line, ","))
+end
+
+function tests.ConnectFourLinesRunEveryWay()
+  local state, game = gameAfter("connectfour", "1 1 2 2 3 3 4")
+  equal(1, game.result(state).winner, "along a row")
+  state = gameAfter("connectfour", "1 2 2 3 4 3 3 4 5 4 4")
+  equal(1, game.result(state).winner, "up a diagonal")
+  state = gameAfter("connectfour", "7 6 6 5 4 5 5 4 3 4 4")
+  equal(1, game.result(state).winner, "down a diagonal")
+  -- The last disc may be anywhere in the line, not only at its end
+  state = gameAfter("connectfour", "1 1 2 2 4 4 3")
+  equal(1, game.result(state).winner)
+end
+
+function tests.ConnectFourRejectsBadMoves()
+  local state, game = gameAfter("connectfour", "3 3 3 3 3 3")
+  local ok, err = game.validate(state, 1, "3")
+  equal(false, ok)
+  equal("column_full", err)
+  equal(false, (game.validate(state, 2, "4")), "not yellow's turn")
+  for _, move in ipairs({ "0", "8", "x", "1.5", "01" }) do
+    equal(false, (game.validate(state, 1, move)), move)
+  end
+end
+
+function tests.ConnectFourFullRackIsADraw()
+  local state, game = gameAfter(
+    "connectfour",
+    "6 6 5 4 6 1 7 1 4 4 3 5 4 4 3 1 1 3 4 5 3 2 2 1 2 2 7 5 5 2 3 3 1 2 7 7 5 7 7 6 6 6"
+  )
+  equal(0, game.result(state).winner)
+end
+
+--- @param state table Reversi position
+--- @return string[]
+local function reversiMoves(state)
+  local moves = {}
+  for target in pairs(state.legal) do
+    moves[#moves + 1] = string.char(97 + target % 8) .. (math.floor(target / 8) + 1)
+  end
+  table.sort(moves)
+  return moves
+end
+
+function tests.ReversiCountsTheRightNumberOfPositions()
+  local reversi = loadEngine().Games.Get("reversi")
+  equal("c4,d3,e6,f5", table.concat(reversiMoves(reversi.newState()), ","))
+  -- Known values for the starting position
+  equal(244, countPositions(reversi, reversi.newState(), 4, reversiMoves))
+  equal(1396, countPositions(reversi, reversi.newState(), 5, reversiMoves))
+end
+
+function tests.ReversiTurnsTrappedDiscsOver()
+  local state, game, events = gameAfter("reversi", "d3")
+  equal(1, state.board[square("d4")], "the disc in between changes sides")
+  equal(4, state.counts[1])
+  equal(1, state.counts[2])
+  equal(square("d4"), events[1].flipped[1])
+  equal("d3", events[1].notation)
+  equal(2, game.turn(state))
+
+  equal(false, (game.validate(state, 2, "a1")), "a disc has to trap something")
+  equal(false, (game.validate(state, 2, "d3")), "not on a square that is taken")
+  equal(false, (game.validate(state, 1, "c3")), "not black's turn")
+  equal(false, (game.validate(state, 2, "i9")))
+end
+
+function tests.ReversiPlayerWithNoMoveSitsOut()
+  local state, game, events = gameAfter("reversi", "f5 f6 f7 g7 c4 f8 h8 h6")
+  equal(nil, game.result(state))
+  equal(2, game.turn(state), "black can't place anywhere, so white goes again")
+  equal(1, state.passed)
+  equal(true, events[#events].passed)
+  equal(false, (game.validate(state, 1, "a1")))
+
+  -- Once white has moved it is black's turn like any other
+  local move = reversiMoves(state)[1]
+  game.apply(state, 2, move)
+  if game.turn(state) == 1 then
+    equal(nil, state.passed)
+  end
+end
+
+function tests.ReversiEndsWhenNobodyCanMove()
+  local state, game = gameAfter("reversi", "f5 d6 c5 f4 e7 f6 g5 e6 e3")
+  equal(13, state.counts[1])
+  equal(0, state.counts[2])
+  equal(1, game.result(state).winner)
+end
+
+function tests.ReversiPassBetweenTwoPlayers()
+  local world = World.New()
+  world.seed = 1
+  local black, white = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(black.session:Invite("Bob-Realm", "reversi"))
+  equal(1, match.me)
+  world:Deliver()
+  assert(white.session:Accept(match.id))
+  world:Deliver()
+  play(world, match.id, black, white, { "f5", "f6", "f7", "g7", "c4", "f8", "h8", "h6" })
+
+  for _, player in ipairs({ black, white }) do
+    equal(2, player.private.Match.Turn(player.matches[match.id]))
+  end
+  equal(false, (black.session:Move(match.id, "a1")))
+  local again = reversiMoves(white.private.Match.State(white.matches[match.id]))[1]
+  assert(white.session:Move(match.id, again))
+  world:Deliver()
+  equal(logOf(white, match.id), logOf(black, match.id))
+  equal(9, #black.matches[match.id].log)
+end
+
+--- @param state table Checkers position
+--- @return string[]
+local function checkersMoves(state)
+  local moves = {}
+  for move in pairs(state.legal) do
+    moves[#moves + 1] = move
+  end
+  table.sort(moves)
+  return moves
+end
+
+function tests.CheckersCountsTheRightNumberOfPositions()
+  local checkers = loadEngine().Games.Get("checkers")
+  equal("10-14,10-15,11-15,11-16,12-16,9-13,9-14", table.concat(checkersMoves(checkers.newState()), ","))
+  -- Known values for the starting position
+  equal(302, countPositions(checkers, checkers.newState(), 3, checkersMoves))
+  equal(1469, countPositions(checkers, checkers.newState(), 4, checkersMoves))
+  equal(7361, countPositions(checkers, checkers.newState(), 5, checkersMoves))
+end
+
+function tests.CheckersTakingIsCompulsory()
+  local state, game, events = gameAfter("checkers", "11-15 22-18")
+  equal("15-22", table.concat(checkersMoves(state), ","), "with a jump on, nothing else is allowed")
+  equal(false, (game.validate(state, 1, "9-13")))
+  equal(false, (game.validate(state, 2, "15-22")), "not white's turn")
+  equal("11-15", events[1].notation)
+
+  state, game, events = gameAfter("checkers", "11-15 22-18 15-22")
+  equal("15x22", events[3].notation)
+  equal(1, #events[3].captured)
+  equal(nil, state.board[events[3].captured[1]], "the piece jumped over is gone")
+  equal("25-18,26-17", table.concat(checkersMoves(state), ","), "white has to take back, either way")
+end
+
+function tests.CheckersJumpsGoOnInOneMove()
+  local line = "11-15 21-17 9-14 22-18 15-22"
+  local state, game = gameAfter("checkers", line)
+  equal(false, (game.validate(state, 2, "25-18")), "a piece that can jump again has to")
+  assert(state.legal["25-18-9"], "the double jump should be on")
+
+  local events
+  state, game, events = gameAfter("checkers", line .. " 25-18-9")
+  equal("25x18x9", events[#events].notation)
+  equal(2, #events[#events].captured)
+  equal(3, #events[#events].path)
+  local pieces = { r = 0, w = 0 }
+  for _, piece in pairs(state.board) do
+    pieces[piece] = pieces[piece] + 1
+  end
+  equal(10, pieces.r)
+  equal(11, pieces.w)
+end
+
+function tests.CheckersCrownsAManOnTheFarRow()
+  local state, game, events = gameAfter("checkers", "10-15 22-18 15-22 26-17 9-13 31-26 13-22-31")
+  equal(true, events[#events].crowned)
+  local king
+  for at, piece in pairs(state.board) do
+    if piece == "R" then
+      king = at
+    end
+  end
+  equal(events[#events].to, king)
+  equal(7, math.floor(king / 8), "on the row furthest from where red set out")
+
+  -- A king goes backwards too
+  game.apply(state, 2, checkersMoves(state)[1])
+  local backwards = false
+  for _, move in pairs(state.legal) do
+    backwards = backwards or (move.path[1] == king and move.path[2] < king)
+  end
+  equal(true, backwards)
+end
+
+function tests.CheckersPlayerWithoutAMoveLoses()
+  local state, game = gameAfter(
+    "checkers",
+    "11-15 23-19 12-16 19-12 9-14 27-23 6-9 22-17 9-13 31-27 13-22-31 21-17 14-21 24-19 31-24 30-26 21-30 32-27 24-31-22 23-18"
+      .. " 15-24 28-19 22-15-24 29-25 30-21"
+  )
+  equal(1, game.result(state).winner)
+end
+
+--- A checkers position with nothing left but a king each, in opposite corners, red to move
+--- @return table state, table checkers
+local function twoKings()
+  local checkers = loadEngine().Games.Get("checkers")
+  local state = checkers.newState()
+  -- Put together by hand, a game takes a long time to get here
+  state.board = { [0] = "R", [63] = "W" }
+  state.positions = {}
+  state.legal = { ["4-8"] = { path = { 0, 9 }, captures = {} } }
+  return state, checkers
+end
+
+function tests.CheckersDrawsByRepetition()
+  local state, checkers = twoKings()
+  equal(true, checkers.draws, "and by agreement, which is the engine's business")
+
+  -- Going back and forth, the position after the first move comes up again every four moves
+  local shuffle = { "4-8", "29-25", "8-4", "25-29" }
+  for index = 1, 8 do
+    local move = shuffle[(index - 1) % 4 + 1]
+    assert(checkers.validate(state, checkers.turn(state), move), move)
+    checkers.apply(state, checkers.turn(state), move)
+  end
+  equal(nil, checkers.result(state))
+  checkers.apply(state, checkers.turn(state), "4-8")
+  equal(0, checkers.result(state).winner)
+  equal("repetition", checkers.result(state).detail)
+end
+
+function tests.CheckersDrawsAfterFortyQuietMoves()
+  local state, checkers = twoKings()
+  state.quiet = 78
+  checkers.apply(state, 1, "4-8")
+  equal(nil, checkers.result(state))
+  checkers.apply(state, 2, "29-25")
+  equal("forty", checkers.result(state).detail)
+
+  -- A man moving starts the count again
+  state = gameAfter("checkers", "11-15")
+  equal(0, state.quiet)
+end
+
+-----------------------------
 -- Draw offers and history
 -----------------------------
 
@@ -1173,6 +1470,440 @@ function tests.ListPutsMatchesNeedingAttentionFirst()
   else
     equal(other.id, list[1].id)
   end
+end
+
+--- Starts a match of some game where the player with the window moves first
+--- @param game string Game id
+--- @return World, table first, table second, string id, table MainFrame
+local function gameOnScreen(game)
+  local world = World.New()
+  world.seed = 1
+  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(first.session:Invite("Bob-Realm", game))
+  equal(1, match.me)
+  world:Deliver()
+  assert(second.session:Accept(match.id))
+  world:Deliver()
+  local MainFrame = openWindow(first)
+  MainFrame.Open(match.id)
+  return world, first, second, match.id, MainFrame
+end
+
+--- Clicks a square of a board that isn't turned around, counted from the bottom left
+--- @param board table
+--- @param column number From 0
+--- @param row number From 0
+--- @param columns number How many the board has
+--- @param button string?
+local function clickSquare(board, column, row, columns, button)
+  local cell = board.width / columns
+  Client.cursor = { (column + 0.5) * cell, (row + 0.5) * cell }
+  board:Fire("OnUpdate", 0.02)
+  if button then
+    board:Fire("OnMouseDown", button)
+    return
+  end
+  press(board)
+  release(board)
+end
+
+--- The moves in the move list, in the order they were made
+--- @return table[]
+local function listedMoves()
+  local moves = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.ply ~= nil and widget:IsVisible()
+  end)
+  table.sort(moves, function(a, b)
+    return a.ply < b.ply
+  end)
+  return moves
+end
+
+function tests.WindowPlaysConnectFourByPointingAtAColumn()
+  local world, red, yellow, id = gameOnScreen("connectfour")
+  local board = shownBoard()
+  assert(board.width >= 7 * 40, "the rack should make use of the window, got " .. board.width)
+  equal(board.width / 7 * 6, board.height, "seven columns by six rows")
+
+  -- Anywhere in the column will do, the disc falls to the bottom
+  clickSquare(board, 3, 5, 7)
+  equal("4", logOf(red, id))
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  settle(board)
+
+  -- Not on the opponent's turn
+  clickSquare(board, 0, 0, 7)
+  equal("4", logOf(red, id))
+
+  world:Deliver()
+  assert(yellow.session:Move(id, "4"))
+  world:Deliver()
+  settle(board)
+
+  -- On a disc that is already there, the next one goes on top
+  clickSquare(board, 3, 0, 7)
+  equal("4,4,4", logOf(red, id))
+  equal(3, red.private.Match.State(red.matches[id]).heights[4])
+end
+
+function tests.WindowPlaysReversiByPlacingDiscs()
+  local world, black, white, id = gameOnScreen("reversi")
+  local board = shownBoard()
+
+  -- Only where a disc traps something
+  clickSquare(board, 0, 0, 8)
+  equal("", logOf(black, id))
+  clickSquare(board, 3, 2, 8)
+  equal("d3", logOf(black, id))
+  settle(board)
+  equal("d3", listedMoves()[1].text.text)
+
+  world:Deliver()
+  assert(white.session:Move(id, "c3"))
+  world:Deliver()
+  settle(board)
+  clickSquare(board, 1, 2, 8)
+  equal("d3,c3,b3", logOf(black, id))
+end
+
+function tests.WindowShowsAReversiPlayerSittingOut()
+  local world, black, white, id, MainFrame = gameOnScreen("reversi")
+  local board = shownBoard()
+  local function notes()
+    return Client.Find(function(widget)
+      return widget.text == "reversi_passed" and widget:IsVisible()
+    end)
+  end
+
+  play(world, id, black, white, { "f5", "f6", "f7", "g7", "c4", "f8", "h8" })
+  equal(0, #notes())
+  assert(white.session:Move(id, "h6"))
+  world:Deliver()
+  settle(board)
+  equal(1, #notes(), "the board says why it isn't black's turn")
+  equal("status_their_turn", MainFrame.Describe(black.matches[id]))
+
+  -- Black can't place anything meanwhile
+  for column = 0, 7 do
+    for row = 0, 7 do
+      clickSquare(board, column, row, 8)
+    end
+  end
+  equal(8, #black.matches[id].log)
+
+  local state = white.private.Match.State(white.matches[id])
+  local again = string.char(97 + next(state.legal) % 8) .. (math.floor(next(state.legal) / 8) + 1)
+  assert(white.session:Move(id, again))
+  world:Deliver()
+
+  -- White's two moves in a row are on a line each, with a gap where black's would have been
+  local moves = listedMoves()
+  equal(9, #moves)
+  equal(again, moves[9].text.text)
+  local row = moves[9].parent
+  assert(row.moves[2] == moves[9], "white's move belongs in white's column")
+  equal(false, row.moves[1]:IsShown())
+  assert(moves[8].parent ~= row and moves[8].parent.moves[2] == moves[8])
+  assert(moves[7].parent == moves[8].parent, "the line before has a move from each")
+end
+
+--- Clicks the square checkers players know by a number, on a board with red at the bottom
+--- @param board table
+--- @param number number 1 to 32
+--- @param button string?
+local function clickChecker(board, number, button)
+  local row = math.floor((number - 1) / 4)
+  clickSquare(board, 2 * (3 - (number - 1) % 4) + row % 2, row, 8, button)
+end
+
+function tests.WindowPlaysCheckersOneJumpAtATime()
+  local world, red, white, id = gameOnScreen("checkers")
+  local board = shownBoard()
+
+  clickChecker(board, 10)
+  clickChecker(board, 15)
+  equal("10-15", logOf(red, id))
+  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  settle(board)
+  world:Deliver()
+  assert(white.session:Move(id, "22-18"))
+  world:Deliver()
+  settle(board)
+
+  -- With a piece to take, the others stay where they are
+  clickChecker(board, 9)
+  clickChecker(board, 13)
+  equal("10-15,22-18", logOf(red, id))
+  clickChecker(board, 15)
+  clickChecker(board, 22)
+  equal("10-15,22-18,15-22", logOf(red, id))
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  equal("15x22", listedMoves()[3].text.text)
+  world:Deliver()
+
+  play(world, id, white, red, { "26-17", "9-13", "31-26" })
+  settle(board)
+  local before = logOf(red, id)
+
+  -- A double jump: the first hop alone isn't a move yet
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  equal(before, logOf(red, id))
+  settle(board)
+  -- Halfway there the piece can only go on, nothing else can be picked up
+  clickChecker(board, 12)
+  clickChecker(board, 16)
+  equal(before, logOf(red, id))
+
+  -- Any other mouse button takes the piece back to where it started
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  clickChecker(board, 22, "RightButton")
+  clickChecker(board, 31)
+  equal(before, logOf(red, id), "back at the start the second hop isn't on offer")
+
+  clickChecker(board, 13)
+  clickChecker(board, 22)
+  clickChecker(board, 31)
+  equal(before .. ",13-22-31", logOf(red, id))
+  settle(board)
+  world:Deliver()
+  equal(logOf(red, id), logOf(white, id))
+end
+
+function tests.WindowShowsTheOpponentsCheckersJumps()
+  local world, red, white, id = gameOnScreen("checkers")
+  local board = shownBoard()
+  play(world, id, red, white, { "11-15", "21-17", "9-14", "22-18", "15-22" })
+  settle(board)
+
+  -- Two pieces go in one move, and the window shows what is left
+  assert(white.session:Move(id, "25-18-9"))
+  world:Deliver()
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  settle(board)
+  local tallies = Client.Find(function(widget)
+    return widget.kind == "FontString" and widget.text == "x 2" and widget:IsVisible()
+  end)
+  equal(1, #tallies, "white has taken two")
+  equal("25x18x9", listedMoves()[6].text.text)
+end
+
+function tests.WindowShowsCheckersFromTheOtherSide()
+  local world, red, white, id = gameOnScreen("checkers")
+  play(world, id, red, white, { "11-15", "21-17", "9-14", "22-18" })
+
+  -- White has the window this time, and sees the board turned around
+  local MainFrame = openWindow(white)
+  MainFrame.Open(id)
+  local board = shownBoard()
+  assert(red.session:Move(id, "15-22"))
+  world:Deliver()
+  settle(board)
+
+  --- Moves the cursor onto a square by its number
+  --- @param number number
+  local function point(number)
+    local row = math.floor((number - 1) / 4)
+    local cell = board.width / 8
+    Client.cursor = { (7 - (2 * (3 - (number - 1) % 4) + row % 2) + 0.5) * cell, (7 - row + 0.5) * cell }
+    board:Fire("OnUpdate", 0.02)
+  end
+  point(25)
+  press(board)
+  release(board)
+  point(18)
+  press(board)
+  release(board)
+  equal(5, #white.matches[id].log, "one hop of two isn't a move")
+  settle(board)
+
+  -- The second hop can be dragged like any move
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  point(9)
+  release(board)
+  equal("25-18-9", white.matches[id].log[6])
+  world:Deliver()
+  equal(logOf(white, id), logOf(red, id))
+end
+
+-----------------------------
+-- Finding a game
+-----------------------------
+
+--- @param games table[]
+--- @return string Their ids, in order
+local function idsOf(games)
+  local ids = {}
+  for index, game in ipairs(games) do
+    ids[index] = game.id
+  end
+  return table.concat(ids, ",")
+end
+
+function tests.GamesAreFoundByWordAndGenre()
+  local Games = loadEngine().Games
+  local everything = idsOf(Games.List())
+  equal(everything, idsOf(Games.Search()))
+  equal(everything, idsOf(Games.Search("  ")))
+  equal("casual,strategy", table.concat(Games.Genres(), ","))
+
+  -- The tests see the names of the strings rather than the strings, which is as good to search
+  equal("chess", idsOf(Games.Search("chess")))
+  equal("chess", idsOf(Games.Search("CHESS")), "in any case")
+  equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
+  equal("", idsOf(Games.Search("chess reversi")))
+  equal("chess,reversi,checkers", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
+  equal("connectfour", idsOf(Games.Search("four", "casual")))
+  equal("", idsOf(Games.Search("chess", "casual")))
+  equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
+
+  for _, game in ipairs(Games.List()) do
+    assert(game.genre, game.id .. " should say what kind of game it is")
+  end
+end
+
+--- Opens the new game wizard for a player, on its own without the window around it
+--- @param player table
+--- @return table Wizard
+local function openWizard(player)
+  Client.Install()
+  CANCEL, BACK = "Cancel", "Back"
+  local private = player.private
+  private.ICON = "icon"
+  private.session = player.session
+  private.Transport = {
+    Normalize = function(name)
+      return name ~= "" and name or nil
+    end,
+    DisplayName = function(name)
+      return name
+    end,
+  }
+  private.presence = {}
+  function private.presence:List()
+    return {}
+  end
+  function UnitIsPlayer()
+    return false
+  end
+
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Wizard.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  private.Wizard.Init(UIParent, function() end)
+  private.Wizard.Open()
+  return private.Wizard
+end
+
+--- The games on offer in the wizard, in reading order
+--- @return table[]
+local function offeredGames()
+  local games = {}
+  for _, card in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget:IsVisible()
+  end)) do
+    games[#games + 1] = card.game
+  end
+  return games
+end
+
+--- Clicks one of the buttons that narrow the games down to a genre
+--- @param text string What it says
+local function clickGenre(text)
+  local found = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.label ~= nil and widget.label.text == text and widget:IsVisible()
+  end)
+  equal(1, #found, "buttons saying " .. text)
+  found[1]:Fire("OnClick")
+end
+
+function tests.WizardNarrowsTheGamesDown()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  openWizard(alice)
+  local count = #alice.private.Games.List()
+  equal(count, #offeredGames())
+
+  local search = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end)[1]
+  local function type(text)
+    search:SetText(text)
+    search:Fire("OnTextChanged", true)
+  end
+  local function nothingFound()
+    return #Client.Find(function(widget)
+      return widget.text == "wizard_no_games" and widget:IsVisible()
+    end) == 1
+  end
+
+  type("chess")
+  equal(1, #offeredGames())
+  equal("chess", idsOf(offeredGames()))
+  equal(false, nothingFound())
+  type("no such game")
+  equal(0, #offeredGames())
+  equal(true, nothingFound())
+  type("")
+  equal(count, #offeredGames())
+
+  -- By genre, on top of whatever is typed
+  clickGenre("genre_casual")
+  equal("tictactoe,connectfour", idsOf(offeredGames()))
+  type("chess")
+  equal(0, #offeredGames())
+  clickGenre("wizard_all_games")
+  equal(1, #offeredGames())
+
+  -- Enter takes the only game left, and from there it is the wizard as before
+  search:Fire("OnEnterPressed")
+  equal(0, #offeredGames())
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget ~= search and widget:IsVisible()
+  end)[1]
+  name:SetText("Bob-Realm")
+  Client.Button("wizard_send"):Fire("OnClick")
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal("chess", started.game)
+  equal("outgoing", started.status)
+end
+
+function tests.ListsSayWhenThereIsMoreToScrollTo()
+  Client.Install()
+  local private = loadEngine()
+  assert(loadfile("GUI/Widgets.lua"))(ADDON_NAME, private)
+  local list = private.Widgets.List(UIParent, 100, 20, function(content)
+    return CreateFrame("Frame", nil, content)
+  end)
+  list.frame:SetSize(100, 60)
+  local function thumb()
+    return Client.Find(function(widget)
+      return widget.kind == "Texture" and widget.parent == list.frame
+    end)[1]
+  end
+
+  list:Update({ 1, 2, 3 }, function() end)
+  equal(false, thumb():IsShown(), "everything fits")
+  list:Update({ 1, 2, 3, 4, 5, 6 }, function() end)
+  equal(true, thumb():IsShown())
+  equal(30, thumb().height, "half of it is in view")
+
+  list.frame:Fire("OnMouseWheel", -1)
+  equal(20, list.frame:GetVerticalScroll())
+  for _ = 1, 10 do
+    list.frame:Fire("OnMouseWheel", -1)
+  end
+  equal(60, list.frame:GetVerticalScroll(), "no further than the end")
+  list:Update({ 1 }, function() end)
+  equal(0, list.frame:GetVerticalScroll())
+  equal(false, thumb():IsShown())
 end
 
 -----------------------------

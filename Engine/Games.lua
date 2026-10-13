@@ -7,6 +7,7 @@
 --
 -- To add a game, drop a file in Games/, list it in the .toc and call private.Games.Register from
 -- it. Games/TicTacToe.lua is the smallest example, Games/Chess.lua uses everything on offer.
+-- Games/ConnectFour.lua and Games/Reversi.lua place pieces instead of moving them.
 --
 -- The window around the view is the engine's: who is playing, whose turn it is, resigning, draw
 -- offers, the list of moves and stepping back through them. A game opts into the last two with
@@ -25,7 +26,9 @@ local _, private = ...
 --- @field ply number How many log entries led to this position
 --- @field live boolean False while the player is looking back at an earlier position
 --- @field events MatchEvent[] What every log entry did, events[ply] led to this position
---- @field fresh boolean The player hasn't seen this position before, a good moment to animate how it came about
+--- @field fresh boolean The player hasn't seen this position before
+--- @field changed boolean This isn't the position the view was last asked to show
+--- @field played MatchEvent? The move to show being made: set when the position follows from the last one shown by that move, or when the opponent made it while the player wasn't looking
 
 --- @class GameViewObject
 --- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
@@ -35,11 +38,12 @@ local _, private = ...
 --- @field id string Unique id sent over the wire, letters and digits only
 --- @field name string Display name
 --- @field description string? One or two sentences for the new game wizard
+--- @field genre string? What kind of game it is, for narrowing down the list in the wizard. Shown as L["genre_" .. genre], use one that is there already where it fits
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number Number of players, only 2 is supported for now
 --- @field newState fun(): table Fresh game state
---- @field turn fun(state: table): number Seat that moves next
+--- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
 --- @field apply fun(state: table, seat: number, move: string): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list
 --- @field result fun(state: table): { winner: number, detail: string? }? nil while in progress, winner 0 for a draw. detail names how it ended and is shown as L["result_" .. detail]
@@ -81,4 +85,41 @@ end
 --- @return GameDefinition[]
 function Games.List()
   return ordered
+end
+
+--- The genres there are games of, in the order they first came up
+--- @return string[]
+function Games.Genres()
+  local genres, seen = {}, {}
+  for _, game in ipairs(ordered) do
+    if game.genre and not seen[game.genre] then
+      seen[game.genre] = true
+      genres[#genres + 1] = game.genre
+    end
+  end
+  return genres
+end
+
+--- The games to offer someone looking for one
+--- @param text string? What they typed. Every word has to turn up in the name, the description or the genre, in any case
+--- @param genre string? Only games of this genre
+--- @return GameDefinition[]
+function Games.Search(text, genre)
+  local words = {}
+  for word in (text or ""):lower():gmatch("%S+") do
+    words[#words + 1] = word
+  end
+
+  local found = {}
+  for _, game in ipairs(ordered) do
+    local matches = genre == nil or game.genre == genre
+    local about = table.concat({ game.name, game.description or "", game.genre and private.L["genre_" .. game.genre] or "" }, " ")
+    for _, word in ipairs(words) do
+      matches = matches and about:lower():find(word, 1, true) ~= nil
+    end
+    if matches then
+      found[#found + 1] = game
+    end
+  end
+  return found
 end
