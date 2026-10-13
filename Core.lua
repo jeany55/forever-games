@@ -114,15 +114,18 @@ end
 --- @param match Match
 --- @return string?
 local function toastText(event, match)
-  local opponent = Transport.DisplayName(Match.Opponent(match))
+  local opponent = MainFrame.Names(match)
   if event == "invite" then
-    return L["toast_invite"]:format(opponent, gameName(match))
-  elseif event == "accepted" and not Match.IsMyTurn(match) then
+    return L["toast_invite"]:format(MainFrame.Names(match, { Match.Inviter(match) }), gameName(match))
+  elseif (event == "accepted" or event == "started") and not Match.IsMyTurn(match) then
+    if #match.players > 2 then
+      return L["toast_started"]:format(gameName(match), opponent)
+    end
     return L["toast_accepted"]:format(opponent, gameName(match))
   elseif event == "moved" and not Match.IsMyTurn(match) then
-    -- They moved and get to move again, nothing to do yet
+    -- They moved and it still isn't this player's turn, nothing to do yet
     return nil
-  elseif event == "accepted" or event == "moved" then
+  elseif event == "accepted" or event == "started" or event == "moved" then
     return L["toast_your_turn"]:format(gameName(match), opponent)
   elseif event == "draw" then
     return L["toast_draw"]:format(opponent, gameName(match))
@@ -136,7 +139,12 @@ end
 --- @param event string
 --- @param match Match
 function ForeverGames:OnMatchEvent(event, match)
-  private.Log("match", event, match.id, match.game, "vs", Match.Opponent(match), match.status, "entries:", #match.log, "acked:", match.peerSeen)
+  local acked = {}
+  for _, seat in ipairs(Match.Others(match)) do
+    acked[#acked + 1] = match.seen[seat] or 0
+  end
+  local players = "seat " .. match.me .. " of " .. table.concat(match.players, ",")
+  private.Log("match", event, match.id, match.game, players, match.status, "entries:", #match.log, "acked:", table.concat(acked, ","))
 
   local text = toastText(event, match)
   if text and not MainFrame.IsViewing(match.id) then

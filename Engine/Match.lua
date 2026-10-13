@@ -1,17 +1,21 @@
 --------------------------
 --  Match model
 --------------------------
--- A match is an id, two players and an ordered log of entries. The game state is never stored,
--- it is always derived by replaying the log, which is what makes resyncing two clients a matter
--- of exchanging the log entries one of them is missing.
+-- A match is an id, its players and an ordered log of entries. The game state is never stored,
+-- it is always derived by replaying the log, which is what makes resyncing clients a matter of
+-- exchanging the log entries one of them is missing.
 --
 -- A log entry is a move string owned by the game, or one of the engine's own entries:
---   !r<seat>   the seat resigns
+--   !s         everyone has accepted and the game begins. Only in matches of more than two,
+--              where it is the first entry and nothing can be played before it. Two players
+--              don't need it: there the game is on as soon as the one challenge is accepted
+--   !r<seat>   the seat resigns. With more than two playing the others carry on without them,
+--              until only one is left
 --   !d<seat>   the seat offers a draw. Only on their own turn, and it stands until the opponent
---              answers it by moving, which turns it down
+--              answers it by moving, which turns it down. Only in matches of two
 --   !a<seat>   the seat accepts the opponent's draw offer, on their own turn
--- Everything but a resignation is appended by the player whose turn it is, so the two clients
--- can't both be adding to the log at the same moment.
+-- Everything but a resignation is appended by the player whose turn it is (the start by whoever
+-- set the match up), so the clients can't all be adding to the log at the same moment.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -29,9 +33,12 @@ local _, private = ...
 --- @field gameVersion number
 --- @field players string[] Full player names by seat
 --- @field me number The local player's seat
+--- @field host number? Seat of whoever set the match up, in matches of more than two
 --- @field log string[]
 --- @field status MatchStatus
---- @field peerSeen number How many log entries the opponent is known to have
+--- @field seen table<number, number> How many log entries each of the others is known to have, by seat
+--- @field accepted table<number, boolean>? Who has accepted so far, kept by the host until the game begins
+--- @field gone table<number, boolean>? Players who no longer have the match and aren't sent anything
 --- @field created number
 --- @field updated number
 --- @field unread boolean? Something happened that the player hasn't looked at yet
@@ -45,7 +52,7 @@ local _, private = ...
 
 --- What a log entry did. Games add their own fields to moves, see GameDefinition.apply.
 --- @class MatchEvent
---- @field kind "move"|"resign"|"offer"|"accept"
+--- @field kind "move"|"resign"|"offer"|"accept"|"start"
 --- @field seat number Who did it
 --- @field notation string? How to write a move down for the players, e.g. "Nxf3+"
 
@@ -55,12 +62,18 @@ local _, private = ...
 --- @field events MatchEvent[] One per log entry applied
 --- @field offer number? Seat with a draw offer standing
 --- @field draws boolean Whether draws can be offered in this match
+--- @field seats number How many are playing
+--- @field host number? Seat that starts the game, see Match.host
+--- @field started boolean Whether the game has begun
+--- @field out table<number, boolean> Seats that resigned
+--- @field left number How many are still playing
 
 --- @class MatchModel
 local Match = {}
 private.Match = Match
 
-local ENGINE_ENTRY = "^!([rda])([12])$"
+local ENGINE_ENTRY = "^!([rda])(%d)$"
+Match.START = "!s"
 
 -- Replayed states, kept out of the match table so they don't end up in SavedVariables
 local cache = setmetatable({}, { __mode = "k" })
@@ -92,16 +105,51 @@ function Match.IsDrawOffer(entry)
   return entry:sub(1, 2) == "!d"
 end
 
+--- Brings a match saved by an earlier version up to date
 --- @param match Match
---- @return number
-function Match.OpponentSeat(match)
-  return match.me == 1 and 2 or 1
+function Match.Upgrade(match)
+  if not match.seen then
+    -- There used to be only ever one other player
+    match.seen = { [match.me == 1 and 2 or 1] = match.peerSeen or 0 }
+    match.peerSeen = nil
+  end
+end
+
+--- Seats of everyone but the local player, in seat order
+--- @param match Match
+--- @return number[]
+function Match.Others(match)
+  local seats = {}
+  for seat = 1, #match.players do
+    if seat ~= match.me then
+      seats[#seats + 1] = seat
+    end
+  end
+  return seats
 end
 
 --- @param match Match
---- @return string
-function Match.Opponent(match)
-  return match.players[Match.OpponentSeat(match)]
+--- @param name string Full player name
+--- @return number? seat nil if they aren't playing
+function Match.SeatOf(match, name)
+  -- Not every seat is known while a challenge is still coming in
+  for seat, player in pairs(match.players) do
+    if player == name then
+      return seat
+    end
+  end
+  return nil
+end
+
+--- Seat of whoever the challenge came from
+--- @param match Match
+--- @return number
+function Match.Inviter(match)
+  if match.host then
+    return match.host
+  end
+  local other = match.me == 1 and 2 or 1
+  return match.status == "incoming" and other or match.me
 end
 
 --- Applies one entry to a replayed state. Returns false with an error code if the entry is illegal.
@@ -114,12 +162,41 @@ local function step(game, replay, entry)
     return false, "finished"
   end
 
+  if entry == Match.START then
+    if replay.started then
+      return false, "invalid_move"
+    end
+    replay.started = true
+    replay.events[#replay.events + 1] = { kind = "start", seat = replay.host }
+    return true
+  end
+  if not replay.started then
+    return false, "not_started"
+  end
+
   local kind, who = entry:match(ENGINE_ENTRY)
   if kind then
     local seat = tonumber(who)
+    if seat < 1 or seat > replay.seats or replay.out[seat] then
+      return false, "invalid_move"
+    end
     if kind == "r" then
-      replay.result = { winner = seat == 1 and 2 or 1, reason = "resign" }
+      replay.out[seat] = true
+      replay.left = replay.left - 1
       replay.events[#replay.events + 1] = { kind = "resign", seat = seat }
+      if replay.left > 1 then
+        game.drop(replay.state, seat)
+        local result = game.result(replay.state)
+        if result then
+          replay.result = { winner = result.winner, reason = result.winner == 0 and "draw" or "win", detail = result.detail }
+        end
+        return true
+      end
+      for last = 1, replay.seats do
+        if not replay.out[last] then
+          replay.result = { winner = last, reason = "resign" }
+        end
+      end
       return true
     end
 
@@ -147,6 +224,9 @@ local function step(game, replay, entry)
   end
 
   local seat = game.turn(replay.state)
+  if replay.out[seat] then
+    return false, "invalid_move"
+  end
   local ok, err = game.validate(replay.state, seat, entry)
   if not ok then
     return false, err or "invalid_move"
@@ -171,9 +251,19 @@ end
 --- @param game GameDefinition
 --- @return Replay
 local function newReplay(match, game)
-  -- A match started before the game learned about draws is played out the way it started, the
-  -- opponent may still be on the version that doesn't know them
-  return { state = game.newState(), events = {}, draws = game.draws == true and match.gameVersion == game.version }
+  local seats = #match.players
+  return {
+    state = game.newState(seats),
+    events = {},
+    -- A match started before the game learned about draws is played out the way it started, the
+    -- opponent may still be on the version that doesn't know them
+    draws = game.draws == true and match.gameVersion == game.version and seats == 2,
+    seats = seats,
+    host = match.host,
+    started = seats == 2,
+    out = {},
+    left = seats,
+  }
 end
 
 --- Replays the log. Entries that fail validation (a corrupted save) end the replay early.
@@ -275,7 +365,29 @@ end
 --- @param match Match
 --- @return boolean
 function Match.CanAcceptDraw(match)
-  return Match.DrawOffer(match) == Match.OpponentSeat(match) and Match.IsMyTurn(match)
+  local offer = Match.DrawOffer(match)
+  return offer ~= nil and offer ~= match.me and Match.IsMyTurn(match)
+end
+
+--- Whether the game has begun. A match of more than two is active for those who accepted it
+--- before everyone has, with nothing to play yet
+--- @param match Match
+--- @return boolean
+function Match.Started(match)
+  if #match.players == 2 then
+    return true
+  end
+  local replay = replayOf(match)
+  return replay ~= nil and replay.started
+end
+
+--- Whether a player resigned
+--- @param match Match
+--- @param seat number
+--- @return boolean
+function Match.IsOut(match, seat)
+  local replay = replayOf(match)
+  return replay ~= nil and replay.out[seat] == true
 end
 
 --- Seat that moves next, nil once the game is over
@@ -283,7 +395,7 @@ end
 --- @return number?
 function Match.Turn(match)
   local replay = replayOf(match)
-  if not replay or replay.result or match.status ~= "active" then
+  if not replay or replay.result or match.status ~= "active" or not replay.started then
     return nil
   end
   return private.Games.Get(match.game).turn(replay.state)

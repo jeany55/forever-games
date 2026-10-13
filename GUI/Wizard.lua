@@ -3,6 +3,7 @@
 --------------------------
 -- Two steps: pick a game, then pick who to play. Lives inside the main window and takes over its
 -- content while open. The games are a list that scrolls, narrowed down by typing or by genre.
+-- A game for more than two has its players picked one after the other, as many as it can seat.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -31,17 +32,84 @@ local chosenGame
 -- Genre the list of games is narrowed down to
 --- @type string?
 local chosenGenre
--- Opponent picked from the list of available players, full name
---- @type string?
-local chosenPlayer
+-- The players picked so far, full names. Only ever one for a game of two
+--- @type string[]
+local chosenPlayers = {}
 
 local refresh
 
---- The opponent the challenge would go to: whatever is typed wins over the list selection
---- @return string?
-local function opponent()
+--- How many others the chosen game can be played with at most
+--- @return number
+local function mostOpponents()
+  local counts = Games.SeatCounts(chosenGame)
+  return counts[#counts] - 1
+end
+
+--- @param name string?
+--- @return number? index Where a player is among the ones picked
+local function chosenIndex(name)
+  for index, chosen in ipairs(chosenPlayers) do
+    if chosen == name then
+      return index
+    end
+  end
+  return nil
+end
+
+--- Everyone the challenge would go to: the players picked, and whoever is typed in. For a game
+--- of two whatever is typed wins over the list selection
+--- @return string[]
+local function opponents()
   local typed = Transport.Normalize(panel.nameBox:GetText())
-  return typed or chosenPlayer
+  if not typed then
+    return chosenPlayers
+  elseif mostOpponents() == 1 then
+    return { typed }
+  end
+  local everyone = { unpack(chosenPlayers) }
+  if not chosenIndex(typed) then
+    everyone[#everyone + 1] = typed
+  end
+  return everyone
+end
+
+--- Picks a player, or for a game of more than two unpicks one that is picked already
+--- @param name string
+local function choose(name)
+  if mostOpponents() == 1 then
+    chosenPlayers = { name }
+    return
+  end
+  local index = chosenIndex(name)
+  if index then
+    table.remove(chosenPlayers, index)
+  elseif #chosenPlayers < mostOpponents() then
+    chosenPlayers[#chosenPlayers + 1] = name
+  end
+end
+
+--- "2 players", or "2, 3, 4 or 6 players" where there is a choice
+--- @param game GameDefinition
+--- @return string
+local function playersText(game)
+  local counts = Games.SeatCounts(game)
+  if #counts == 1 then
+    return L["players_exactly"]:format(counts[1])
+  end
+  return L["players_choice"]:format(table.concat(counts, ", ", 1, #counts - 1), counts[#counts])
+end
+
+--- @param names string[] Full names
+--- @return string
+local function listed(names)
+  local shown = {}
+  for index, name in ipairs(names) do
+    shown[index] = Transport.DisplayName(name)
+  end
+  if #shown < 2 then
+    return shown[1] or ""
+  end
+  return L["names_and"]:format(table.concat(shown, ", ", 1, #shown - 1), shown[#shown])
 end
 
 --- @return string? Full name of the targeted player, if there is one
@@ -54,7 +122,7 @@ local function targetName()
 end
 
 local function send()
-  local match, err = private.session:Invite(opponent(), chosenGame and chosenGame.id)
+  local match, err = private.session:Invite(opponents(), chosenGame and chosenGame.id)
   if not match then
     panel.error:SetText(L["err_" .. err])
     return
@@ -92,8 +160,12 @@ local function createGameCard(parent)
   card.description:SetJustifyV("TOP")
   card.description:SetTextColor(unpack(Widgets.GREY))
 
+  card.players = Widgets.Label(card, "GameFontDisableSmall")
+  card.players:SetPoint("BOTTOMRIGHT", -10, 8)
+
   card:SetScript("OnClick", function(self)
     chosenGame = self.game
+    chosenPlayers = {}
     refresh()
   end)
   return card
@@ -124,6 +196,7 @@ local function fillGameRow(row, games)
       card.name:SetText(game.name)
       card.genre:SetText(game.genre and L["genre_" .. game.genre] or "")
       card.description:SetText(game.description or "")
+      card.players:SetText(playersText(game))
     end
   end
 end
@@ -177,6 +250,7 @@ local function createGameStep(parent)
     local games = matchingGames()
     if #games == 1 then
       chosenGame = games[1]
+      chosenPlayers = {}
       refresh()
     end
   end)
@@ -255,9 +329,32 @@ local function createPlayerRow(content)
   row.source:SetPoint("RIGHT", -8, 0)
 
   row:SetScript("OnClick", function(self)
-    chosenPlayer = self.player
+    choose(self.player)
     panel.nameBox:SetText("")
     panel.nameBox:ClearFocus()
+    refresh()
+  end)
+  return row
+end
+
+--- One of the players picked for a game of more than two. Clicking it unpicks them
+--- @param content Frame
+--- @return Button
+local function createChosenRow(content)
+  local row = CreateFrame("Button", nil, content)
+
+  local hover = row:CreateTexture(nil, "HIGHLIGHT")
+  hover:SetAllPoints()
+  hover:SetColorTexture(1, 1, 1, 0.08)
+
+  row.name = Widgets.Label(row, "GameFontHighlight")
+  row.name:SetPoint("LEFT", 8, 0)
+
+  local remove = Widgets.Label(row, "GameFontDisableSmall", L["wizard_remove"])
+  remove:SetPoint("RIGHT", -8, 0)
+
+  row:SetScript("OnClick", function(self)
+    choose(self.player)
     refresh()
   end)
   return row
@@ -299,14 +396,27 @@ local function createOpponentStep(parent)
   panel.nameBox:SetAutoFocus(false)
   panel.nameBox:SetMaxLetters(48)
   panel.nameBox:SetScript("OnEnterPressed", function()
-    if opponent() then
+    local typed = Transport.Normalize(panel.nameBox:GetText())
+    if not typed then
+      return
+    end
+    if mostOpponents() == 1 then
       send()
+    else
+      -- One name after the other, the challenge goes out when they are all in
+      if not chosenIndex(typed) then
+        choose(typed)
+      end
+      panel.nameBox:SetText("")
+      refresh()
     end
   end)
   panel.nameBox:SetScript("OnEscapePressed", panel.nameBox.ClearFocus)
   panel.nameBox:SetScript("OnTextChanged", function(_, userInput)
     if userInput then
-      chosenPlayer = nil
+      if mostOpponents() == 1 then
+        chosenPlayers = {}
+      end
       refresh()
     end
   end)
@@ -315,17 +425,29 @@ local function createOpponentStep(parent)
   panel.targetButton:SetPoint("TOPLEFT", panel.nameBox, "BOTTOMLEFT", -6, -10)
   panel.targetButton:SetScript("OnClick", function()
     local target = targetName()
-    if target then
-      chosenPlayer = nil
+    if target and mostOpponents() == 1 then
+      chosenPlayers = {}
       panel.nameBox:SetText(Transport.DisplayName(target))
+      refresh()
+    elseif target then
+      if not chosenIndex(target) then
+        choose(target)
+      end
       refresh()
     end
   end)
 
-  local hint = Widgets.Label(other, "GameFontDisableSmall", L["wizard_by_name_hint"])
-  hint:SetPoint("TOPLEFT", panel.targetButton, "BOTTOMLEFT", 2, -14)
-  hint:SetWidth(COLUMN_WIDTH - 44)
-  hint:SetJustifyV("TOP")
+  panel.nameHint = Widgets.Label(other, "GameFontDisableSmall")
+  panel.nameHint:SetPoint("TOPLEFT", panel.targetButton, "BOTTOMLEFT", 2, -14)
+  panel.nameHint:SetWidth(COLUMN_WIDTH - 44)
+  panel.nameHint:SetJustifyV("TOP")
+
+  -- Who is in so far, for a game of more than two
+  panel.chosenTitle = Widgets.Label(other, "GameFontNormal")
+  panel.chosenTitle:SetPoint("TOPLEFT", 10, -170)
+  panel.chosen = Widgets.List(other, COLUMN_WIDTH - 12, PLAYER_ROW_HEIGHT, createChosenRow)
+  panel.chosen.frame:SetPoint("TOPLEFT", 6, -192)
+  panel.chosen.frame:SetPoint("BOTTOMRIGHT", -6, 6)
 
   return step
 end
@@ -356,7 +478,7 @@ refresh = function()
     row.player = player.name
     row.name:SetText(Transport.DisplayName(player.name))
     row.source:SetText(L[SOURCE_LABELS[player.source]])
-    row.selected:SetShown(player.name == chosenPlayer and opponent() == chosenPlayer)
+    row.selected:SetShown(chosenIndex(player.name) ~= nil)
   end)
   panel.nobody:SetShown(#players == 0)
 
@@ -366,12 +488,27 @@ refresh = function()
     panel.targetButton:SetText(L["wizard_use_target"]:format(Transport.DisplayName(target)))
   end
 
-  local name = opponent()
-  panel.sendButton:SetEnabled(name ~= nil)
-  if name then
-    panel.summary:SetText(L["wizard_summary"]:format(chosenGame.name, Transport.DisplayName(name)))
-  else
+  local crowd = mostOpponents() > 1
+  panel.nameHint:SetText(L[crowd and "wizard_by_name_hint_more" or "wizard_by_name_hint"])
+  panel.chosenTitle:SetShown(crowd)
+  panel.chosen.frame:SetShown(crowd)
+  if crowd then
+    panel.chosenTitle:SetText(L["wizard_chosen"]:format(#chosenPlayers, mostOpponents()))
+    panel.chosen:Update(chosenPlayers, function(row, name)
+      row.player = name
+      row.name:SetText(Transport.DisplayName(name))
+    end)
+  end
+
+  local names = opponents()
+  local ready = Games.CanSeat(chosenGame, #names + 1)
+  panel.sendButton:SetEnabled(ready)
+  if ready then
+    panel.summary:SetText(L[#names > 1 and "with_players" or "wizard_summary"]:format(chosenGame.name, listed(names)))
+  elseif #names == 0 then
     panel.summary:SetText(L["wizard_pick_someone"])
+  else
+    panel.summary:SetText(L["wizard_player_counts"]:format(chosenGame.name, playersText(chosenGame)))
   end
 end
 
@@ -436,7 +573,7 @@ function Wizard.IsOpen()
 end
 
 function Wizard.Open()
-  chosenGame, chosenPlayer, chosenGenre = nil, nil, nil
+  chosenGame, chosenPlayers, chosenGenre = nil, {}, nil
   panel.nameBox:SetText("")
   panel.searchBox:SetText("")
   panel:Show()

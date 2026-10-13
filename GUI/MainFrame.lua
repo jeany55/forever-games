@@ -42,6 +42,7 @@ local STALE_AFTER = 60
 local LOOKING_FOR = 6
 
 local DECLINE_REASONS = {
+  off = "status_declined_off",
   nogame = "status_declined_nogame",
   version = "status_declined_version",
   busy = "status_declined_busy",
@@ -69,28 +70,48 @@ local function settings()
   return ForeverGames.db.profile.window
 end
 
+--- Players of a match the way a sentence lists them: "Ann", "Ann and Bob", "Ann, Bob and Cy"
+--- @param match Match
+--- @param seats number[]? Everyone but the local player if left out
+--- @return string
+function MainFrame.Names(match, seats)
+  local names = {}
+  for index, seat in ipairs(seats or Match.Others(match)) do
+    names[index] = Transport.DisplayName(match.players[seat])
+  end
+  if #names < 2 then
+    return names[1] or ""
+  end
+  return L["names_and"]:format(table.concat(names, ", ", 1, #names - 1), names[#names])
+end
+
 --- One line summary of where a match stands
 --- @param match Match
 --- @return string
 function MainFrame.Describe(match)
-  local opponent = Transport.DisplayName(Match.Opponent(match))
+  local opponent = MainFrame.Names(match)
+  local crowd = #match.players > 2
   if not Games.Get(match.game) then
     return L["status_missing_game"]
   end
 
   if match.status == "incoming" then
-    return L["status_incoming"]:format(opponent)
+    return L["status_incoming"]:format(MainFrame.Names(match, { Match.Inviter(match) }))
   elseif match.status == "outgoing" then
-    return L["status_outgoing"]:format(opponent)
+    return L["status_outgoing"]:format(MainFrame.Names(match, private.session:Behind(match)))
   elseif match.status == "declined" then
-    return L[DECLINE_REASONS[match.declineReason] or "status_declined"]:format(opponent)
+    local who = (crowd and match.declinedBy) and MainFrame.Names(match, { match.declinedBy }) or opponent
+    return L[DECLINE_REASONS[match.declineReason] or "status_declined"]:format(who)
   elseif match.status == "finished" then
     local result = Match.Result(match)
     local text
     if not result or result.winner == 0 then
       text = L["status_draw"]
+    elseif result.winner ~= match.me and crowd then
+      text = L["status_they_won"]:format(MainFrame.Names(match, { result.winner }))
     elseif result.reason == "resign" then
-      return result.winner == match.me and L["status_they_resigned"]:format(opponent) or L["status_you_resigned"]
+      local won = L[crowd and "status_all_resigned" or "status_they_resigned"]:format(opponent)
+      return result.winner == match.me and won or L["status_you_resigned"]
     else
       text = result.winner == match.me and L["status_won"] or L["status_lost"]
     end
@@ -98,6 +119,12 @@ function MainFrame.Describe(match)
       text = text .. " (" .. L["result_" .. result.detail] .. ")"
     end
     return text
+  end
+
+  if not Match.Started(match) then
+    return L["status_gathering"]
+  elseif Match.IsOut(match, match.me) then
+    return L["status_you_left"]
   end
 
   local offer = Match.DrawOffer(match)
@@ -114,7 +141,8 @@ function MainFrame.Describe(match)
   elseif offer then
     return L["status_draw_coming"]:format(opponent)
   end
-  return L["status_their_turn"]:format(opponent)
+  local turn = Match.Turn(match)
+  return L["status_their_turn"]:format(turn and MainFrame.Names(match, { turn }) or opponent)
 end
 
 --- Whether the match can't go on until the local player does something
@@ -142,7 +170,11 @@ end
 
 --- @param match Match
 local function rematch(match)
-  local newMatch, err = private.session:Invite(Match.Opponent(match), match.game)
+  local others = {}
+  for index, seat in ipairs(Match.Others(match)) do
+    others[index] = match.players[seat]
+  end
+  local newMatch, err = private.session:Invite(others, match.game)
   if not newMatch then
     return report(err)
   end
@@ -177,7 +209,7 @@ local function actionsFor(match)
     session:Forget(id)
   end
   local function resign()
-    StaticPopup_Show("FOREVERGAMES_RESIGN", Transport.DisplayName(Match.Opponent(match)), nil, id)
+    StaticPopup_Show("FOREVERGAMES_RESIGN", MainFrame.Names(match), nil, id)
   end
   local function again()
     rematch(match)
@@ -187,7 +219,9 @@ local function actionsFor(match)
     return { { text = L["accept"], onClick = accept }, { text = L["decline"], onClick = decline } }
   elseif match.status == "outgoing" then
     return { { text = L["withdraw"], onClick = forget } }
-  elseif match.status == "active" then
+  elseif match.status == "active" and not Match.Started(match) then
+    return { { text = L["leave"], onClick = forget } }
+  elseif match.status == "active" and not Match.IsOut(match, match.me) then
     local actions = { { text = L["resign"], onClick = resign } }
     if Match.CanAcceptDraw(match) then
       actions[2] = {
@@ -205,6 +239,9 @@ local function actionsFor(match)
       }
     end
     return actions
+  elseif match.status == "active" then
+    -- Resigned from a game the others are still playing
+    return { { text = L["remove"], onClick = forget } }
   end
   return { { text = L["rematch"], onClick = again }, { text = L["remove"], onClick = forget } }
 end
@@ -374,7 +411,7 @@ local function fillRow(row, match)
 
   row.matchId = match.id
   row.icon:SetTexture(iconFor(match))
-  row.name:SetText(Transport.DisplayName(Match.Opponent(match)) .. "  |cff808080" .. (game and game.name or match.game) .. "|r")
+  row.name:SetText(MainFrame.Names(match) .. "  |cff808080" .. (game and game.name or match.game) .. "|r")
   row.selected:SetShown(match.id == selectedId)
 
   if waiting then
@@ -455,7 +492,7 @@ local function deliveryNote(match)
     if Transport.IsLocked() then
       return L["pending_locked"]
     end
-    return L["pending_unreachable"]:format(Transport.DisplayName(Match.Opponent(match)))
+    return L["pending_unreachable"]:format(MainFrame.Names(match, private.session:Behind(match)))
   end
   return nil
 end
@@ -737,11 +774,11 @@ local function refreshDetail(match, fresh)
   end
 
   local game = Games.Get(match.game)
-  local opponent = Transport.DisplayName(Match.Opponent(match))
   local waiting = waitingOnMe(match)
 
   detail.icon:SetTexture(iconFor(match))
-  detail.header:SetText(L["versus"]:format(game and game.name or match.game, opponent))
+  local title = L[#match.players > 2 and "with_players" or "versus"]
+  detail.header:SetText(title:format(game and game.name or match.game, MainFrame.Names(match)))
   detail.status:SetText(MainFrame.Describe(match))
   detail.focus:SetText(frame.focused and L["focus_off"] or L["focus_on"])
   if waiting then
@@ -753,9 +790,9 @@ local function refreshDetail(match, fresh)
     detail.status:SetAlpha(1)
   end
 
-  local showBoard = game ~= nil and (match.status == "active" or match.status == "finished")
+  local showBoard = game ~= nil and (match.status == "active" or match.status == "finished") and Match.Started(match)
   local history = showBoard and game.history == true
-  detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me)) or "")
+  detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me, #match.players)) or "")
   detail.message:SetText(showBoard and "" or MainFrame.Describe(match))
   detail.moves:SetShown(history)
   for _, button in ipairs(detail.steps) do
@@ -799,10 +836,15 @@ local function refreshDetail(match, fresh)
     end
     entry.shown = { id = match.id, ply = ply }
 
+    local names = {}
+    for seat, name in ipairs(match.players) do
+      names[seat] = Transport.DisplayName(name)
+    end
     entry.view:Update({
       match = match,
       state = live and Match.State(match) or Match.StateAt(match, ply),
       seat = match.me,
+      names = names,
       canMove = live and Match.IsMyTurn(match),
       submit = function(move)
         local ok, err = private.session:Move(match.id, move)

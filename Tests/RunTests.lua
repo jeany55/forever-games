@@ -16,6 +16,7 @@ local ENGINE_FILES = {
   "Games/ConnectFour.lua",
   "Games/Reversi.lua",
   "Games/Checkers.lua",
+  "Games/ChineseCheckers.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -1754,7 +1755,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,checkers", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,checkers,chinesecheckers", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
@@ -1904,6 +1905,950 @@ function tests.ListsSayWhenThereIsMoreToScrollTo()
   list:Update({ 1 }, function() end)
   equal(0, list.frame:GetVerticalScroll())
   equal(false, thumb():IsShown())
+end
+
+-----------------------------
+-- More than two players
+-----------------------------
+
+--- Sets up a match of Chinese Checkers that everyone has yet to accept
+--- @param count number How many play
+--- @return World, table[] players In seat order, string id, table host
+local function invitedCrowd(count)
+  local world = World.New()
+  local everyone, others = {}, {}
+  for index, name in ipairs({ "Alice-Realm", "Bob-Realm", "Carol-Realm", "Dave-Realm", "Erin-Realm", "Frank-Realm" }) do
+    if index <= count then
+      everyone[index] = world:AddPlayer(name)
+      others[#others + 1] = index > 1 and name or nil
+    end
+  end
+  local host = everyone[1]
+  local match = assert(host.session:Invite(others, "chinesecheckers"))
+  world:Deliver()
+
+  local seated = {}
+  for seat, name in ipairs(match.players) do
+    seated[seat] = world.players[name]
+  end
+  return world, seated, match.id, host
+end
+
+--- Starts a match of Chinese Checkers that everyone accepted
+--- @param count number
+--- @return World, table[] players In seat order, string id, table host
+local function startedCrowd(count)
+  local world, seated, id, host = invitedCrowd(count)
+  for _, player in ipairs(seated) do
+    if player ~= host then
+      assert(player.session:Accept(id))
+    end
+  end
+  world:Deliver()
+  return world, seated, id, host
+end
+
+--- Every move the player to move has in a game of Chinese Checkers, as the game writes them
+--- @param game table
+--- @param state table
+--- @return string[]
+local function marbleMoves(game, state)
+  local moves = {}
+  for from = 1, 121 do
+    if state.board[from] == state.turn then
+      for to = 1, 121 do
+        if game.validate(state, state.turn, from .. "-" .. to) then
+          moves[#moves + 1] = from .. "-" .. to
+        end
+      end
+    end
+  end
+  return moves
+end
+
+--- Has whoever's turn it is make the first move they have
+--- @param world World
+--- @param seated table[]
+--- @param id string
+--- @return table player Who moved
+local function moveSomething(world, seated, id)
+  -- Everyone has their own copy of the engine, and it only keeps up with its own player's matches
+  local player
+  for _, candidate in ipairs(seated) do
+    local match = candidate.online and candidate.matches[id]
+    if match and candidate.private.Match.IsMyTurn(match) then
+      player = candidate
+    end
+  end
+  assert(player, "nobody who is around thinks it is their turn")
+  local move = marbleMoves(player.private.Games.Get("chinesecheckers"), player.private.Match.State(player.matches[id]))[1]
+  local ok, err = player.session:Move(id, move)
+  assert(ok, tostring(err) .. " for " .. tostring(move) .. " by " .. player.name)
+  world:Deliver()
+  return player
+end
+
+function tests.CodecCarriesWhoIsPlaying()
+  local Codec = loadEngine().Codec
+  local invite = Codec.Decode(Codec.Encode("INV", "abc", "chinesecheckers", 1, 2, 4, 3, 1, "Quets Al-Realm", 4, "Bøb-Realm"))
+  equal(2, invite.seat)
+  equal(4, invite.seats)
+  equal(3, invite.mine)
+  equal("Quets Al-Realm", invite.names[1])
+  equal("Bøb-Realm", invite.names[4])
+  equal(nil, invite.names[2])
+
+  local who = Codec.Decode(Codec.Encode("WHO", "abc", 5, "Erin-Realm"))
+  equal("Erin-Realm", who.names[5])
+
+  -- A challenge between two says nothing of the kind, the way it never did
+  equal(nil, Codec.Decode("1:INV:abc:chess:2:1").seats)
+  local garbage = { "1:INV:a:x:1:1:3", "1:INV:a:x:1:1:3:2:1", "1:INV:a:x:1:1:3:2:1:A:1:B", "1:WHO:a", "1:WHO:a:1", "1:WHO:a:x:A", "1:WHO:a:0:A" }
+  for _, text in ipairs(garbage) do
+    equal(nil, Codec.Decode(text), "Decode(" .. text .. ")")
+  end
+end
+
+function tests.GamesSayHowManyCanPlay()
+  local Games = loadEngine().Games
+  equal("2", table.concat(Games.SeatCounts(Games.Get("chess")), ","))
+  equal("2,3,4,6", table.concat(Games.SeatCounts(Games.Get("chinesecheckers")), ","))
+  equal(true, Games.CanSeat(Games.Get("chinesecheckers"), 6))
+  equal(false, Games.CanSeat(Games.Get("chinesecheckers"), 5))
+  equal(false, Games.CanSeat(Games.Get("chess"), 3))
+
+  -- A game for more than two has to say what happens when one of them resigns
+  local nothing = function() end
+  local definition = { id = "crowd", name = "Crowd", version = 1, seats = { 2, 3 }, newState = nothing, turn = nothing }
+  definition.validate, definition.apply, definition.result, definition.createView = nothing, nothing, nothing, nothing
+  equal(false, (pcall(Games.Register, definition)))
+  definition.drop = nothing
+  equal(true, (pcall(Games.Register, definition)))
+end
+
+function tests.InviteNeedsARightNumberOfPlayers()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local function errorOf(targets, game)
+    return select(2, alice.session:Invite(targets, game))
+  end
+  equal("player_count", errorOf({ "Bob-Realm", "Carol-Realm" }, "chess"))
+  equal("player_count", errorOf({ "B-Realm", "C-Realm", "D-Realm", "E-Realm" }, "chinesecheckers"))
+  equal("same_player", errorOf({ "Bob-Realm", "Bob-Realm" }, "chinesecheckers"))
+  equal("self_invite", errorOf({ "Bob-Realm", "Alice-Realm" }, "chinesecheckers"))
+  equal("no_target", errorOf({}, "chinesecheckers"))
+  equal("no_target", errorOf({ "Bob-Realm", "" }, "chinesecheckers"))
+  equal(nil, next(alice.matches))
+
+  -- Two can play it too, and that is a challenge like any other
+  local match = assert(alice.session:Invite({ "Bob-Realm" }, "chinesecheckers"))
+  equal(nil, match.host)
+  equal("Bob-Realm", world.queue[1].to)
+  equal("1:INV:" .. match.id .. ":chinesecheckers:1:" .. match.me, world.queue[1].text)
+end
+
+function tests.CrowdStartsOnceEveryoneHasAccepted()
+  local world, seated, id, host = invitedCrowd(3)
+  local guests = {}
+  for seat, player in ipairs(seated) do
+    local match = player.matches[id]
+    equal(seat, match.me, player.name .. " knows where they sit")
+    equal(seated[1].name .. "," .. seated[2].name .. "," .. seated[3].name, table.concat(match.players, ","))
+    equal(host.matches[id].me, match.host)
+    if player ~= host then
+      guests[#guests + 1] = player
+      equal("incoming", match.status)
+      equal("invite:" .. id, player.events[#player.events])
+    end
+  end
+  equal("outgoing", host.matches[id].status)
+
+  -- With one of them in there is nothing to play yet, for anybody
+  assert(guests[1].session:Accept(id))
+  world:Deliver()
+  equal("outgoing", host.matches[id].status)
+  equal("active", guests[1].matches[id].status)
+  equal(false, guests[1].private.Match.Started(guests[1].matches[id]))
+  equal(nil, guests[1].private.Match.Turn(guests[1].matches[id]))
+  equal(false, guests[1].session:Resign(id), "there is nothing to resign from yet")
+  local awaited = host.session:Behind(host.matches[id])
+  equal(1, #awaited)
+  equal(guests[2].name, host.matches[id].players[awaited[1]], "the host knows who it is waiting for")
+
+  assert(guests[2].session:Accept(id))
+  world:Deliver()
+  for _, player in ipairs(seated) do
+    equal("active", player.matches[id].status)
+    equal("!s", logOf(player, id))
+    equal(true, player.private.Match.Started(player.matches[id]))
+    equal(1, player.private.Match.Turn(player.matches[id]))
+    equal(false, player.session:IsPending(player.matches[id]), player.name .. " has nothing left to deliver")
+  end
+  local told = table.concat(host.events, ",")
+  assert(told:find("accepted:" .. id, 1, true), "the host is told the game is on: " .. told)
+  equal("started:" .. id, guests[1].events[#guests[1].events])
+end
+
+function tests.CrowdIsCalledOffWhenSomeoneDeclines()
+  local world, seated, id, host = invitedCrowd(4)
+  local guests = {}
+  for _, player in ipairs(seated) do
+    guests[#guests + 1] = player ~= host and player or nil
+  end
+  assert(guests[1].session:Accept(id))
+  world:Deliver()
+  assert(guests[2].session:Decline(id))
+  world:Deliver()
+
+  equal("declined", host.matches[id].status)
+  equal(guests[2].name, host.matches[id].players[host.matches[id].declinedBy])
+  -- Whoever was in already is told, whoever hadn't answered just sees it go
+  equal("declined", guests[1].matches[id].status)
+  equal("off", guests[1].matches[id].declineReason)
+  equal(nil, guests[3].matches[id])
+  equal("cancelled:" .. id, guests[3].events[#guests[3].events])
+
+  world:Tick(700)
+  equal(0, #world.queue)
+  equal(false, host.session:IsPending(host.matches[id]))
+end
+
+function tests.CrowdHostCanWithdrawAndGuestsCanLeave()
+  local world, seated, id, host = invitedCrowd(3)
+  local guests = {}
+  for _, player in ipairs(seated) do
+    guests[#guests + 1] = player ~= host and player or nil
+  end
+  assert(guests[1].session:Accept(id))
+  world:Deliver()
+
+  -- A guest who is in can change their mind while the game hasn't begun, which calls it off
+  equal(true, guests[1].session:CanForget(guests[1].matches[id]))
+  assert(guests[1].session:Forget(id))
+  world:Deliver()
+  equal("declined", host.matches[id].status)
+  equal(nil, guests[2].matches[id])
+
+  local again = assert(host.session:Invite({ guests[1].name, guests[2].name }, "chinesecheckers"))
+  world:Deliver()
+  assert(guests[2].session:Accept(again.id))
+  world:Deliver()
+  assert(host.session:Forget(again.id))
+  world:Deliver()
+  equal(nil, guests[1].matches[again.id])
+  equal("declined", guests[2].matches[again.id].status)
+  equal(true, host.matches[again.id].hidden)
+end
+
+function tests.CrowdLostAcceptanceIsRecovered()
+  local world, seated, id, host = invitedCrowd(3)
+  for _, player in ipairs(seated) do
+    if player ~= host then
+      assert(player.session:Accept(id))
+    end
+  end
+  -- Nothing the guests say gets through
+  world:Deliver(function(message)
+    return message.text:find(":ACC:") ~= nil
+  end)
+  equal("outgoing", host.matches[id].status)
+
+  world:Tick(31)
+  for _, player in ipairs(seated) do
+    equal("!s", logOf(player, id), player.name)
+  end
+end
+
+function tests.CrowdMovesReachEveryone()
+  local world, seated, id = startedCrowd(3)
+  for turn = 1, 9 do
+    local before = #world.sent
+    local player = moveSomething(world, seated, id)
+    equal(seated[(turn - 1) % 3 + 1].name, player.name, "they move in turn")
+    -- The move to each of the others and their word that they have it, nothing more
+    equal(4, #world.sent - before, "messages for move " .. turn)
+  end
+  for _, player in ipairs(seated) do
+    equal(logOf(seated[1], id), logOf(player, id))
+    equal(10, #player.matches[id].log)
+    equal(false, player.session:IsPending(player.matches[id]))
+  end
+  equal(1, seated[2].private.Match.Turn(seated[2].matches[id]))
+
+  world:Tick(700)
+  equal(0, #world.queue)
+
+  -- Only the player whose turn it has become is told there is news
+  equal(true, seated[1].session:NeedsAttention(seated[1].matches[id]))
+  equal(false, seated[2].session:NeedsAttention(seated[2].matches[id]))
+  equal(false, seated[3].session:NeedsAttention(seated[3].matches[id]))
+end
+
+function tests.CrowdPlayerWhoWasAwayCatchesUpFromWhoeverIsAround()
+  local world, seated, id = startedCrowd(3)
+  -- The third player is away for the first two moves, and whoever made the first is gone again
+  -- by the time they are back
+  seated[3].online = false
+  moveSomething(world, seated, id)
+  moveSomething(world, seated, id)
+  seated[1].online = false
+  equal("!s", logOf(seated[3], id))
+
+  seated[3].online = true
+  seated[3] = world:Relog(seated[3])
+  equal(logOf(seated[2], id), logOf(seated[3], id))
+  equal(3, #seated[3].matches[id].log)
+  equal(3, seated[3].private.Match.Turn(seated[3].matches[id]))
+
+  -- And what they play next reaches the one who is away now
+  local player = moveSomething(world, seated, id)
+  equal(seated[3].name, player.name)
+  seated[1].online = true
+  world:Relog(seated[1])
+  equal(logOf(seated[3], id), logOf(world.players[seated[1].name], id))
+end
+
+function tests.CrowdPlayerOutOfReachAsksAroundAfterwards()
+  local world, seated, id = startedCrowd(3)
+  -- Someone in an instance hears nothing, and the mover logs off before a retry
+  local deaf = seated[3].name
+  assert(seated[1].session:Move(id, "112-103"))
+  world:Deliver(function(message)
+    return message.to == deaf
+  end)
+  seated[1].online = false
+  equal("!s", logOf(seated[3], id))
+  world:Tick(700)
+  equal("!s", logOf(seated[3], id), "nobody who is around knows they are missing it")
+
+  seated[3].session:Wake()
+  world:Deliver()
+  equal("!s,112-103", logOf(seated[3], id))
+end
+
+function tests.CrowdResyncDoesNotFloodTheNetwork()
+  local world, seated, id = startedCrowd(6)
+  seated[6].online = false
+  for _ = 1, 20 do
+    -- Five players take turns while the sixth is away: their turn is skipped by nobody, so the
+    -- others can only get so far. Twenty entries is more than fits in one go
+    if seated[1].private.Match.Turn(seated[1].matches[id]) == 6 then
+      break
+    end
+    moveSomething(world, seated, id)
+  end
+  equal(6, #seated[1].matches[id].log)
+
+  seated[6].online = true
+  local before = #world.sent
+  seated[6] = world:Relog(seated[6])
+  equal(logOf(seated[1], id), logOf(seated[6], id))
+  -- Asking five players, getting five entries from each and answering each of them once
+  local sent = #world.sent - before
+  assert(sent <= 5 + 5 * 5 + 5, "catching up took " .. sent .. " messages")
+end
+
+function tests.CrowdLongCatchUpIsAnsweredOnceAStretch()
+  -- Two players pass the turn back and forth while the third sits out, with a game that lets them
+  local world = World.New()
+  local seated = { world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm"), world:AddPlayer("Carol-Realm") }
+  local function teach(player)
+    player.private.Games.Register({
+      id = "counting",
+      name = "Counting",
+      version = 1,
+      seats = { 2, 3 },
+      newState = function()
+        return { turn = 1, moves = 0 }
+      end,
+      turn = function(state)
+        return state.turn
+      end,
+      validate = function()
+        return true
+      end,
+      apply = function(state)
+        state.moves = state.moves + 1
+        -- The third player only gets a turn once the other two have had twenty each
+        state.turn = state.moves >= 40 and 3 or state.turn % 2 + 1
+      end,
+      result = function() end,
+      drop = function() end,
+      createView = function() end,
+    })
+  end
+  for _, player in ipairs(seated) do
+    teach(player)
+  end
+  world.seed = 5
+  local match = assert(seated[1].session:Invite({ "Bob-Realm", "Carol-Realm" }, "counting"))
+  local id = match.id
+  world:Deliver()
+  local bySeat = {}
+  for seat, name in ipairs(match.players) do
+    bySeat[seat] = world.players[name]
+  end
+  for _, player in ipairs(bySeat) do
+    player.session:Accept(id)
+  end
+  world:Deliver()
+
+  bySeat[3].online = false
+  for move = 1, 40 do
+    assert(bySeat[(move - 1) % 2 + 1].session:Move(id, "m" .. move))
+    world:Deliver()
+  end
+  equal(41, #bySeat[1].matches[id].log)
+
+  bySeat[1].online = false
+  local before = #world.sent
+  local back = world:AddPlayer(bySeat[3].name, bySeat[3].matches)
+  teach(back)
+  back.session:Hello()
+  world:Deliver()
+  equal(logOf(bySeat[2], id), logOf(back, id))
+  local answers = 0
+  for index = before + 1, #world.sent do
+    if world.sent[index]:find(back.name .. ">" .. bySeat[2].name .. " 1:ACK:", 1, true) then
+      answers = answers + 1
+    end
+  end
+  -- Forty moves after the start, in stretches of eight: each is answered once, and so is the last entry
+  equal(6, answers)
+end
+
+function tests.MatchThatStandsStillChecksInWithWhoeverItWaitsFor()
+  local world, alice, bob, id, first, second = startedMatch()
+  play(world, id, first, second, { "5" })
+  -- The player whose turn it is loses their saved games. Nothing is owed to them, so nothing is sent
+  second = world:Relog(second, {})
+  local before = #world.sent
+  world:Tick(700)
+  world:Tick(700)
+  equal("active", first.matches[id].status)
+  equal(0, #world.sent - before)
+
+  world:Tick(3600)
+  equal("declined", first.matches[id].status)
+  equal("gone", first.matches[id].declineReason)
+  equal(2, #world.sent - before, "one question, one answer")
+
+  -- Someone who is simply taking their time is asked no more than that either
+  local otherWorld, _, _, otherId, mover = startedMatch()
+  play(otherWorld, otherId, mover, mover, { "5" })
+  before = #otherWorld.sent
+  otherWorld:Tick(3600)
+  equal(2, #otherWorld.sent - before)
+  otherWorld:Tick(700)
+  equal(2, #otherWorld.sent - before)
+  equal("active", mover.matches[otherId].status)
+end
+
+function tests.CrowdPlaysOnWhenSomeoneResigns()
+  local world, seated, id = startedCrowd(3)
+  moveSomething(world, seated, id)
+  -- Not their turn, which doesn't matter
+  assert(seated[3].session:Resign(id))
+  world:Deliver()
+
+  for _, player in ipairs(seated) do
+    local match = player.matches[id]
+    equal("active", match.status)
+    equal(true, player.private.Match.IsOut(match, 3))
+    equal(2, player.private.Match.Turn(match))
+    local marbles = 0
+    for _ in pairs(player.private.Match.State(match).board) do
+      marbles = marbles + 1
+    end
+    equal(20, marbles, "their marbles come off the board")
+  end
+  equal(false, seated[3].session:Resign(id), "only once")
+  equal(false, seated[3].session:NeedsAttention(seated[3].matches[id]))
+
+  -- The two who are left take turns, and the one who resigned still sees how it goes
+  equal(seated[2].name, moveSomething(world, seated, id).name)
+  equal(seated[1].name, moveSomething(world, seated, id).name)
+  equal(seated[2].name, moveSomething(world, seated, id).name)
+  equal(logOf(seated[1], id), logOf(seated[3], id))
+
+  assert(seated[1].session:Resign(id))
+  world:Deliver()
+  for _, player in ipairs(seated) do
+    equal("finished", player.matches[id].status)
+    equal(2, player.private.Match.Result(player.matches[id]).winner)
+    equal("resign", player.private.Match.Result(player.matches[id]).reason)
+  end
+end
+
+function tests.CrowdForgetsAPlayerWhoRemovedTheMatch()
+  local world, seated, id = startedCrowd(3)
+  moveSomething(world, seated, id)
+  assert(seated[3].session:Resign(id))
+  world:Deliver()
+  equal(true, seated[3].session:CanForget(seated[3].matches[id]))
+  equal(false, seated[1].session:CanForget(seated[1].matches[id]))
+  equal("match_in_progress", select(2, seated[1].session:Forget(id)))
+  assert(seated[3].session:Forget(id))
+  equal(nil, seated[3].matches[id])
+
+  -- Each of the others finds out the next time they send them something, and that is the last
+  moveSomething(world, seated, id)
+  equal(true, seated[2].matches[id].gone[3])
+  moveSomething(world, seated, id)
+  equal(true, seated[1].matches[id].gone[3])
+  local before = #world.sent
+  moveSomething(world, seated, id)
+  moveSomething(world, seated, id)
+  for index = before + 1, #world.sent do
+    assert(not world.sent[index]:find(seated[3].name, 1, true), "still talking to them: " .. world.sent[index])
+  end
+  world:Tick(700)
+  equal(0, #world.queue)
+  equal(logOf(seated[1], id), logOf(seated[2], id))
+end
+
+function tests.CrowdPlayerWhoLostTheMatchIsOutOfIt()
+  local world, seated, id = startedCrowd(3)
+  moveSomething(world, seated, id)
+  -- The second player's saved games are gone, with their turn coming up
+  seated[2] = world:Relog(seated[2], {})
+  world:Tick(700)
+  equal(false, seated[1].private.Match.IsOut(seated[1].matches[id], 2), "nobody knows yet")
+  -- A game that stands still for long enough asks whoever it is waiting for
+  world:Tick(3600)
+  equal(seated[3].name, moveSomething(world, seated, id).name)
+
+  for _, seat in ipairs({ 1, 3 }) do
+    local match = seated[seat].matches[id]
+    equal("active", match.status)
+    equal(true, seated[seat].private.Match.IsOut(match, 2))
+    equal(logOf(seated[1], id), logOf(seated[seat], id))
+  end
+  world:Tick(700)
+  equal(0, #world.queue)
+end
+
+function tests.CrowdSimultaneousResignAndMoveConverge()
+  local world, seated, id = startedCrowd(3)
+  -- The first player moves in the same moment the third resigns
+  assert(seated[1].session:Move(id, "112-103"))
+  assert(seated[3].session:Resign(id))
+  world:Deliver()
+  world:Tick(31)
+  world:Tick(61)
+
+  local log = logOf(seated[1], id)
+  for _, player in ipairs(seated) do
+    equal(log, logOf(player, id), player.name)
+    equal(false, player.session:IsPending(player.matches[id]))
+  end
+  -- Neither of the two was lost for good: one of them just has to be done again
+  assert(log == "!s,112-103,!r3" or log == "!s,!r3", log)
+end
+
+function tests.CrowdTooBigForOneMessageIsToldInSeveral()
+  local world = World.New()
+  local names = { "Alice-Realm" }
+  for index = 2, 6 do
+    -- As long as names get, on a realm with a long name
+    names[index] = string.rep(string.char(96 + index), 12) .. " Tøø-TheVeryLongestRealmNameThereCouldPossiblyEverBe"
+  end
+  local players = {}
+  for index, name in ipairs(names) do
+    players[index] = world:AddPlayer(name)
+  end
+  local match = assert(players[1].session:Invite({ unpack(names, 2) }, "chinesecheckers"))
+  local longest = 0
+  for _, message in ipairs(world.queue) do
+    longest = math.max(longest, #message.text)
+  end
+  assert(longest <= 255, "a message of " .. longest .. " bytes")
+  assert(#world.queue > 5, "expected the players to be told in more than one message each")
+  world:Deliver()
+
+  for index = 2, 6 do
+    local theirs = players[index].matches[match.id]
+    equal("incoming", theirs.status)
+    equal(table.concat(match.players, "|"), table.concat(theirs.players, "|"))
+    assert(players[index].session:Accept(match.id))
+  end
+  world:Deliver()
+  equal("!s", logOf(players[4], match.id))
+end
+
+function tests.MatchesSavedBeforeThereWereCrowdsStillWork()
+  local world, alice, bob, id, first, second = startedMatch()
+  play(world, id, first, second, { "5", "1" })
+  -- The way a match was saved when there was only ever one opponent
+  local saved = copy(bob.matches)
+  saved[id].peerSeen, saved[id].seen = 2, nil
+  bob = world:Relog(bob, saved)
+  equal(nil, bob.matches[id].peerSeen)
+  equal(2, bob.matches[id].seen[bob.matches[id].me == 1 and 2 or 1])
+  equal(false, bob.session:IsPending(bob.matches[id]))
+
+  alice = world.players["Alice-Realm"]
+  local mover = first.name == "Bob-Realm" and bob or alice
+  assert(mover.session:Move(id, "9"))
+  world:Deliver()
+  equal("5,1,9", logOf(alice, id))
+  equal("5,1,9", logOf(bob, id))
+end
+
+-----------------------------
+-- Chinese Checkers
+-----------------------------
+
+function tests.ChineseCheckersStartsWithTenMarblesEach()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  for _, seats in ipairs({ 2, 3, 4, 6 }) do
+    local state = game.newState(seats)
+    local marbles = {}
+    for hole, seat in pairs(state.board) do
+      assert(hole >= 1 and hole <= 121, "hole " .. hole)
+      marbles[seat] = (marbles[seat] or 0) + 1
+    end
+    equal(seats, #marbles)
+    for seat = 1, seats do
+      equal(10, marbles[seat], "marbles of seat " .. seat .. " of " .. seats)
+    end
+  end
+
+  -- The first player's point is the bottom one, across from the top
+  local state = game.newState(2)
+  for hole = 112, 121 do
+    equal(1, state.board[hole])
+  end
+  for hole = 1, 10 do
+    equal(2, state.board[hole])
+  end
+  equal("Red", ({ chinesecheckers_red = "Red" })[game.seatLabel(1, 2)])
+  equal("chinesecheckers_blue", game.seatLabel(2, 2))
+  equal("chinesecheckers_green", game.seatLabel(2, 3))
+  equal("chinesecheckers_yellow", game.seatLabel(2, 6))
+end
+
+function tests.ChineseCheckersOpensWithFourteenMoves()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  local moves = marbleMoves(game, game.newState(2))
+  -- The front row steps forward either way, the row behind it hops over it either way
+  local steps = "112-103,112-104,113-104,113-105,114-105,114-106,115-106,115-107"
+  local hops = "116-103,116-105,117-104,117-106,118-105,118-107"
+  equal(steps .. "," .. hops, table.concat(moves, ","))
+  for _, seats in ipairs({ 3, 4, 6 }) do
+    equal(14, #marbleMoves(game, game.newState(seats)), "with " .. seats)
+  end
+  equal(false, (game.validate(game.newState(2), 2, "7-16")), "not out of turn")
+  equal(false, (game.validate(game.newState(2), 1, "7-16")), "not someone else's marble")
+  equal(false, (game.validate(game.newState(2), 1, "121-103")), "not just anywhere")
+  equal(false, (game.validate(game.newState(2), 1, "nonsense")))
+end
+
+function tests.ChineseCheckersHopsGoOnAsLongAsThereIsSomethingToHopOver()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  local state = game.newState(2)
+  -- A lone marble with stepping stones leading up the middle of the board, two rows apart
+  state.board = { [117] = 1, [113] = 1, [91] = 2, [1] = 2 }
+  local moves = table.concat(marbleMoves(game, state), ",")
+  assert(moves:find("117-104", 1, true), "over one: " .. moves)
+  assert(moves:find("117-79", 1, true), "and on over the next: " .. moves)
+
+  local event = game.apply(state, 1, "117-79")
+  equal("117,104,79", table.concat(event.path, ","))
+  equal(1, state.board[79])
+  equal(nil, state.board[117])
+  equal(1, state.board[113], "nothing is ever taken")
+  equal(2, state.board[91])
+  equal(2, state.turn)
+end
+
+function tests.ChineseCheckersMarbleThatArrivedStaysThere()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  local state = game.newState(2)
+  -- One marble in the front row of the point it is headed for, the rest of the point empty
+  state.board = { [8] = 1, [121] = 1, [60] = 2 }
+  for _, move in ipairs(marbleMoves(game, state)) do
+    local from, to = move:match("(%d+)%-(%d+)")
+    if from == "8" then
+      assert(tonumber(to) <= 10, "left the point with " .. move)
+    end
+  end
+  equal(true, (game.validate(state, 1, "8-4")))
+  equal(false, (game.validate(state, 1, "8-17")))
+end
+
+function tests.ChineseCheckersIsWonByFillingThePointAcross()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  local state = game.newState(2)
+  -- Nine of the first player's marbles are home, one hole is left to fill
+  state.board = { [112] = 2, [16] = 1 }
+  for hole = 1, 10 do
+    state.board[hole] = hole ~= 7 and 1 or nil
+  end
+  equal(nil, game.result(state))
+  game.apply(state, 1, "16-7")
+  equal(1, game.result(state).winner)
+
+  -- A marble someone left behind in the point doesn't keep it from being won
+  state = game.newState(2)
+  state.board = { [112] = 2, [16] = 1 }
+  for hole = 1, 10 do
+    state.board[hole] = hole ~= 7 and (hole == 1 and 2 or 1) or nil
+  end
+  game.apply(state, 1, "16-7")
+  equal(1, game.result(state).winner)
+
+  -- But it takes a marble of their own
+  state = game.newState(2)
+  equal(nil, game.result(state), "the point starts out full of the other player's")
+end
+
+function tests.ChineseCheckersGoesRoundTheTable()
+  local game = loadEngine().Games.Get("chinesecheckers")
+  local state = game.newState(4)
+  local order = {}
+  for _ = 1, 6 do
+    order[#order + 1] = state.turn
+    game.apply(state, state.turn, marbleMoves(game, state)[1])
+  end
+  equal("1,2,3,4,1,2", table.concat(order, ","))
+
+  -- Whoever resigns is passed over from then on, and it moves on if it was their turn
+  equal(3, state.turn)
+  game.drop(state, 3)
+  equal(4, state.turn)
+  game.drop(state, 1)
+  game.apply(state, 4, marbleMoves(game, state)[1])
+  equal(2, state.turn)
+  game.apply(state, 2, marbleMoves(game, state)[1])
+  equal(4, state.turn)
+end
+
+function tests.ChineseCheckersMatchBetweenThreePlayers()
+  local world, seated, id = startedCrowd(3)
+  -- Played until the first player only has to step into the last hole of the point across
+  for _, player in ipairs(seated) do
+    local state = player.private.Match.State(player.matches[id])
+    for hole, seat in pairs(state.board) do
+      if seat == 1 then
+        state.board[hole] = nil
+      end
+    end
+    for hole = 1, 10 do
+      state.board[hole] = hole ~= 7 and 1 or nil
+    end
+    state.board[16] = 1
+  end
+  assert(seated[1].session:Move(id, "16-7"))
+  world:Deliver()
+  for _, player in ipairs(seated) do
+    equal("finished", player.matches[id].status)
+    equal(1, player.private.Match.Result(player.matches[id]).winner)
+    equal("win", player.private.Match.Result(player.matches[id]).reason)
+  end
+  equal("finished:" .. id, seated[2].events[#seated[2].events])
+end
+
+-----------------------------
+-- More than two players, in the window
+-----------------------------
+
+-- The same star the game lays out, to find its holes on screen with
+local STAR_REACH, STAR_ROW = 8.6, math.sqrt(3) / 2
+local starHoles = {}
+for z = -8, 8 do
+  for x = -8, 8 do
+    local y = -x - z
+    if math.min(x, y, z) >= -4 or math.max(x, y, z) <= 4 then
+      starHoles[#starHoles + 1] = { x, z }
+    end
+  end
+end
+
+--- Moves the cursor onto a hole of the star
+--- @param board table
+--- @param hole number
+--- @param point number The point that is at the bottom
+local function pointAtHole(board, hole, point)
+  local x, z = starHoles[hole][1], starHoles[hole][2]
+  for _ = 1, point do
+    x, z = x + z, -x
+  end
+  local cell = board.height / (2 * STAR_REACH)
+  Client.cursor = { (STAR_REACH * STAR_ROW + x + z / 2) * cell, board.height - (STAR_REACH + z * STAR_ROW) * cell }
+end
+
+local function clickHole(board, hole, point)
+  pointAtHole(board, hole, point)
+  board:Fire("OnUpdate", 0.02)
+  press(board)
+  release(board)
+end
+
+--- What the window says about the game on screen
+--- @param text string
+--- @return boolean
+local function says(text)
+  return #Client.Find(function(widget)
+    return widget.text == text and widget:IsVisible()
+  end) > 0
+end
+
+function tests.WindowPlaysChineseCheckers()
+  local world, seated, id = startedCrowd(3)
+  local MainFrame = openWindow(seated[1])
+  MainFrame.Open(id)
+  local board = shownBoard()
+  assert(board.height >= 17 * 20, "the star should make use of the window, got " .. board.height)
+  equal(true, says("status_your_turn"))
+  equal(true, says("chinesecheckers_you"))
+  equal(true, says(seated[2].name))
+  equal(true, says(seated[3].name))
+
+  -- Pick a marble up, then where it goes: a hop over the row in front
+  clickHole(board, 117, 0)
+  equal("!s", logOf(seated[1], id), "picking a marble up isn't a move")
+  clickHole(board, 104, 0)
+  equal("!s,117-104", logOf(seated[1], id))
+  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  settle(board)
+  equal(true, says("status_their_turn"))
+
+  -- Not while it is someone else's turn
+  clickHole(board, 112, 0)
+  clickHole(board, 103, 0)
+  equal("!s,117-104", logOf(seated[1], id))
+
+  world:Deliver()
+  moveSomething(world, seated, id)
+  equal(true, says("status_their_turn"), "the third player is next, not us")
+  moveSomething(world, seated, id)
+  equal(true, says("status_your_turn"))
+
+  -- Dragged
+  pointAtHole(board, 112, 0)
+  board:Fire("OnUpdate", 0.02)
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  pointAtHole(board, 103, 0)
+  board:Fire("OnUpdate", 0.02)
+  release(board)
+  equal("112-103", seated[1].matches[id].log[5])
+end
+
+function tests.WindowTurnsTheStarToFaceEachPlayer()
+  local world, seated, id = startedCrowd(3)
+  moveSomething(world, seated, id)
+  local MainFrame = openWindow(seated[2])
+  MainFrame.Open(id)
+  local board = shownBoard()
+  local state = seated[2].private.Match.State(seated[2].matches[id])
+  local move = marbleMoves(seated[2].private.Games.Get("chinesecheckers"), state)[1]
+  local from, to = move:match("(%d+)%-(%d+)")
+
+  -- Their point is the second one round the board, and for them it is at the bottom
+  pointAtHole(board, tonumber(from), 2)
+  local low = Client.cursor[2]
+  assert(low < board.height / 3, "their marbles should be at the bottom, got " .. low .. " of " .. board.height)
+  clickHole(board, tonumber(from), 2)
+  clickHole(board, tonumber(to), 2)
+  equal(move, seated[2].matches[id].log[3])
+  equal(true, says("you_are"))
+end
+
+function tests.WindowShowsACrowdGathering()
+  local world, seated, id, host = invitedCrowd(3)
+  local guests = {}
+  for _, player in ipairs(seated) do
+    guests[#guests + 1] = player ~= host and player or nil
+  end
+  local MainFrame = openWindow(guests[1])
+  MainFrame.Open(id)
+  equal(true, says("status_incoming"))
+  equal(true, says("with_players"))
+
+  Client.Button("accept"):Fire("OnClick")
+  world:Deliver()
+  equal("active", guests[1].matches[id].status)
+  -- In, with the others still to answer: nothing to play and nothing to resign from
+  equal(3, #Client.Find(function(widget)
+    return widget.text == "status_gathering" and widget:IsVisible()
+  end), "said in the list, under the title and where the board will be")
+  equal(0, #Client.Find(function(widget)
+    return widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget:IsVisible()
+  end), "no board yet")
+  Client.Button("leave")
+
+  assert(guests[2].session:Accept(id))
+  world:Deliver()
+  shownBoard()
+  Client.Button("resign")
+
+  -- Resigned, they can watch the others play on or take the game off their list
+  assert(guests[1].session:Resign(id))
+  world:Deliver()
+  equal(true, says("status_you_left"))
+  Client.Button("remove"):Fire("OnClick")
+  equal(nil, guests[1].matches[id])
+end
+
+function tests.WizardPicksSeveralPlayersForACrowd()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  openWizard(alice)
+  function alice.private.presence:List()
+    local list = {}
+    for index, name in ipairs({ "Bob-Realm", "Carol-Realm", "Dave-Realm" }) do
+      list[index] = { name = name, source = "friend" }
+    end
+    return list
+  end
+  for _, card in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "chinesecheckers" and widget:IsVisible()
+  end)) do
+    equal("players_choice", card.players.text)
+    card:Fire("OnClick")
+  end
+
+  local function row(name)
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.player == name and widget.source ~= nil and widget:IsVisible()
+    end)[1]
+  end
+  local send = Client.Button("wizard_send")
+  equal(false, send.enabled)
+
+  row("Bob-Realm"):Fire("OnClick")
+  equal(true, send.enabled, "two can play")
+  row("Carol-Realm"):Fire("OnClick")
+  equal(true, send.enabled, "so can three")
+  row("Dave-Realm"):Fire("OnClick")
+  equal(true, send.enabled)
+
+  -- Someone who isn't on the list, by name. That makes five, which the game isn't for
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnTextChanged and widget:IsVisible()
+  end)[1]
+  name:SetText("Erin-Realm")
+  name:Fire("OnTextChanged", true)
+  equal(false, send.enabled)
+  name:Fire("OnEnterPressed")
+  equal("", name:GetText())
+  equal(false, send.enabled)
+  equal(nil, next(alice.matches), "Enter adds a player, it doesn't send")
+
+  -- Clicking a player again takes them out
+  row("Dave-Realm"):Fire("OnClick")
+  equal(true, send.enabled)
+  send:Fire("OnClick")
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal("chinesecheckers", started.game)
+  local playing = { unpack(started.players) }
+  table.sort(playing)
+  equal("Alice-Realm,Bob-Realm,Carol-Realm,Erin-Realm", table.concat(playing, ","))
 end
 
 -----------------------------
