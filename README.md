@@ -9,7 +9,8 @@ Games so far: Tic Tac Toe, Chess, Connect Four, Reversi and Checkers.
 
 - `/fg` (or the minimap button) opens the window. The top shows how many guildies and friends are
   online with the addon, checked at login, when the window opens and when you press Refresh
-- **New Game** walks you through picking a game and an opponent
+- **New Game** walks you through picking a game and an opponent. Type in the search box or pick
+  a kind of game to narrow the list down, it scrolls with the mouse wheel
 - Drag the corner of the window to make it any size, the board grows with it. **Focus** hides
   everything but the game you are looking at
 - In chess, drag a piece or click it and then where it goes. Click a move in the list, use the
@@ -73,6 +74,9 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
   played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
   when there is one worth showing
+
+Give the game a `genre` so it can be found in the new game wizard: one that is there already
+(`strategy`, `casual`) or a new one, with its name in the locale file as `genre_<name>`.
 
 Everything else is the engine's and the same for every game: challenges, turn notifications,
 saving, delivery, resigning, and for games that ask for them draw offers (`draws = true`) and

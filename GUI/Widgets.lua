@@ -97,10 +97,31 @@ function Widgets.List(parent, width, rowHeight, createRow)
   content:SetSize(width, 1)
   scroll:SetScrollChild(content)
   scroll:EnableMouseWheel(true)
+
+  -- A sliver down the right edge that says there is more, and where in it the list is
+  local thumb = scroll:CreateTexture(nil, "OVERLAY")
+  thumb:SetColorTexture(1, 1, 1, 0.25)
+  thumb:SetWidth(3)
+  thumb:Hide()
+
+  local function placeThumb()
+    local visible, total = scroll:GetHeight(), content:GetHeight()
+    local scrollable = visible > 0 and total > visible + 1
+    thumb:SetShown(scrollable)
+    if scrollable then
+      thumb:SetHeight(math.max(12, visible * visible / total))
+      thumb:ClearAllPoints()
+      thumb:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 0, -scroll:GetVerticalScroll() / total * visible)
+    end
+  end
+
   scroll:SetScript("OnMouseWheel", function(self, delta)
     local furthest = math.max(0, content:GetHeight() - self:GetHeight())
     self:SetVerticalScroll(math.min(furthest, math.max(0, self:GetVerticalScroll() - delta * rowHeight)))
+    placeThumb()
   end)
+  -- The room the list gets changes with the window
+  scroll:SetScript("OnSizeChanged", placeThumb)
 
   local list = { frame = scroll, rows = {} }
 
@@ -121,6 +142,7 @@ function Widgets.List(parent, width, rowHeight, createRow)
     end
     content:SetHeight(math.max(1, #items * rowHeight))
     scroll:SetVerticalScroll(math.min(scroll:GetVerticalScroll(), math.max(0, #items * rowHeight - scroll:GetHeight())))
+    placeThumb()
   end
 
   --- Scrolls just far enough to bring a row into view
@@ -132,6 +154,7 @@ function Widgets.List(parent, width, rowHeight, createRow)
     elseif rowBottom > top + visible then
       scroll:SetVerticalScroll(math.max(0, rowBottom - visible))
     end
+    placeThumb()
   end
 
   return list

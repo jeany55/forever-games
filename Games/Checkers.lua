@@ -486,6 +486,7 @@ private.Games.Register({
   id = "checkers",
   name = L["game_checkers"],
   description = L["game_checkers_description"],
+  genre = "strategy",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\checkers",
   version = 1,
   seats = 2,

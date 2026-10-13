@@ -25,6 +25,10 @@ L["game_checkers_description"] = "Jump over your opponent's pieces to take them,
 L["checkers_red"] = "Red"
 L["checkers_white"] = "White"
 
+-- Kinds of game
+L["genre_strategy"] = "Strategy"
+L["genre_casual"] = "Quick games"
+
 -- How a game ended
 L["result_checkmate"] = "checkmate"
 L["result_stalemate"] = "stalemate"
@@ -65,6 +69,9 @@ L["source_other"] = "Opponent"
 
 -- New game wizard
 L["wizard_step_game"] = "Step 1 of 2: choose a game"
+L["wizard_search"] = "Search games"
+L["wizard_all_games"] = "All"
+L["wizard_no_games"] = "No games match. Try fewer words or another kind of game."
 L["wizard_step_opponent"] = "Step 2 of 2: choose who to play %s with"
 L["wizard_available"] = "Available now"
 L["wizard_nobody"] = "No guildies or friends are online with Forever Games right now."

@@ -208,6 +208,7 @@ private.Games.Register({
   id = "connectfour",
   name = L["game_connectfour"],
   description = L["game_connectfour_description"],
+  genre = "casual",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\connectfour",
   version = 1,
   seats = 2,

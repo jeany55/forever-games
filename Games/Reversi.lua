@@ -267,6 +267,7 @@ private.Games.Register({
   id = "reversi",
   name = L["game_reversi"],
   description = L["game_reversi_description"],
+  genre = "strategy",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\reversi",
   version = 1,
   seats = 2,

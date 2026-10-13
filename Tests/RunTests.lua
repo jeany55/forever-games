@@ -1729,6 +1729,184 @@ function tests.WindowShowsCheckersFromTheOtherSide()
 end
 
 -----------------------------
+-- Finding a game
+-----------------------------
+
+--- @param games table[]
+--- @return string Their ids, in order
+local function idsOf(games)
+  local ids = {}
+  for index, game in ipairs(games) do
+    ids[index] = game.id
+  end
+  return table.concat(ids, ",")
+end
+
+function tests.GamesAreFoundByWordAndGenre()
+  local Games = loadEngine().Games
+  local everything = idsOf(Games.List())
+  equal(everything, idsOf(Games.Search()))
+  equal(everything, idsOf(Games.Search("  ")))
+  equal("casual,strategy", table.concat(Games.Genres(), ","))
+
+  -- The tests see the names of the strings rather than the strings, which is as good to search
+  equal("chess", idsOf(Games.Search("chess")))
+  equal("chess", idsOf(Games.Search("CHESS")), "in any case")
+  equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
+  equal("", idsOf(Games.Search("chess reversi")))
+  equal("chess,reversi,checkers", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
+  equal("connectfour", idsOf(Games.Search("four", "casual")))
+  equal("", idsOf(Games.Search("chess", "casual")))
+  equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
+
+  for _, game in ipairs(Games.List()) do
+    assert(game.genre, game.id .. " should say what kind of game it is")
+  end
+end
+
+--- Opens the new game wizard for a player, on its own without the window around it
+--- @param player table
+--- @return table Wizard
+local function openWizard(player)
+  Client.Install()
+  CANCEL, BACK = "Cancel", "Back"
+  local private = player.private
+  private.ICON = "icon"
+  private.session = player.session
+  private.Transport = {
+    Normalize = function(name)
+      return name ~= "" and name or nil
+    end,
+    DisplayName = function(name)
+      return name
+    end,
+  }
+  private.presence = {}
+  function private.presence:List()
+    return {}
+  end
+  function UnitIsPlayer()
+    return false
+  end
+
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Wizard.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  private.Wizard.Init(UIParent, function() end)
+  private.Wizard.Open()
+  return private.Wizard
+end
+
+--- The games on offer in the wizard, in reading order
+--- @return table[]
+local function offeredGames()
+  local games = {}
+  for _, card in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget:IsVisible()
+  end)) do
+    games[#games + 1] = card.game
+  end
+  return games
+end
+
+--- Clicks one of the buttons that narrow the games down to a genre
+--- @param text string What it says
+local function clickGenre(text)
+  local found = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.label ~= nil and widget.label.text == text and widget:IsVisible()
+  end)
+  equal(1, #found, "buttons saying " .. text)
+  found[1]:Fire("OnClick")
+end
+
+function tests.WizardNarrowsTheGamesDown()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  openWizard(alice)
+  local count = #alice.private.Games.List()
+  equal(count, #offeredGames())
+
+  local search = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end)[1]
+  local function type(text)
+    search:SetText(text)
+    search:Fire("OnTextChanged", true)
+  end
+  local function nothingFound()
+    return #Client.Find(function(widget)
+      return widget.text == "wizard_no_games" and widget:IsVisible()
+    end) == 1
+  end
+
+  type("chess")
+  equal(1, #offeredGames())
+  equal("chess", idsOf(offeredGames()))
+  equal(false, nothingFound())
+  type("no such game")
+  equal(0, #offeredGames())
+  equal(true, nothingFound())
+  type("")
+  equal(count, #offeredGames())
+
+  -- By genre, on top of whatever is typed
+  clickGenre("genre_casual")
+  equal("tictactoe,connectfour", idsOf(offeredGames()))
+  type("chess")
+  equal(0, #offeredGames())
+  clickGenre("wizard_all_games")
+  equal(1, #offeredGames())
+
+  -- Enter takes the only game left, and from there it is the wizard as before
+  search:Fire("OnEnterPressed")
+  equal(0, #offeredGames())
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget ~= search and widget:IsVisible()
+  end)[1]
+  name:SetText("Bob-Realm")
+  Client.Button("wizard_send"):Fire("OnClick")
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal("chess", started.game)
+  equal("outgoing", started.status)
+end
+
+function tests.ListsSayWhenThereIsMoreToScrollTo()
+  Client.Install()
+  local private = loadEngine()
+  assert(loadfile("GUI/Widgets.lua"))(ADDON_NAME, private)
+  local list = private.Widgets.List(UIParent, 100, 20, function(content)
+    return CreateFrame("Frame", nil, content)
+  end)
+  list.frame:SetSize(100, 60)
+  local function thumb()
+    return Client.Find(function(widget)
+      return widget.kind == "Texture" and widget.parent == list.frame
+    end)[1]
+  end
+
+  list:Update({ 1, 2, 3 }, function() end)
+  equal(false, thumb():IsShown(), "everything fits")
+  list:Update({ 1, 2, 3, 4, 5, 6 }, function() end)
+  equal(true, thumb():IsShown())
+  equal(30, thumb().height, "half of it is in view")
+
+  list.frame:Fire("OnMouseWheel", -1)
+  equal(20, list.frame:GetVerticalScroll())
+  for _ = 1, 10 do
+    list.frame:Fire("OnMouseWheel", -1)
+  end
+  equal(60, list.frame:GetVerticalScroll(), "no further than the end")
+  list:Update({ 1 }, function() end)
+  equal(0, list.frame:GetVerticalScroll())
+  equal(false, thumb():IsShown())
+end
+
+-----------------------------
 -- Runner
 -----------------------------
 

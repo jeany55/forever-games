@@ -799,6 +799,7 @@ private.Games.Register({
   id = "chess",
   name = L["game_chess"],
   description = L["game_chess_description"],
+  genre = "strategy",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\chess",
   -- 2: draws by agreement
   version = 2,

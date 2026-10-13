@@ -38,6 +38,7 @@ local _, private = ...
 --- @field id string Unique id sent over the wire, letters and digits only
 --- @field name string Display name
 --- @field description string? One or two sentences for the new game wizard
+--- @field genre string? What kind of game it is, for narrowing down the list in the wizard. Shown as L["genre_" .. genre], use one that is there already where it fits
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number Number of players, only 2 is supported for now
@@ -84,4 +85,41 @@ end
 --- @return GameDefinition[]
 function Games.List()
   return ordered
+end
+
+--- The genres there are games of, in the order they first came up
+--- @return string[]
+function Games.Genres()
+  local genres, seen = {}, {}
+  for _, game in ipairs(ordered) do
+    if game.genre and not seen[game.genre] then
+      seen[game.genre] = true
+      genres[#genres + 1] = game.genre
+    end
+  end
+  return genres
+end
+
+--- The games to offer someone looking for one
+--- @param text string? What they typed. Every word has to turn up in the name, the description or the genre, in any case
+--- @param genre string? Only games of this genre
+--- @return GameDefinition[]
+function Games.Search(text, genre)
+  local words = {}
+  for word in (text or ""):lower():gmatch("%S+") do
+    words[#words + 1] = word
+  end
+
+  local found = {}
+  for _, game in ipairs(ordered) do
+    local matches = genre == nil or game.genre == genre
+    local about = table.concat({ game.name, game.description or "", game.genre and private.L["genre_" .. game.genre] or "" }, " ")
+    for _, word in ipairs(words) do
+      matches = matches and about:lower():find(word, 1, true) ~= nil
+    end
+    if matches then
+      found[#found + 1] = game
+    end
+  end
+  return found
 end
