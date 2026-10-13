@@ -13,6 +13,9 @@ Games so far: Tic Tac Toe and Chess.
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
+- `/fg log` shows recent activity (messages sent and received, with results). The full log is saved
+  per character in the `ForeverGames.lua` saved variables file on logout or `/reload`
+
 Both players need the addon. There is no server: moves travel directly between the two players as
 addon whispers, so they are delivered when both are online and outside instances that block addon
 communication. Anything that can't be delivered right away is kept and sent later.

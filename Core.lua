@@ -20,10 +20,12 @@ ForeverGames = LibStub("AceAddon-3.0"):NewAddon(private.ADDON_NAME, "AceConsole-
 local FLUSH_INTERVAL = 15
 -- Wait for the client to settle after login before announcing ourselves
 local HELLO_DELAY = 5
+-- Lines shown by /fg log
+local LOG_LINES = 20
 
 local defaults = {
   -- Matches belong to the character that is playing them
-  char = { matches = {} },
+  char = { matches = {}, log = {} },
   profile = { minimap = { hide = false }, toasts = true, sound = true },
 }
 
@@ -31,11 +33,14 @@ local dataObject
 
 function ForeverGames:OnInitialize()
   self.db = LibStub("AceDB-3.0"):New("ForeverGamesDB", defaults, true)
+  private.UseLog(self.db.char.log)
   self:RegisterChatCommand("fg", "HandleSlashCommand")
   self:RegisterChatCommand("forevergames", "HandleSlashCommand")
 end
 
 function ForeverGames:OnEnable()
+  private.Log("login", C_AddOns.GetAddOnMetadata(private.ADDON_NAME, "Version"), Transport.PlayerName(), "guild:", tostring(IsInGuild()))
+
   private.session = private.Session.New({
     me = Transport.PlayerName(),
     matches = self.db.char.matches,
@@ -127,6 +132,8 @@ end
 --- @param event string
 --- @param match Match
 function ForeverGames:OnMatchEvent(event, match)
+  private.Log("match", event, match.id, match.game, "vs", Match.Opponent(match), match.status, "entries:", #match.log, "acked:", match.peerSeen)
+
   local text = toastText(event, match)
   if text and not MainFrame.IsViewing(match.id) then
     if self.db.profile.toasts then
@@ -180,6 +187,24 @@ end
 -- Commands
 -----------------------------
 
+--- Prints the end of the log to chat, or empties it
+--- @param argument string "clear", or how many lines to show
+function ForeverGames:PrintLog(argument)
+  local entries = private.LogEntries()
+  if argument == "clear" then
+    for index = #entries, 1, -1 do
+      entries[index] = nil
+    end
+    return self:Print(L["log_cleared"])
+  end
+
+  local count = math.min(#entries, tonumber(argument) or LOG_LINES)
+  for index = #entries - count + 1, #entries do
+    print("|cff808080" .. entries[index] .. "|r")
+  end
+  self:Print(L["log_shown"]:format(count, #entries))
+end
+
 --- @param input string
 function ForeverGames:HandleSlashCommand(input)
   local command, argument = (input or ""):match("^%s*(%S*)%s*(.-)%s*$")
@@ -189,6 +214,8 @@ function ForeverGames:HandleSlashCommand(input)
     MainFrame.Toggle()
   elseif command == "new" then
     MainFrame.NewGame()
+  elseif command == "log" then
+    self:PrintLog(argument)
   elseif command == "challenge" or command == "invite" then
     local target, gameName = argument:match("^(%S*)%s*(.-)$")
     local game = Games.List()[1]

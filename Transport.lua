@@ -24,6 +24,18 @@ local BOUNCE_WINDOW = 5
 
 --- @type TransportHandlers
 local handlers
+
+-- Result codes by value, for readable log lines
+local RESULT_NAMES = {}
+for name, value in pairs(Enum.SendAddonMessageResult or {}) do
+  RESULT_NAMES[value] = name
+end
+
+--- @param result any
+--- @return string
+local function resultName(result)
+  return RESULT_NAMES[result] or tostring(result)
+end
 local frame = CreateFrame("Frame")
 -- Last time each player was whispered, by short name
 local lastWhisper = {}
@@ -102,11 +114,13 @@ end
 --- @return boolean sent
 function Transport.Send(target, text)
   if Transport.IsLocked() then
+    private.Log("send held, lockdown:", target, text)
     return false
   end
 
   lastWhisper[shortName(target)] = GetTime()
   local result = C_ChatInfo.SendAddonMessage(PREFIX, text, "WHISPER", target)
+  private.Log("send", target, text, "->", resultName(result))
   if result == true or result == Enum.SendAddonMessageResult.Success then
     return true
   end
@@ -120,7 +134,8 @@ end
 --- @param text string
 function Transport.Broadcast(text)
   if IsInGuild() and not Transport.IsLocked() then
-    C_ChatInfo.SendAddonMessage(PREFIX, text, "GUILD")
+    local result = C_ChatInfo.SendAddonMessage(PREFIX, text, "GUILD")
+    private.Log("send GUILD", text, "->", resultName(result))
   end
 end
 
@@ -159,20 +174,30 @@ local function onSystemMessage(text)
 
   local bounced = bouncedWhisper(text)
   if bounced then
+    private.Log("whisper bounced, player not found:", bounced)
     handlers.onOffline(Transport.Normalize(bounced))
     return
   end
 
   local online = CAME_ONLINE and text:match(CAME_ONLINE)
   if online then
+    private.Log("came online:", online)
     handlers.onReachable(Transport.Normalize(online))
     return
   end
 
   local offline = WENT_OFFLINE and text:match(WENT_OFFLINE)
   if offline then
+    private.Log("went offline:", offline)
     handlers.onOffline(Transport.Normalize(offline))
   end
+end
+
+--- Records where the player is and whether addon messages are blocked there
+--- @param reason string
+local function logSurroundings(reason)
+  local inInstance, instanceType = IsInInstance()
+  private.Log(reason, "zone:", GetRealZoneText() or "?", "instance:", tostring(inInstance), instanceType or "none", "locked:", tostring(Transport.IsLocked()))
 end
 
 --- @param newHandlers TransportHandlers
@@ -182,19 +207,27 @@ function Transport.Init(newHandlers)
 
   frame:RegisterEvent("CHAT_MSG_ADDON")
   frame:RegisterEvent("CHAT_MSG_SYSTEM")
+  frame:RegisterEvent("PLAYER_ENTERING_WORLD")
   -- Not every client build has the restriction events
   pcall(frame.RegisterEvent, frame, "ADDON_RESTRICTION_STATE_CHANGED")
 
   frame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHAT_MSG_ADDON" then
       local prefix, text, channel, sender = ...
-      if prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
+      if prefix == PREFIX and issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then
+        -- Under lockdown the client may hand over a payload that can't be read
+        private.Log("recv unreadable payload, lockdown")
+      elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
+        private.Log("recv", channel, sender, text)
         handlers.onMessage(Transport.Normalize(sender), text, channel == "GUILD")
       end
     elseif event == "CHAT_MSG_SYSTEM" then
       onSystemMessage(...)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+      logSurroundings("entered world,")
     elseif event == "ADDON_RESTRICTION_STATE_CHANGED" then
       local restriction, state = ...
+      logSurroundings("restriction " .. tostring(restriction) .. " state " .. tostring(state) .. ",")
       if restriction == Enum.AddOnRestrictionType.Chat and state == Enum.AddOnRestrictionState.Inactive then
         -- The restriction is only really lifted once this event has finished dispatching
         C_Timer.After(1, function()
