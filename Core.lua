@@ -40,6 +40,7 @@ end
 
 function ForeverGames:OnEnable()
   private.Log("login", C_AddOns.GetAddOnMetadata(private.ADDON_NAME, "Version"), Transport.PlayerName(), "guild:", tostring(IsInGuild()))
+  private.Log("realm:", tostring(GetRealmName()), "normalized:", tostring(GetNormalizedRealmName()), "id:", tostring(GetRealmID and GetRealmID()))
 
   private.session = private.Session.New({
     me = Transport.PlayerName(),

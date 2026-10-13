@@ -165,9 +165,6 @@ local function lookForPlayers()
     return
   end
   private.presence:Announce()
-  -- Redraw when the "looking" message should go and when the button can be used again
-  C_Timer.After(LOOKING_FOR, MainFrame.Refresh)
-  C_Timer.After(11, MainFrame.Refresh)
   MainFrame.Refresh()
 end
 
@@ -580,6 +577,16 @@ local function create()
   frame.TitleText:SetText(L["title"])
 
   frame.header = createHeader()
+  -- The header shows things that change with time alone: the "looking" message after a refresh
+  -- and whether Refresh can be pressed again
+  local sinceUpdate = 0
+  frame.header:SetScript("OnUpdate", function(_, elapsed)
+    sinceUpdate = sinceUpdate + elapsed
+    if sinceUpdate >= 1 then
+      sinceUpdate = 0
+      refreshHeader()
+    end
+  end)
 
   frame.body = CreateFrame("Frame", nil, frame)
   frame.body:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, -8)
