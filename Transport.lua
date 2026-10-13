@@ -1,9 +1,12 @@
 --------------------------
 --  Transport
 --------------------------
--- Carries session payloads between players as whispered addon messages, and watches for the
--- signals that say whether a retry is worth it: addon chat lockdown lifting, a player coming
--- online, or a whisper bouncing because the player is offline.
+-- Carries session payloads between players, and watches for the signals that say whether a retry
+-- is worth it: addon chat lockdown lifting, a player coming online, or a whisper bouncing because
+-- the player is offline.
+--
+-- There are two routes to a player. Battle.net friends are reached through Battle.net game data,
+-- which doesn't care about realm or faction. Everyone else gets a whispered addon message.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -39,6 +42,9 @@ end
 local frame = CreateFrame("Frame")
 -- Last time each player was whispered, by short name
 local lastWhisper = {}
+-- Battle.net game accounts of friends who are in game, by full character name and the reverse
+local gameAccounts = {}
+local accountNames = {}
 
 --- Turns a global format string like "%s has come online." into a pattern capturing its arguments
 --- @param format string?
@@ -112,22 +118,61 @@ end
 --- @param target string Full player name
 --- @param text string
 --- @return boolean sent
+--- @param result any
+--- @return boolean
+local function succeeded(result)
+  return result == true or result == Enum.SendAddonMessageResult.Success
+end
+
+--- @param target string Full player name
+--- @param text string
+--- @return boolean sent
+local function sendBattleNet(target, text)
+  local account = gameAccounts[target]
+  if not account then
+    return false
+  end
+  local result = C_BattleNet.SendGameData(account, PREFIX, text)
+  private.Log("send battle.net", target, text, "->", resultName(result))
+  return succeeded(result)
+end
+
+--- @param target string Full player name
+--- @param text string
+--- @return boolean sent
+local function sendWhisper(target, text)
+  -- Players on the same realm are whispered by bare name, the realm suffix is only for others
+  local name = Transport.DisplayName(target)
+  lastWhisper[shortName(target)] = GetTime()
+  local result = C_ChatInfo.SendAddonMessage(PREFIX, text, "WHISPER", name)
+  private.Log("send whisper", name, text, "->", resultName(result))
+  if result == Enum.SendAddonMessageResult.TargetOffline and not gameAccounts[target] then
+    handlers.onOffline(target)
+  end
+  return succeeded(result)
+end
+
+--- @param target string Full player name
+--- @param text string
+--- @return boolean sent
 function Transport.Send(target, text)
   if Transport.IsLocked() then
     private.Log("send held, lockdown:", target, text)
     return false
   end
+  return sendBattleNet(target, text) or sendWhisper(target, text)
+end
 
-  lastWhisper[shortName(target)] = GetTime()
-  local result = C_ChatInfo.SendAddonMessage(PREFIX, text, "WHISPER", target)
-  private.Log("send", target, text, "->", resultName(result))
-  if result == true or result == Enum.SendAddonMessageResult.Success then
-    return true
+--- Sends by every route there is. For greetings, where it isn't known yet which route works
+--- and an extra copy does no harm.
+--- @param target string Full player name
+--- @param text string
+function Transport.SendEveryWay(target, text)
+  if Transport.IsLocked() then
+    return
   end
-  if result == Enum.SendAddonMessageResult.TargetOffline then
-    handlers.onOffline(target)
-  end
-  return false
+  sendBattleNet(target, text)
+  sendWhisper(target, text)
 end
 
 --- Sends to everyone in the player's guild
@@ -154,7 +199,7 @@ function Transport.SendSlowly(target, text)
   slowTicker = C_Timer.NewTicker(1, function()
     local message = table.remove(slowQueue, 1)
     if message then
-      Transport.Send(message.target, message.text)
+      Transport.SendEveryWay(message.target, message.text)
     end
     if #slowQueue == 0 and slowTicker then
       slowTicker:Cancel()
@@ -193,12 +238,20 @@ local function battleNetFriends(add)
           tostring(info.factionName),
           hasCharacter and "character known," or "character unknown,",
           hasRealm and "realm known" or "realm unknown",
-          (playing and hasCharacter) and "-> greeting" or "-> skipped"
+          (playing and hasCharacter) and "-> greeting" or "-> skipped",
+          "as",
+          tostring(info.characterName),
+          tostring(info.realmName),
+          tostring(info.realmDisplayName),
+          tostring(info.realmID)
         )
       end
       if playing and hasCharacter then
         -- Without a realm the friend is taken to be on the player's own
-        add(hasRealm and (info.characterName .. "-" .. info.realmName) or info.characterName)
+        local name = Transport.Normalize(hasRealm and (info.characterName .. "-" .. info.realmName) or info.characterName)
+        gameAccounts[name] = info.gameAccountID
+        accountNames[info.gameAccountID] = name
+        add(name)
         found = found + 1
       end
     end
@@ -255,8 +308,12 @@ local function onSystemMessage(text)
 
   local bounced = bouncedWhisper(text)
   if bounced then
+    local name = Transport.Normalize(bounced)
     private.Log("whisper bounced, player not found:", bounced)
-    handlers.onOffline(Transport.Normalize(bounced))
+    -- A Battle.net friend can still be reached the other way
+    if not gameAccounts[name] then
+      handlers.onOffline(name)
+    end
     return
   end
 
@@ -274,6 +331,24 @@ local function onSystemMessage(text)
   end
 end
 
+--- Full character name behind a Battle.net game account, remembered so answers go back the same way
+--- @param account number
+--- @return string?
+local function nameOfAccount(account)
+  if accountNames[account] then
+    return accountNames[account]
+  end
+  local info = C_BattleNet.GetGameAccountInfoByID(account)
+  if not info or not info.characterName or info.characterName == "" then
+    return nil
+  end
+  local hasRealm = info.realmName and info.realmName ~= ""
+  local name = Transport.Normalize(hasRealm and (info.characterName .. "-" .. info.realmName) or info.characterName)
+  gameAccounts[name] = account
+  accountNames[account] = name
+  return name
+end
+
 --- Records where the player is and whether addon messages are blocked there
 --- @param reason string
 local function logSurroundings(reason)
@@ -287,6 +362,7 @@ function Transport.Init(newHandlers)
   C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
 
   frame:RegisterEvent("CHAT_MSG_ADDON")
+  frame:RegisterEvent("BN_CHAT_MSG_ADDON")
   frame:RegisterEvent("CHAT_MSG_SYSTEM")
   frame:RegisterEvent("PLAYER_ENTERING_WORLD")
   -- The friends list is only filled in once the client has asked the server for it
@@ -303,6 +379,15 @@ function Transport.Init(newHandlers)
       elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
         private.Log("recv", channel, sender, text)
         handlers.onMessage(Transport.Normalize(sender), text, channel == "GUILD")
+      end
+    elseif event == "BN_CHAT_MSG_ADDON" then
+      local prefix, text, _, account = ...
+      if prefix == PREFIX then
+        local sender = nameOfAccount(account)
+        private.Log("recv battle.net", tostring(sender), text)
+        if sender then
+          handlers.onMessage(sender, text, false)
+        end
       end
     elseif event == "CHAT_MSG_SYSTEM" then
       onSystemMessage(...)
