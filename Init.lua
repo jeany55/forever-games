@@ -16,6 +16,10 @@ local _, private = ...
 --- @field presence Presence
 --- @field Widgets Widgets
 --- @field Board Board
+--- @field Viewport Viewport
+--- @field Drag Drag
+--- @field Tiles Tiles
+--- @field Lexicon Lexicon
 --- @field Wizard Wizard
 --- @field Transport Transport
 --- @field Toast Toast

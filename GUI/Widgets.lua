@@ -95,6 +95,85 @@ function Widgets.Pulse(region)
   return group
 end
 
+--- Things that happen over time: a frame's worth of them at once, each with its own start and
+--- length. A view starts one for everything it wants to see move, and stops them all when what
+--- they were about is no longer what is shown.
+--- @param frame Frame Runs them while it is shown. Its OnUpdate is taken
+--- @return { Play: fun(self: table, seconds: number, step: fun(progress: number), options: { delay: number?, onStart: fun()?, onDone: fun()? }?), Stop: fun(self: table), Busy: fun(self: table): boolean }
+function Widgets.Animator(frame)
+  local animator = { running = {} }
+
+  --- @param seconds number How long it takes
+  --- @param step fun(progress: number) Called every frame with how far along it is, from 0 to 1. Always called with 1 in the end
+  --- @param options { delay: number?, onStart: fun()?, onDone: fun()? }? Seconds to wait first, something to do as it starts and something to do when it is over
+  function animator:Play(seconds, step, options)
+    options = options or {}
+    local run = { seconds = seconds, step = step, elapsed = -(options.delay or 0), onStart = options.onStart, onDone = options.onDone }
+    self.running[#self.running + 1] = run
+  end
+
+  --- @param run table
+  local function start(run)
+    if not run.started then
+      run.started = true
+      if run.onStart then
+        run.onStart()
+      end
+    end
+  end
+
+  --- Takes everything to its end at once, in the order it was started
+  function animator:Stop()
+    -- Whatever one of them starts in ending is ended as well
+    while #self.running > 0 do
+      local run = table.remove(self.running, 1)
+      start(run)
+      run.step(1)
+      if run.onDone then
+        run.onDone()
+      end
+    end
+  end
+
+  --- @return boolean
+  function animator:Busy()
+    return #self.running > 0
+  end
+
+  frame:SetScript("OnUpdate", function(_, elapsed)
+    local running = animator.running
+    if #running == 0 then
+      return
+    end
+    local over = {}
+    -- Only the ones there are now: one that is started on the way begins with the next frame
+    for index = 1, #running do
+      local run = running[index]
+      run.elapsed = run.elapsed + elapsed
+      if run.elapsed >= 0 then
+        start(run)
+        local progress = run.seconds > 0 and math.min(1, run.elapsed / run.seconds) or 1
+        run.step(progress)
+        if progress >= 1 then
+          over[#over + 1] = run
+        end
+      end
+    end
+    for _, run in ipairs(over) do
+      for index, other in ipairs(running) do
+        if other == run then
+          table.remove(running, index)
+          break
+        end
+      end
+      if run.onDone then
+        run.onDone()
+      end
+    end
+  end)
+  return animator
+end
+
 --- A list that scrolls with the mouse wheel. Rows are built on demand and reused.
 --- @param parent Frame
 --- @param width number

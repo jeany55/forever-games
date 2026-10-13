@@ -15,12 +15,18 @@ Init.lua
 Engine\Codec.lua
 Engine\Random.lua
 Engine\Games.lua
+Engine\Lexicon.lua
 Engine\Match.lua
 Engine\Session.lua
 Engine\Presence.lua
 GUI\Widgets.lua
 GUI\Board.lua
 GUI\Cards.lua
+GUI\Viewport.lua
+GUI\Drag.lua
+GUI\Tiles.lua
+Lexicon\English.lua
+Lexicon\Warcraft.lua
 Games\TicTacToe.lua
 Games\Chess.lua
 Games\ConnectFour.lua
@@ -30,6 +36,7 @@ Games\ChineseCheckers.lua
 Games\Backgammon.lua
 Games\CrazyEights.lua
 Games\Battleship.lua
+Games\Words.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua

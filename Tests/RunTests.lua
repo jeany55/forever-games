@@ -21,11 +21,15 @@ local ENGINE_FILES = {
   "Games/Backgammon.lua",
   "Games/CrazyEights.lua",
   "Games/Battleship.lua",
+  "Engine/Lexicon.lua",
+  "Lexicon/English.lua",
+  "Lexicon/Warcraft.lua",
+  "Games/Words.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -1766,7 +1770,7 @@ function tests.GamesAreFoundByWordAndGenre()
   local everything = idsOf(Games.List())
   equal(everything, idsOf(Games.Search()))
   equal(everything, idsOf(Games.Search("  ")))
-  equal("casual,strategy,dice,cards", table.concat(Games.Genres(), ","))
+  equal("casual,strategy,dice,cards,words", table.concat(Games.Genres(), ","))
 
   -- The tests see the names of the strings rather than the strings, which is as good to search
   equal("chess", idsOf(Games.Search("chess")))
@@ -4270,6 +4274,1415 @@ function tests.WindowChangesTheSeasOverAndShowsTheOtherFleetInTheEnd()
   assert(second.session:Resign(id))
   world:Deliver()
   equal(5, countOn(waters, "Fleet"), "no secrets once the game is over")
+end
+
+-----------------------------
+-- Word lists
+-----------------------------
+
+function tests.LexiconFindsPackedWordsAndNames()
+  local Lexicon = loadEngine().Lexicon
+  Lexicon.Pack("pets", 3, "CATDOGEEL")
+  Lexicon.Names("pets", "hero", "Kael'thas Yogg-Saron", 2)
+  Lexicon.Names("pets", "bird", "Anzu")
+
+  for _, word in ipairs({ "CAT", "DOG", "EEL", "KAELTHAS", "YOGGSARON", "ANZU" }) do
+    equal(true, Lexicon.Has("pets", word), word)
+  end
+  for _, word in ipairs({ "COW", "CA", "ATD", "CATS", "", "Kael'thas", "cat" }) do
+    equal(false, Lexicon.Has("pets", word), word)
+  end
+  equal(false, Lexicon.Has("nothing", "CAT"))
+
+  local entry = Lexicon.Entry("pets", "KAELTHAS")
+  equal("Kael'thas", entry.name)
+  equal("hero", entry.group)
+  equal(2, entry.rank)
+  equal(1, Lexicon.Entry("pets", "ANZU").rank)
+  equal(nil, Lexicon.Entry("pets", "CAT"), "a packed word is only a word")
+  equal(6, Lexicon.Count("pets"))
+  equal(false, pcall(Lexicon.Names, "pets", "bird", "Anzu"), "the same name twice is a mistake in the data")
+end
+
+function tests.LexiconStampChangesWithWhatAListRules()
+  local function stamp(change)
+    local Lexicon = loadEngine().Lexicon
+    Lexicon.Pack("pets", 3, "CATDOG")
+    Lexicon.Names("pets", "bird", "Anzu")
+    change(Lexicon)
+    return Lexicon.Stamp("pets")
+  end
+  local plain = stamp(function() end)
+  equal(plain, stamp(function() end))
+  equal(plain, stamp(function(Lexicon)
+    Lexicon.Names("other", "bird", "Rukhmar")
+  end))
+  for label, change in pairs({
+    ["another length"] = function(Lexicon)
+      Lexicon.Pack("pets", 4, "BEAR")
+    end,
+    ["another name"] = function(Lexicon)
+      Lexicon.Names("pets", "bird", "Rukhmar")
+    end,
+    ["a name worth more"] = function(Lexicon)
+      Lexicon.Names("pets", "bird", "Rukhmar", 2)
+    end,
+  }) do
+    assert(plain ~= stamp(change), label)
+  end
+  assert(stamp(function(Lexicon)
+    Lexicon.Names("pets", "bird", "Rukhmar")
+  end) ~= stamp(function(Lexicon)
+    Lexicon.Names("pets", "bird", "Rukhmar", 2)
+  end))
+end
+
+function tests.EnglishHasItsWords()
+  local Lexicon = loadEngine().Lexicon
+  equal(168551, Lexicon.Count("english"))
+  -- The first and the last of a length, and something of every length in between
+  local words = { "AA", "YO", "AAH", "ZOO", "QUEST", "ZYZZYVA", "ZYZZYVAS", "ABANDONED", "AARDVARKS", "ZYGOMORPHIC" }
+  words[#words + 1] = "UNCOPYRIGHTABLE"
+  words[#words + 1] = "DERMATOGLYPHICS"
+  for _, word in ipairs({ "TREE", "HOUSES", "FARMERS", "THUNDERING", "QUARTERSTAFF", "KINDERGARTNER", "RESPONSIBILITY" }) do
+    words[#words + 1] = word
+  end
+  for _, word in ipairs(words) do
+    equal(true, Lexicon.Has("english", word), word)
+  end
+  for _, word in ipairs({ "STORMWIND", "ZZ", "A", "QUESTT", "UEST", "COUNTERREVOLUTIONARIES" }) do
+    equal(false, Lexicon.Has("english", word), word)
+  end
+end
+
+function tests.WarcraftNamesAreWordsForTheBoard()
+  -- Loaded by hand, to look at every name as it is added
+  local private = { L = {} }
+  for _, file in ipairs({ "Engine/Random.lua", "Engine/Lexicon.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local strings = assert(io.open("Locales/enUS.lua")):read("*a")
+  local add, count, groups = private.Lexicon.Names, 0, {}
+  private.Lexicon.Names = function(list, group, names, rank)
+    equal("warcraft", list)
+    assert(rank == nil or rank == 2, "ranks are 1 and 2")
+    for name in names:gmatch("%S+") do
+      local letters = name:gsub("[^%a]", "")
+      assert(#letters >= 3 and #letters <= 15, name .. " doesn't fit")
+      assert(not name:find("[^%a'%-]"), name .. " has something in it that isn't a letter")
+      count = count + 1
+    end
+    groups[group] = true
+    add(list, group, names, rank)
+  end
+  assert(loadfile("Lexicon/Warcraft.lua"))(ADDON_NAME, private)
+
+  assert(count > 700, "most of the list is missing")
+  for group in pairs(groups) do
+    assert(strings:find('L["words_group_' .. group .. '"]', 1, true), "no name for the group " .. group)
+  end
+  local Lexicon = private.Lexicon
+  equal(2, Lexicon.Entry("warcraft", "THRALL").rank)
+  equal(2, Lexicon.Entry("warcraft", "THUNDERFURY").rank)
+  equal("item", Lexicon.Entry("warcraft", "THUNDERFURY").group)
+  equal(1, Lexicon.Entry("warcraft", "STORMWIND").rank)
+  equal("Kael'thas", Lexicon.Entry("warcraft", "KAELTHAS").name)
+  equal(true, Lexicon.Has("warcraft", "DPS"))
+end
+
+-----------------------------
+-- Words with Warcraft
+-----------------------------
+
+--- @param text string
+--- @return string[] Its characters, one tile each
+local function tilesOf(text)
+  local tiles = {}
+  for tile in text:gmatch(".") do
+    tiles[#tiles + 1] = tile
+  end
+  return tiles
+end
+
+--- A position set up by hand
+--- @param racks string[] By seat, the tiles held written as one word
+--- @param bag string? The next tile to be drawn last
+--- @param lying table<string, string>? Words on the board already, by the move that would lay them without its dot: aD8 = "HOUSE"
+--- @return table state, table game, table random
+local function wordsAt(racks, bag, lying)
+  local private = loadEngine()
+  local game = private.Games.Get("words")
+  local state = game.newState(#racks, private.Random.New(1))
+  state.bag, state.board = tilesOf(bag or ""), {}
+  for seat, rack in ipairs(racks) do
+    state.racks[seat] = tilesOf(rack)
+  end
+  for from, word in pairs(lying or {}) do
+    local column, row = from:byte(2) - 65, tonumber(from:sub(3)) - 1
+    for index = 1, #word do
+      local across = from:sub(1, 1) == "a"
+      state.board[(row + (across and 0 or index - 1)) * 15 + column + (across and index - 1 or 0)] = word:sub(index, index)
+    end
+  end
+  return state, game, private.Random.New(3)
+end
+
+--- @param rack string[]
+--- @return string The tiles of a rack in alphabetical order, as one word
+local function held(rack)
+  local tiles = { unpack(rack) }
+  table.sort(tiles)
+  return table.concat(tiles)
+end
+
+function tests.WordsListsGoWithItsVersion()
+  local private = loadEngine()
+  -- The word lists are rules. If this fails one of them has changed: players on the old list
+  -- and on the new one mustn't meet, so give the game in Games/Words.lua a new version, and then
+  -- write that version and the new numbers here
+  equal(1, private.Games.Get("words").version)
+  equal(365510098, private.Lexicon.Stamp("english"), "the English list changed")
+  equal(1614400711, private.Lexicon.Stamp("warcraft"), "the Warcraft list changed")
+end
+
+function tests.WordsDealsEveryoneSevenTiles()
+  local private = loadEngine()
+  local game = private.Games.Get("words")
+  for _, seats in ipairs({ 2, 3, 4 }) do
+    local state = game.newState(seats, private.Random.New(5))
+    local all = { unpack(state.bag) }
+    for seat = 1, seats do
+      equal(7, #state.racks[seat])
+      equal(0, state.scores[seat])
+      for _, tile in ipairs(state.racks[seat]) do
+        all[#all + 1] = tile
+      end
+    end
+    equal(104, #all)
+    equal(104 - 7 * seats, #state.bag)
+    local text = held(all)
+    equal(12, select(2, text:gsub("E", "")))
+    equal(1, select(2, text:gsub("Q", "")))
+    equal(2, select(2, text:gsub("_", "")))
+    equal(1, game.turn(state))
+    equal(nil, game.result(state))
+  end
+
+  local one, other = game.newState(2, private.Random.New(5)), game.newState(2, private.Random.New(5))
+  equal(table.concat(one.bag), table.concat(other.bag), "the same chance deals the same tiles")
+  assert(table.concat(one.bag) ~= table.concat(game.newState(2, private.Random.New(6)).bag))
+end
+
+function tests.WordsFirstWordLiesOnTheMiddle()
+  local state, game, random = wordsAt({ "HOUSEXY", "AAAAAAA" }, "TTTTTTTTT")
+  equal("words_off_centre", select(2, game.validate(state, 1, "aA1.HOUSE")))
+  equal("words_off_centre", select(2, game.validate(state, 1, "aI8.HOUSE")))
+  equal("words_too_short", select(2, game.validate(state, 1, "aH8.H")))
+  equal("not_your_turn", select(2, game.validate(state, 2, "aH8.AA")))
+  equal(true, game.validate(state, 1, "dH4.HOUSE"))
+  equal(true, game.validate(state, 1, "aD8.HOUSE"))
+
+  local event = game.apply(state, 1, "aD8.HOUSE", random)
+  -- H3 O1 U1 doubled S1 E1, and the middle square doubles the word
+  equal(16, event.score)
+  equal(16, state.scores[1])
+  equal("D8 HOUSE +16", event.notation)
+  equal(1, #event.words)
+  equal("HOUSE", event.words[1].text)
+  equal(7 * 15 + 3, event.words[1].square)
+  equal(true, event.words[1].across)
+  equal("H", state.board[7 * 15 + 3])
+  equal("E", state.board[7 * 15 + 7])
+  equal(2, game.turn(state))
+end
+
+function tests.WordsDrawsBackUpToSeven()
+  local state, game, random = wordsAt({ "HOUSEXY", "AAAAAAA" }, "ZTTTTTTQJ")
+  local event = game.apply(state, 1, "aD8.HOUSE", random)
+  equal(5, event.drew)
+  equal("JQTTTXY", held(state.racks[1]))
+  equal("ZTTT", table.concat(state.bag))
+  equal(false, event.allTiles)
+  for _, value in pairs(event) do
+    assert(type(value) ~= "string" or not value:find("[JQ]"), "what was drawn is nobody else's business")
+  end
+end
+
+function tests.WordsRejectsWhatCantBeLaid()
+  local state, game = wordsAt({ "HOUSEXY", "AAAAAAA" }, "TTTTTTTTT")
+  for move, err in pairs({
+    ["aD8.HORSE"] = "words_not_held",
+    ["aD8.HOUSS"] = "words_not_held",
+    ["aD8.HOUsE"] = "words_not_held",
+    ["aD8.HOUXE"] = "words_not_a_word",
+    ["aD8.HO_SE"] = "invalid_move",
+    ["aD8._HOUSE"] = "invalid_move",
+    ["aD8.HOUSE_"] = "invalid_move",
+    ["aL8.HOUSE"] = "invalid_move",
+    ["dH12.HOUSE"] = "invalid_move",
+    ["aD0.HOUSE"] = "invalid_move",
+    ["aD08.HOUSE"] = "invalid_move",
+    ["aD16.HOUSE"] = "invalid_move",
+    ["aP8.HOUSE"] = "invalid_move",
+    ["bD8.HOUSE"] = "invalid_move",
+    ["aD8.HOU5E"] = "invalid_move",
+    ["aD8."] = "invalid_move",
+    ["aD8HOUSE"] = "invalid_move",
+    ["x."] = "invalid_move",
+    ["x.he"] = "invalid_move",
+    ["x.HH"] = "words_not_held",
+    ["pp"] = "invalid_move",
+  }) do
+    local ok, code = game.validate(state, 1, move)
+    equal(false, ok, move)
+    equal(err, code, move)
+  end
+end
+
+function tests.WordsJoinWhatIsOnTheBoard()
+  local state, game, random = wordsAt({ "ONSTXYZ", "AAAAAAA" }, "", { aD8 = "HOUSE" })
+  equal("words_not_joined", select(2, game.validate(state, 1, "aA1.ON")))
+  equal("words_not_joined", select(2, game.validate(state, 1, "aD10.ON")))
+  equal("words_not_joined", select(2, game.validate(state, 1, "aA1.N")))
+  equal("invalid_move", select(2, game.validate(state, 1, "aD8.ON")), "not onto tiles that lie there")
+  equal("invalid_move", select(2, game.validate(state, 1, "dE7.NO")))
+  equal("words_not_a_word", select(2, game.validate(state, 1, "aC8.X")), "XHOUSE")
+  equal("words_not_a_word", select(2, game.validate(state, 1, "aE9.ZN")), "the words made the other way count too")
+  equal(true, game.validate(state, 1, "dE7.N"), "NO, down to a tile that lies there")
+  equal(true, game.validate(state, 1, "dF7.S_N"), "SUN, through one")
+  equal("invalid_move", select(2, game.validate(state, 1, "dE7.N_")), "a move is written from its first tile to its last")
+  equal("invalid_move", select(2, game.validate(state, 1, "dE8._N")))
+  equal(true, game.validate(state, 1, "aI8.S"), "onto the end of a word")
+  equal(true, game.validate(state, 1, "dI8.S"), "which is the same move either way")
+
+  -- ON under HO: O tripled and N make ON for 4, H and the tripled O make HO for 6, O and N make ON for 2
+  local event = game.apply(state, 1, "aD9.ON", random)
+  equal(12, event.score)
+  equal(3, #event.words)
+  equal("ON", event.words[1].text)
+  equal(4, event.words[1].score)
+  equal("HO", event.words[2].text)
+  equal(false, event.words[2].across)
+  equal(7 * 15 + 3, event.words[2].square)
+  equal(6, event.words[2].score)
+  equal(2, event.words[3].score)
+  equal("D9 ON +12", event.notation)
+end
+
+function tests.WordsCountsASquareOnlyOnce()
+  local state, game, random = wordsAt({ "SSSSSSS", "AAAAAAA" }, "", { aD8 = "HOUSE" })
+  local event = game.apply(state, 1, "aI8.S", random)
+  equal("HOUSES", event.words[1].text)
+  equal(8, event.score, "neither the doubled U nor the middle square again")
+  equal(1, #event.words)
+end
+
+function tests.WordsBlanksStandForAnyLetterAndScoreNothing()
+  local state, game, random = wordsAt({ "HOU_EXY", "SAAAAAA" }, "")
+  equal("words_not_held", select(2, game.validate(state, 1, "aD8.HOUSE")))
+  local event = game.apply(state, 1, "aD8.HOUsE", random)
+  equal(14, event.score)
+  equal("HOUSE", event.words[1].text)
+  equal("s", state.board[7 * 15 + 6])
+  equal("XY", held(state.racks[1]))
+
+  -- It is worth nothing to whoever builds on it either: U S E S, with the blank's square not counted again
+  event = game.apply(state, 2, "aI8.S", random)
+  equal(7, event.score)
+end
+
+function tests.WordsFromAzerothAreWorthMore()
+  local state, game, random = wordsAt({ "QUESTXY", "JAINAXY" }, "")
+  local event = game.apply(state, 1, "aD8.QUEST", random)
+  -- Q10 U1 E1 doubled S1 T1, the word doubled, and 5 for being one of ours
+  equal(35, event.score)
+  equal("slang", event.words[1].lore.group)
+  equal("Quest", event.words[1].lore.name)
+
+  state, game, random = wordsAt({ "JAINAXY", "AAAAAAA" }, "")
+  equal("words_not_a_word", select(2, game.validate(state, 1, "aD8.JAINX")))
+  event = game.apply(state, 1, "aD8.JAINA", random)
+  -- J8 A1 I1 doubled N1 A1, the word doubled, and 15 for a name everyone knows
+  equal(41, event.score)
+  equal(2, event.words[1].lore.rank)
+  equal(41, event.words[1].score)
+
+  state, game, random = wordsAt({ "PSLFGXY", "AAAAAAA" }, "", { aD8 = "HOUSE" })
+  event = game.apply(state, 1, "dD9.PS", random)
+  equal("HPS", event.words[1].lore.name)
+  -- H3 P3 tripled S1 and 5
+  equal(18, event.score)
+  state, game, random = wordsAt({ "STORMWI", "AAAAAAA" }, "", { aK8 = "ND" })
+  event = game.apply(state, 1, "aD8.STORMWI", random)
+  equal("STORMWIND", event.words[1].text)
+  equal("city", event.words[1].lore.group)
+  equal(true, event.allTiles)
+end
+
+function tests.WordsLayingAllSevenTilesIsABonus()
+  local state, game, random = wordsAt({ "FARMERS", "AAAAAAA" }, "TTT")
+  local event = game.apply(state, 1, "aB8.FARMERS", random)
+  -- F4 A1 doubled R1 M3 E1 doubled R1 S1, the word doubled, and 50
+  equal(78, event.score)
+  equal(true, event.allTiles)
+  equal(3, event.drew)
+  equal(nil, game.result(state), "three tiles drawn, the game goes on")
+end
+
+function tests.WordsSwapsTilesForOthers()
+  local state, game, random = wordsAt({ "QQQAEI_", "AAAAAAA" }, "TTTTTTT")
+  equal(true, game.validate(state, 1, "x.QQ_"))
+  equal("words_not_held", select(2, game.validate(state, 1, "x.QQQQ")))
+  local event = game.apply(state, 1, "x.QQ_", random)
+  equal(3, event.swapped)
+  equal("AEIQTTT", held(state.racks[1]), "new tiles first, none of those given back")
+  equal("QQTTTT_", held(state.bag))
+  equal(0, state.scores[1])
+  equal(2, game.turn(state))
+  equal("words_swapped", event.notation)
+
+  state, game = wordsAt({ "QQQAEI_", "AAAAAAA" }, "TTTTTT")
+  equal("words_cant_swap", select(2, game.validate(state, 1, "x.Q")))
+end
+
+function tests.WordsEndsWhenSomeoneRunsOutOfTiles()
+  local state, game, random = wordsAt({ "ON", "QZAAAAA" }, "", { aD8 = "HOUSE" })
+  state.scores = { 10, 40 }
+  local event = game.apply(state, 1, "aD9.ON", random)
+  -- What the other is left holding, Q10 Z8 and five As: taken from them and given to whoever went out
+  equal(23, event.settled[1])
+  equal(-23, event.settled[2])
+  equal(10 + 12 + 23, state.scores[1])
+  equal(40 - 23, state.scores[2])
+  local result = game.result(state)
+  equal(1, result.winner)
+  equal("words_out", result.detail)
+
+  state, game, random = wordsAt({ "ON", "QZAAAAA" }, "T", { aD8 = "HOUSE" })
+  game.apply(state, 1, "aD9.ON", random)
+  equal(nil, game.result(state), "not while there is a tile to draw")
+  equal("T", held(state.racks[1]))
+end
+
+function tests.WordsEndsWhenNobodyLaysAnything()
+  local state, game, random = wordsAt({ "QAAAAAA", "ZAAAAAA" }, "TTTTTTTT")
+  state.scores = { 30, 30 }
+  game.apply(state, 1, "p", random)
+  game.apply(state, 2, "x.Z", random)
+  local event = game.apply(state, 1, "p", random)
+  equal(nil, game.result(state))
+  equal(nil, event.settled)
+  equal(true, event.passed)
+  event = game.apply(state, 2, "p", random)
+  equal(-16, event.settled[1])
+  equal(-7, event.settled[2])
+  local result = game.result(state)
+  equal(2, result.winner, "everyone loses what they hold, and that was the Q")
+  equal("words_passes", result.detail)
+
+  -- Laying something starts the count again
+  state, game, random = wordsAt({ "ONAAAAA", "AAAAAAA" }, "", { aD8 = "HOUSE" })
+  for _, move in ipairs({ "p", "p", "aD9.ON", "p", "p", "p" }) do
+    game.apply(state, game.turn(state), move, random)
+  end
+  equal(nil, game.result(state))
+  game.apply(state, game.turn(state), "p", random)
+  equal(1, game.result(state).winner)
+
+  state, game, random = wordsAt({ "AAAAAAA", "AAAAAAA" }, "")
+  for _ = 1, 4 do
+    game.apply(state, game.turn(state), "p", random)
+  end
+  equal(0, game.result(state).winner, "level is a draw")
+end
+
+function tests.WordsShowsNobodyTheBagOrAnotherRack()
+  local state, game = wordsAt({ "HOUSEXY", "QZAAAAA", "TTT" }, "JK", { aD8 = "HOUSE" })
+  local seen = game.visible(state, 2)
+  equal("QZAAAAA", table.concat(seen.racks[2]))
+  equal("???????", table.concat(seen.racks[1]))
+  equal("???", table.concat(seen.racks[3]))
+  equal("??", table.concat(seen.bag))
+  equal("H", seen.board[7 * 15 + 3])
+  equal(state.scores, seen.scores)
+  equal("HOUSEXY", table.concat(state.racks[1]), "the game itself is left alone")
+  equal("JK", table.concat(state.bag))
+end
+
+function tests.WordsGoesOnWithoutAPlayerWhoResigned()
+  local state, game, random = wordsAt({ "AAAAAAA", "QZ", "EEEEEEE" }, "TT")
+  state.scores = { 5, 90, 5 }
+  game.apply(state, 1, "p", random)
+  game.drop(state, 2)
+  equal(3, game.turn(state), "their turn goes to the next player")
+  equal("ZQTT", table.concat(state.bag), "their tiles are under the bag")
+  equal(0, #state.racks[2])
+  game.drop(state, 1)
+  equal(3, game.turn(state))
+
+  state, game, random = wordsAt({ "AAAAAAA", "QZ", "EEEEEEA" }, "")
+  state.scores = { 5, 90, 5 }
+  game.drop(state, 2)
+  for _ = 1, 4 do
+    game.apply(state, game.turn(state), "p", random)
+  end
+  equal(0, game.result(state).winner, "whoever resigned can't win, however far ahead")
+end
+
+function tests.WordsIsPlayedBetweenTwoPlayers()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", "words"))
+  world:Deliver()
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  local id = match.id
+  local first = match.me == 1 and alice or bob
+  local second = first == alice and bob or alice
+  local Match = first.private.Match
+
+  local mine, theirs = Match.Visible(first.matches[id]), Match.Visible(second.matches[id])
+  equal(7, #mine.racks[1])
+  assert(not table.concat(mine.racks[1]):find("?", 1, true), "a player sees their own tiles")
+  equal("???????", table.concat(mine.racks[2]))
+  equal("???????", table.concat(theirs.racks[1]))
+  equal(table.concat(mine.racks[1]), table.concat(second.private.Match.State(second.matches[id]).racks[1]), "both were dealt the same")
+
+  equal(false, (second.session:Move(id, "p")), "not out of turn")
+  equal(false, (first.session:Move(id, "aH8.QQQQQQQ")))
+  assert(first.session:Move(id, "x." .. table.concat(mine.racks[1], "", 1, 3)))
+  world:Deliver()
+  equal(logOf(first, id), logOf(second, id))
+  equal(table.concat(Match.State(first.matches[id]).bag), table.concat(second.private.Match.State(second.matches[id]).bag))
+
+  play(world, id, second, first, { "p", "p", "p" })
+  local result = Match.Result(first.matches[id])
+  equal("words_passes", result.detail)
+  equal(result.winner, second.private.Match.Result(second.matches[id]).winner)
+  assert(not table.concat(Match.Visible(first.matches[id]).racks[2]):find("?", 1, true), "no secrets once the game is over")
+end
+
+function tests.WordsIsPlayedByACrowd()
+  local world, seated, id = startedCrowd(3, "words")
+  local Match = seated[1].private.Match
+  for _ = 1, 6 do
+    local turn = Match.Turn(seated[1].matches[id])
+    local mover
+    for _, player in ipairs(seated) do
+      if player.matches[id].me == turn then
+        mover = player
+      end
+    end
+    assert(mover.session:Move(id, "p"))
+    world:Deliver()
+  end
+  for _, player in ipairs(seated) do
+    equal("words_passes", player.private.Match.Result(player.matches[id]).detail)
+    equal(logOf(seated[1], id), logOf(player, id))
+  end
+end
+
+-----------------------------
+-- Viewport
+-----------------------------
+
+--- A window 300 wide and 200 high onto something 200 square, so it fits with room at the sides.
+--- The fake client has every frame's bottom left corner in that of the screen
+--- @param options table?
+--- @return table viewport
+local function viewportOnScreen(options)
+  Client.Install()
+  local private = {}
+  assert(loadfile("GUI/Viewport.lua"))(ADDON_NAME, private)
+  local viewport = private.Viewport.New(UIParent, options)
+  viewport:SetSize(300, 200)
+  viewport:SetContentSize(200, 200)
+  return viewport
+end
+
+--- Puts the cursor on a point of a viewport's window, right and down from its top left corner
+local function pointAt(viewport, x, y)
+  Client.cursor = { x, viewport.height - y }
+end
+
+--- Lets time pass, so whatever is on its way gets there
+local function wait(frame)
+  for _ = 1, 30 do
+    frame:Fire("OnUpdate", 0.02)
+  end
+end
+
+local function near(expected, actual, label)
+  if math.abs(expected - actual) > 0.0001 then
+    error(string.format("%s: expected %s, got %s", label or "value", tostring(expected), tostring(actual)), 2)
+  end
+end
+
+function tests.ViewportZoomsInOnWhatIsUnderTheCursor()
+  local settled = {}
+  local viewport = viewportOnScreen({
+    onSettle = function(zoom)
+      settled[#settled + 1] = zoom
+    end,
+  })
+  equal(1, viewport.zoom)
+  equal(50, viewport.x, "what fits lies in the middle")
+  equal(0, viewport.y)
+
+  -- Over the middle of the content
+  pointAt(viewport, 150, 100)
+  viewport.frame:Fire("OnMouseWheel", 3)
+  equal(false, viewport:Fits())
+  equal(1, viewport.zoom, "it glides there")
+  for _ = 1, 4 do
+    viewport.frame:Fire("OnUpdate", 0.02)
+    assert(viewport.zoom > 1 and viewport.zoom < 1.25 ^ 3)
+    near(100, (150 - viewport.x) / viewport.zoom, "the point under the cursor stays there on the way")
+    near(100, (100 - viewport.y) / viewport.zoom)
+  end
+  wait(viewport.frame)
+  near(1.25 ^ 3, viewport.zoom)
+  near(100, (150 - viewport.x) / viewport.zoom)
+  near(100, (100 - viewport.y) / viewport.zoom)
+
+  viewport.frame:Fire("OnMouseWheel", 10)
+  wait(viewport.frame)
+  equal(3, viewport.zoom, "no closer than that")
+  viewport.frame:Fire("OnMouseWheel", 1)
+  equal(nil, viewport.move)
+
+  viewport.frame:Fire("OnMouseWheel", -20)
+  wait(viewport.frame)
+  equal(1, viewport.zoom)
+  equal(50, viewport.x)
+  equal(0, viewport.y)
+  equal(true, viewport:Fits())
+  near(1.25 ^ 3, settled[1])
+  equal(3, settled[2])
+  equal(1, settled[3])
+  equal(3, #settled)
+end
+
+function tests.ViewportZoomsAsFarAsItIsTold()
+  local viewport = viewportOnScreen({ maxZoom = 1.5 })
+  pointAt(viewport, 150, 100)
+  viewport.frame:Fire("OnMouseWheel", 5)
+  wait(viewport.frame)
+  equal(1.5, viewport.zoom)
+  -- One notch back is so nearly all of it that it is all of it
+  viewport.frame:Fire("OnMouseWheel", -2)
+  wait(viewport.frame)
+  equal(1, viewport.zoom)
+end
+
+function tests.ViewportIsDraggedAboutButNotPastItsEdges()
+  local viewport = viewportOnScreen()
+  pointAt(viewport, 150, 100)
+  Client.mouseDown = true
+  viewport:Grab()
+  pointAt(viewport, 250, 150)
+  viewport.frame:Fire("OnUpdate", 0.02)
+  equal(50, viewport.x, "what fits stays where it is")
+  equal(0, viewport.y)
+  Client.mouseDown = false
+  viewport.frame:Fire("OnUpdate", 0.02)
+
+  viewport:ZoomTo(2, 100, 100, true)
+  equal(2, viewport.zoom)
+  equal(-50, viewport.x)
+  equal(-100, viewport.y)
+
+  pointAt(viewport, 150, 100)
+  Client.mouseDown = true
+  viewport.frame:Fire("OnMouseDown", "RightButton")
+  pointAt(viewport, 152, 101)
+  viewport.frame:Fire("OnUpdate", 0.02)
+  equal(-50, viewport.x, "a click that slipped isn't a drag")
+  pointAt(viewport, 180, 120)
+  viewport.frame:Fire("OnUpdate", 0.02)
+  equal(-20, viewport.x)
+  equal(-80, viewport.y)
+  pointAt(viewport, 1000, -1000)
+  viewport.frame:Fire("OnUpdate", 0.02)
+  equal(0, viewport.x, "its left edge at the window's, and no further")
+  equal(-200, viewport.y, "and its bottom edge")
+
+  Client.mouseDown = false
+  viewport.frame:Fire("OnUpdate", 0.02)
+  pointAt(viewport, 150, 100)
+  viewport.frame:Fire("OnUpdate", 0.02)
+  equal(0, viewport.x, "let go")
+end
+
+function tests.ViewportGoesWhereItIsSent()
+  local viewport = viewportOnScreen()
+  viewport:ZoomTo(2, 0, 0)
+  equal(1, viewport.zoom)
+  equal(false, viewport:Fits())
+  wait(viewport.frame)
+  equal(2, viewport.zoom)
+  equal(0, viewport.x, "a corner can't come to the middle, only as near as the edges allow")
+  equal(0, viewport.y)
+
+  viewport:ZoomTo(2, 150, 50)
+  wait(viewport.frame)
+  equal(2, viewport.zoom)
+  equal(-100, viewport.x)
+  equal(0, viewport.y)
+
+  viewport:ZoomTo(50, 100, 100, true)
+  equal(3, viewport.zoom)
+  viewport:Fit(true)
+  equal(1, viewport.zoom)
+  equal(50, viewport.x)
+
+  -- Hidden on the way, it is there when it is next seen
+  viewport:ZoomTo(2, 100, 100)
+  viewport.frame:Fire("OnHide")
+  equal(2, viewport.zoom)
+  equal(-50, viewport.x)
+end
+
+function tests.ViewportKeepsToItsEdgesWhenItsRoomChanges()
+  local viewport = viewportOnScreen()
+  viewport:ZoomTo(2, 200, 200, true)
+  equal(-100, viewport.x)
+  equal(-200, viewport.y)
+  viewport:SetSize(500, 450)
+  equal(50, viewport.x, "narrower than the window now")
+  equal(25, viewport.y, "and less high")
+  viewport:SetContentSize(450, 450)
+  equal(0, viewport.x, "wider again: no gap is left at its edge")
+  equal(0, viewport.y)
+end
+
+function tests.ViewportFollowsTheCursorToAnEdge()
+  local viewport = viewportOnScreen()
+  pointAt(viewport, 5, 100)
+  viewport:EdgeScroll(0.05)
+  equal(50, viewport.x, "nothing lies beyond the edge of what fits")
+
+  viewport:ZoomTo(2, 100, 100, true)
+  pointAt(viewport, 150, 100)
+  viewport:EdgeScroll(0.05)
+  equal(-50, viewport.x)
+  pointAt(viewport, 5, 100)
+  viewport:EdgeScroll(0.05)
+  equal(-26, viewport.x, "at the left edge, what lies to the left comes into sight")
+  equal(-100, viewport.y)
+  viewport:EdgeScroll(1)
+  equal(0, viewport.x)
+  pointAt(viewport, 295, 195)
+  viewport:EdgeScroll(0.05)
+  equal(-24, viewport.x)
+  equal(-124, viewport.y)
+  pointAt(viewport, -5, 100)
+  viewport:EdgeScroll(0.05)
+  equal(-24, viewport.x, "not with the cursor somewhere else altogether")
+end
+
+-----------------------------
+-- Drag
+-----------------------------
+
+--- Something to carry things across, 400 wide and 300 high, with a tile to pick up. The fake
+--- client has every region's bottom left corner in that of the screen
+--- @return table drag, table tile, table log What the targets were told, in order
+local function dragOnScreen()
+  Client.Install()
+  local private = {}
+  assert(loadfile("GUI/Drag.lua"))(ADDON_NAME, private)
+  local stage = CreateFrame("Frame", nil, UIParent)
+  stage:SetSize(400, 300)
+  local drag = private.Drag.New(stage)
+  drag.frame:SetSize(400, 300)
+  local tile = stage:CreateTexture()
+  tile:SetSize(40, 40)
+  return drag, tile, {}
+end
+
+--- A place to put things down, as big as it is said to be, that has a left half and a right one
+--- @return table target
+local function dropTarget(drag, log, name, width, height, refuses)
+  local region = CreateFrame("Frame", nil, drag.frame.parent)
+  region:SetSize(width, height)
+  local target = {
+    region = region,
+    spot = function(item)
+      if item == refuses then
+        return nil
+      end
+      return Client.cursor[1] < width / 2 and "left" or "right"
+    end,
+    onHover = function(item, spot)
+      log[#log + 1] = name .. " hover " .. item .. " " .. tostring(spot)
+    end,
+    onDrop = function(item, spot)
+      log[#log + 1] = name .. " drop " .. item .. " " .. spot
+    end,
+  }
+  drag:AddTarget(target)
+  return target
+end
+
+--- @return table look
+local function lookOf(tile, log)
+  return {
+    texture = "tile",
+    width = 40,
+    height = 40,
+    from = tile,
+    onReturn = function(item)
+      log[#log + 1] = "returned " .. item
+    end,
+  }
+end
+
+function tests.DragCarriesAThingToATarget()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+
+  Client.cursor, Client.mouseDown = { 300, 250 }, true
+  drag:Carry("Q", lookOf(tile, log))
+  equal("Q", drag:Carrying())
+  equal(0, tile:GetAlpha(), "what is carried isn't where it was as well")
+  equal(true, drag.texture:IsShown())
+  equal(40 * 1.15, drag.texture.width)
+  equal(0, #log)
+
+  Client.cursor = { 20, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  Client.cursor = { 30, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  Client.cursor = { 80, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("rack hover Q left,rack hover Q right", table.concat(log, ","), "told once for each place it would land")
+
+  Client.mouseDown = false
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("rack hover Q nil", log[3])
+  equal("rack drop Q right", log[4])
+  equal(4, #log)
+  equal(nil, drag:Carrying())
+  equal(1, tile:GetAlpha())
+  equal(false, drag.texture:IsShown())
+end
+
+function tests.DragPutsAThingBackThatWasLetGoNowhere()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+
+  Client.cursor, Client.mouseDown = { 20, 20 }, true
+  drag:Carry("Q", lookOf(tile, log))
+  Client.cursor = { 300, 250 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("rack hover Q left,rack hover Q nil", table.concat(log, ","))
+  Client.mouseDown = false
+  drag.frame:Fire("OnUpdate", 0.02)
+
+  equal(nil, drag:Carrying())
+  equal(2, #log, "on its way back")
+  equal(0, tile:GetAlpha())
+  equal(true, drag.texture:IsShown())
+  wait(drag.frame)
+  equal("returned Q", log[3])
+  equal(1, tile:GetAlpha())
+  equal(false, drag.texture:IsShown())
+end
+
+function tests.DragPicksUpWithAClickAndPutsDownWithAnother()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+
+  Client.cursor, Client.mouseDown = { 300, 250 }, true
+  drag:Carry("Q", lookOf(tile, log))
+  Client.cursor = { 301, 251 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("Q", drag:Carrying(), "a click leaves it in hand")
+
+  Client.cursor = { 80, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("Q", drag:Carrying(), "and it goes along without a button held")
+  drag.frame:Fire("OnMouseDown", "LeftButton")
+  equal("rack drop Q right", log[#log])
+  equal(nil, drag:Carrying())
+
+  -- Any other button is a change of mind
+  Client.cursor, Client.mouseDown = { 300, 250 }, false
+  drag:Carry("Z", lookOf(tile, log))
+  equal("Z", drag:Carrying(), "in hand from the start with no button held")
+  Client.cursor = { 80, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  drag.frame:Fire("OnMouseDown", "RightButton")
+  equal(nil, drag:Carrying())
+  equal("rack hover Z nil", log[#log])
+  wait(drag.frame)
+  equal("returned Z", log[#log])
+
+  drag.frame:Fire("OnMouseDown", "LeftButton")
+  equal("returned Z", log[#log], "nothing in hand, nothing to put down")
+end
+
+function tests.DragAsksTheTargetsInTurn()
+  local drag, tile, log = dragOnScreen()
+  local board = dropTarget(drag, log, "board", 200, 200, "Z")
+  dropTarget(drag, log, "table", 400, 300)
+  -- Only the corner of the board is in sight
+  board.clip = CreateFrame("Frame", nil, UIParent)
+  board.clip:SetSize(50, 50)
+
+  Client.cursor, Client.mouseDown = { 20, 20 }, false
+  drag:Carry("Q", lookOf(tile, log))
+  equal("board hover Q left", log[#log])
+  Client.cursor = { 120, 120 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("table hover Q left", log[#log], "the board is there, but not to be seen")
+  equal("board hover Q nil", log[#log - 1])
+  drag:Cancel(true)
+  equal("returned Q", log[#log])
+
+  Client.cursor = { 20, 20 }
+  drag:Carry("Z", lookOf(tile, log))
+  equal("table hover Z left", log[#log], "what the board won't have lands on what lies under it")
+  drag.frame:Fire("OnMouseDown", "LeftButton")
+  equal("table drop Z left", log[#log])
+end
+
+function tests.DragLetsGoWhenItIsHiddenOrSomethingElseIsPickedUp()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+  local other = drag.frame.parent:CreateTexture()
+
+  Client.cursor, Client.mouseDown = { 300, 250 }, true
+  drag:Carry("Q", lookOf(tile, log))
+  drag.frame:Fire("OnHide")
+  equal(nil, drag:Carrying())
+  equal("returned Q", log[#log], "at once, there is nobody to show it to")
+  equal(1, tile:GetAlpha())
+
+  drag:Carry("Q", lookOf(tile, log))
+  drag:Cancel()
+  equal(0, tile:GetAlpha(), "on its way back")
+  drag:Carry("Z", lookOf(other, log))
+  equal(1, tile:GetAlpha(), "the one before is back where it was")
+  equal(0, other:GetAlpha())
+  equal("Z", drag:Carrying())
+  equal("returned Q,returned Q", table.concat(log, ","))
+end
+
+-----------------------------
+-- Words with Warcraft on screen
+-----------------------------
+
+--- A game of Words on screen, with the tiles everyone holds and the bag set by hand for both players
+--- @param racks string[] By seat, the tiles held written as one word
+--- @param bag string? The next tile to be drawn last
+--- @return World, table first, table second, string id
+local function wordsOnScreen(racks, bag)
+  local world, first, second, id, MainFrame = gameOnScreen("words")
+  for _, player in ipairs({ first, second }) do
+    local state = player.private.Match.State(player.matches[id])
+    state.bag = tilesOf(bag or "")
+    for seat, rack in ipairs(racks) do
+      state.racks[seat] = tilesOf(rack)
+    end
+  end
+  MainFrame.Refresh()
+  return world, first, second, id
+end
+
+--- The parts of the game on screen that tests point at
+--- @return table
+local function wordsWidgets()
+  local function one(test, what)
+    local found = Client.Find(test)
+    assert(#found == 1, "Expected one " .. what .. ", found " .. #found)
+    return found[1]
+  end
+  return {
+    board = one(function(widget)
+      return widget.wordsBoard
+    end, "board"),
+    window = one(function(widget)
+      return widget.wordsWindow
+    end, "window"),
+    rack = one(function(widget)
+      return widget.wordsRack
+    end, "rack"),
+    note = one(function(widget)
+      return widget.wordsNote
+    end, "note"),
+    box = one(function(widget)
+      return widget.kind == "EditBox" and widget.scripts.OnChar
+    end, "box to type in"),
+    -- What things are carried on is the one frame that minds the mouse and isn't the board or its window
+    drag = one(function(widget)
+      local scripts = widget.scripts
+      return scripts.OnMouseDown and scripts.OnHide and scripts.OnUpdate and not scripts.OnMouseUp and not widget.wordsWindow
+    end, "frame to carry things on"),
+    effects = one(function(widget)
+      return widget.wordsEffects
+    end, "frame for what moves"),
+  }
+end
+
+--- The tiles in the rack, in the order they lie
+--- @return table[] tiles, string letters With "_" for a blank
+local function rackOnScreen()
+  local tiles = Client.Find(function(widget)
+    return widget.wordsHeld and widget:IsVisible()
+  end)
+  table.sort(tiles, function(a, b)
+    return a.index < b.index
+  end)
+  local letters = {}
+  for index, tile in ipairs(tiles) do
+    letters[index] = tile.letter.text ~= "" and tile.letter.text or "_"
+  end
+  return tiles, table.concat(letters)
+end
+
+--- @return string The letters of the tiles in the rack in alphabetical order, whatever order they lie in
+local function heldOnScreen()
+  local letters = tilesOf(select(2, rackOnScreen()))
+  table.sort(letters)
+  return table.concat(letters)
+end
+
+--- The tiles on the board, as "D8=Q E8=U": the ones only laid out so far in brackets
+--- @return string
+local function boardOnScreen()
+  local tiles = Client.Find(function(widget)
+    return widget.wordsSquare and widget:IsVisible()
+  end)
+  table.sort(tiles, function(a, b)
+    return a.wordsSquare < b.wordsSquare
+  end)
+  local said = {}
+  for index, tile in ipairs(tiles) do
+    local name = string.char(65 + tile.wordsSquare % 15) .. (math.floor(tile.wordsSquare / 15) + 1)
+    said[index] = tile.laid and ("(" .. name .. "=" .. tile.letter.text .. ")") or (name .. "=" .. tile.letter.text)
+  end
+  return table.concat(said, " ")
+end
+
+--- Puts the cursor on a square, named the way players say it
+local function overSquare(widgets, name)
+  local cell = widgets.board.width / 15
+  local column, row = name:byte(1) - 65, tonumber(name:sub(2)) - 1
+  Client.cursor = { (column + 0.5) * cell, widgets.board.height - (row + 0.5) * cell }
+end
+
+--- Drags the first tile in the rack that shows a letter to a square
+local function dragTile(widgets, letter, name)
+  local tiles, letters = rackOnScreen()
+  local at = assert(letters:find(letter, 1, true), "no " .. letter .. " in " .. letters)
+  Client.cursor, Client.mouseDown = { 5, 5 }, true
+  tiles[at]:Fire("OnMouseDown", "LeftButton")
+  overSquare(widgets, name)
+  widgets.drag:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+end
+
+--- Clicks a square of the board
+local function clickBoard(widgets, name, button)
+  overSquare(widgets, name)
+  Client.mouseDown = true
+  widgets.board:Fire("OnMouseDown", button or "LeftButton")
+  Client.mouseDown = false
+  widgets.window:Fire("OnUpdate", 0.02)
+  widgets.board:Fire("OnMouseUp", button or "LeftButton")
+end
+
+local function typeWord(widgets, word)
+  for letter in word:gmatch(".") do
+    widgets.box:Fire("OnChar", letter)
+  end
+end
+
+function tests.WindowLaysOutTilesAndPlaysThem()
+  local world, first, second, id = wordsOnScreen({ "QUESTXY", "AAAAAAA" }, "ZZZZZEEEEE")
+  local widgets = wordsWidgets()
+  local play = Client.Button("words_play")
+  assert(widgets.board.width >= 15 * 16, "the board should make use of the window, got " .. widgets.board.width)
+  equal("EQSTUXY", heldOnScreen())
+  equal("", boardOnScreen())
+  equal(false, play.enabled)
+  equal(true, widgets.note.text:find("words_hint", 1, true) ~= nil)
+
+  dragTile(widgets, "Q", "D8")
+  equal("(D8=Q)", boardOnScreen())
+  equal("ESTUXY", heldOnScreen())
+  equal(false, play.enabled, "one tile is no word")
+  equal(true, widgets.note.text:find("err_words_off_centre", 1, true) ~= nil)
+  assert(#Client.sounds > 0, "a tile is heard going down")
+
+  dragTile(widgets, "U", "E8")
+  dragTile(widgets, "E", "F8")
+  dragTile(widgets, "S", "G8")
+  equal(true, widgets.note.text:find("err_words_off_centre", 1, true) ~= nil)
+  dragTile(widgets, "T", "H8")
+  equal("(D8=Q) (E8=U) (F8=E) (G8=S) (H8=T)", boardOnScreen())
+  equal("XY", heldOnScreen())
+  equal("words_play_for", play.text)
+  equal(true, play.enabled)
+  assert(widgets.note.text:find("Quest  35", 1, true), "what it would make, the way it is properly written: " .. widgets.note.text)
+  assert(widgets.note.text:find("words_group_slang", 1, true))
+  equal("", logOf(first, id), "nothing is sent while tiles are laid out")
+
+  play:Fire("OnClick")
+  world:Deliver()
+  equal("aD8.QUEST", logOf(first, id))
+  equal(logOf(first, id), logOf(second, id))
+  equal(true, says("0"), "the score counts up from where it was")
+  for _ = 1, 5 do
+    wait(widgets.effects)
+  end
+  equal("D8=Q E8=U F8=E G8=S H8=T", boardOnScreen())
+  equal(7, #rackOnScreen(), "drawn back up")
+  equal("EEEEEXY", heldOnScreen())
+  equal("EEEEE", select(2, rackOnScreen()):sub(3), "the new tiles after the ones that were kept")
+  equal(false, Client.Button("words_play").enabled)
+  equal(true, says("35"), "the score")
+end
+
+--- Takes away what the player typed last, the way the box nobody sees notices it
+local function backspace(widgets)
+  widgets.box.text = ""
+  widgets.box:Fire("OnTextChanged", true)
+end
+
+--- @return boolean Whether a visible button says this
+local function hasButton(text)
+  return #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == text and widget:IsVisible()
+  end) > 0
+end
+
+function tests.WindowTypesAWordOntoTheBoard()
+  local world, first, second, id = wordsOnScreen({ "HOU_EXY", "AAAAAAA" }, "TTTTTSNAAA")
+  local widgets = wordsWidgets()
+  typeWord(widgets, "ho")
+  equal("", boardOnScreen(), "typing goes nowhere without a square to start from")
+
+  clickBoard(widgets, "D8")
+  typeWord(widgets, "hOus")
+  equal("(D8=H) (E8=O) (F8=U) (G8=S)", boardOnScreen(), "a blank stands for the letter nobody holds")
+  equal("EXY", heldOnScreen())
+  typeWord(widgets, "z")
+  typeWord(widgets, "5")
+  equal("(D8=H) (E8=O) (F8=U) (G8=S)", boardOnScreen(), "no Z to lay, and no blank left")
+  typeWord(widgets, "e")
+  assert(widgets.note.text:find("HOUSE  14", 1, true), widgets.note.text)
+
+  backspace(widgets)
+  backspace(widgets)
+  equal("(D8=H) (E8=O) (F8=U)", boardOnScreen())
+  equal("E_", select(2, rackOnScreen()):sub(-2), "taken back, they are at the end of the rack")
+  typeWord(widgets, "se")
+  equal("(D8=H) (E8=O) (F8=U) (G8=S) (H8=E)", boardOnScreen())
+
+  widgets.box:Fire("OnEnterPressed")
+  world:Deliver()
+  equal("aD8.HOUsE", logOf(first, id))
+  equal(logOf(first, id), logOf(second, id))
+  for _ = 1, 5 do
+    wait(widgets.effects)
+  end
+  equal("D8=H E8=O F8=U G8=S H8=E", boardOnScreen())
+
+  -- Not the player's turn, but the tiles can be laid out all the same: down, and past what lies there
+  equal("AAANSXY", heldOnScreen())
+  clickBoard(widgets, "F7")
+  clickBoard(widgets, "F7")
+  typeWord(widgets, "sn")
+  equal("(F7=S) D8=H E8=O F8=U G8=S H8=E (F9=N)", boardOnScreen())
+  assert(widgets.note.text:find("SUN  ", 1, true), widgets.note.text)
+  equal(false, Client.Button("words_play_for").enabled, "to be played when the turn comes")
+  equal(true, Client.Button("words_recall").enabled)
+  widgets.box:Fire("OnEnterPressed")
+  equal("aD8.HOUsE", logOf(first, id))
+
+  -- A third click takes the arrow away again
+  Client.Button("words_recall"):Fire("OnClick")
+  equal("D8=H E8=O F8=U G8=S H8=E", boardOnScreen())
+  clickBoard(widgets, "A1")
+  clickBoard(widgets, "A1")
+  clickBoard(widgets, "A1")
+  typeWord(widgets, "a")
+  equal("D8=H E8=O F8=U G8=S H8=E", boardOnScreen())
+  clickBoard(widgets, "A1")
+  widgets.box:Fire("OnEscapePressed")
+  typeWord(widgets, "a")
+  equal("D8=H E8=O F8=U G8=S H8=E", boardOnScreen(), "nor is there one after Escape")
+
+  -- Typing stops at the edge of the board
+  clickBoard(widgets, "N1")
+  typeWord(widgets, "aaa")
+  equal("(N1=A) (O1=A) D8=H E8=O F8=U G8=S H8=E", boardOnScreen())
+  backspace(widgets)
+  typeWord(widgets, "n")
+  equal("(N1=A) (O1=N) D8=H E8=O F8=U G8=S H8=E", boardOnScreen())
+end
+
+function tests.WindowSaysWhatIsWrongWithTheTilesLaidOut()
+  local _, first, _, id = wordsOnScreen({ "HOU_EXY", "AAAAAAA" }, "TTTTTTTTT")
+  local widgets = wordsWidgets()
+  local function note(text)
+    return widgets.note.text:find(text, 1, true) ~= nil
+  end
+
+  dragTile(widgets, "H", "H8")
+  dragTile(widgets, "O", "I9")
+  equal(true, note("err_words_one_line"))
+  equal(false, Client.Button("words_play").enabled)
+
+  -- A tile that was laid is picked up from where it lies and put somewhere else
+  overSquare(widgets, "I9")
+  Client.mouseDown = true
+  widgets.board:Fire("OnMouseDown", "LeftButton")
+  equal("(H8=H)", boardOnScreen(), "in hand, it isn't on its square")
+  overSquare(widgets, "J8")
+  widgets.drag:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal("(H8=H) (J8=O)", boardOnScreen())
+  equal(true, note("err_words_gap"))
+
+  -- Not onto a square that has one already: it goes back where it was
+  overSquare(widgets, "J8")
+  Client.mouseDown = true
+  widgets.board:Fire("OnMouseDown", "LeftButton")
+  overSquare(widgets, "H8")
+  widgets.drag:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal("(H8=H) (J8=O)", boardOnScreen())
+
+  dragTile(widgets, "X", "I8")
+  equal(true, note("words_not_word"), "HXO")
+  equal(false, Client.Button("words_play").enabled)
+
+  -- Any other button puts a tile back in the rack
+  clickBoard(widgets, "I8", "RightButton")
+  equal("(H8=H) (J8=O)", boardOnScreen())
+  equal("EUXY_", heldOnScreen())
+
+  -- A blank asks what it is to be
+  local function letters()
+    return Client.Find(function(widget)
+      return widget.wordsLetter and widget:IsVisible()
+    end)
+  end
+  equal(0, #letters())
+  dragTile(widgets, "_", "I8")
+  equal(26, #letters())
+  equal("(H8=H) (I8=) (J8=O)", boardOnScreen())
+  equal(false, Client.Button("words_play").enabled, "not before it has a letter")
+  letters()[1]:Fire("OnClick")
+  equal(0, #letters())
+  equal("(H8=H) (I8=A) (J8=O)", boardOnScreen())
+  equal(true, note("HAO  10"), "H3, nothing for the blank and O1 doubled, on the middle square: " .. widgets.note.text)
+  equal(true, Client.Button("words_play_for").enabled)
+
+  Client.Button("words_recall"):Fire("OnClick")
+  equal("", boardOnScreen())
+  equal("EHOUXY_", heldOnScreen())
+  equal(false, Client.Button("words_recall").enabled)
+  equal("", logOf(first, id))
+end
+
+function tests.WindowSwapsTilesAndPasses()
+  local world, first, second, id = wordsOnScreen({ "QQQAEIO", "AAAAAAA" }, "TTTTTTTT")
+  local widgets = wordsWidgets()
+  dragTile(widgets, "A", "H8")
+  Client.Button("words_swap"):Fire("OnClick")
+  equal("", boardOnScreen(), "the tiles that were laid out are back in the rack")
+  equal(true, widgets.note.text == "words_swap_pick")
+  equal(false, Client.Button("words_swap_n").enabled, "nothing picked yet")
+  equal(false, Client.Button("words_pass").enabled)
+
+  local tiles, letters = rackOnScreen()
+  tiles[letters:find("Q")]:Fire("OnMouseDown", "LeftButton")
+  equal(nil, select(2, rackOnScreen()):find("%("), "picked, a tile stays in the rack")
+  tiles[letters:find("I")]:Fire("OnMouseDown", "LeftButton")
+  tiles[letters:find("O")]:Fire("OnMouseDown", "LeftButton")
+  tiles[letters:find("O")]:Fire("OnMouseDown", "LeftButton")
+  equal(true, Client.Button("words_swap_n").enabled)
+  Client.Button("words_swap_n"):Fire("OnClick")
+  world:Deliver()
+  local swapped = tilesOf(logOf(first, id):match("^x%.(%u%u)$") or "")
+  table.sort(swapped)
+  equal("IQ", table.concat(swapped))
+  equal(logOf(first, id), logOf(second, id))
+  equal("AEOQQTT", heldOnScreen())
+  equal(false, Client.Button("words_pass").enabled, "the turn went with it")
+
+  -- Thinking better of it
+  assert(second.session:Move(id, "p"))
+  world:Deliver()
+  Client.Button("words_swap"):Fire("OnClick")
+  tiles = rackOnScreen()
+  tiles[1]:Fire("OnMouseDown", "LeftButton")
+  Client.Button("words_cancel"):Fire("OnClick")
+  equal(true, hasButton("words_recall"))
+  equal(true, hasButton("words_play"))
+
+  -- Passing takes two clicks
+  local log = logOf(first, id)
+  Client.Button("words_pass"):Fire("OnClick")
+  equal(log, logOf(first, id))
+  Client.Button("words_pass_sure"):Fire("OnClick")
+  world:Deliver()
+  equal(log .. ",p", logOf(first, id))
+  equal(true, hasButton("words_pass"))
+end
+
+function tests.WindowWontSwapFromANearlyEmptyBag()
+  wordsOnScreen({ "QQQAEIO", "AAAAAAA" }, "TTTTTT")
+  equal(false, Client.Button("words_swap").enabled)
+  equal(true, Client.Button("words_pass").enabled)
+end
+
+function tests.WindowShowsWhatTheOthersPlay()
+  local world, first, second, id = wordsOnScreen({ "QQQAEIO", "THRALLX" }, "TTTTTTTTTT")
+  local widgets = wordsWidgets()
+  dragTile(widgets, "A", "H8")
+  dragTile(widgets, "E", "A1")
+  Client.Button("words_pass"):Fire("OnClick")
+  Client.Button("words_pass_sure"):Fire("OnClick")
+  world:Deliver()
+  equal("(A1=E) (H8=A)", boardOnScreen(), "what was laid out stays where it is")
+
+  assert(second.session:Move(id, "aD8.THRALL"))
+  world:Deliver()
+  equal("(A1=E) D8=T E8=H F8=R G8=A H8=L I8=L", boardOnScreen())
+  equal("AIOQQQ", heldOnScreen(), "all but the tile whose square was taken")
+  local floats = Client.Find(function(widget)
+    return widget.wordsFloat and widget.text and widget.text:find("Thrall", 1, true)
+  end)
+  equal(1, #floats, "a name everybody knows is announced")
+  assert(floats[1].text:find("+33", 1, true), floats[1].text)
+  for _ = 1, 6 do
+    wait(widgets.effects)
+  end
+  equal(true, says("33"))
+  equal(false, floats[1]:IsShown())
+  equal(true, Client.Button("words_pass").enabled)
+
+  -- A word joined to it is played like any other
+  Client.Button("words_recall"):Fire("OnClick")
+  clickBoard(widgets, "G9")
+  typeWord(widgets, "i")
+  assert(widgets.note.text:find("AI  ", 1, true), widgets.note.text)
+  Client.Button("words_recall"):Fire("OnClick")
+  equal("D8=T E8=H F8=R G8=A H8=L I8=L", boardOnScreen())
+
+  assert(second.session:Resign(id))
+  world:Deliver()
+  equal(false, hasButton("words_play"), "nothing to play in a game that is over")
+  equal("AEIOQQQ", heldOnScreen())
+end
+
+function tests.WindowKeepsTheRackInThePlayersOrder()
+  local _, _, _, _ = wordsOnScreen({ "ABCDEFG", "AAAAAAA" }, "TTTTTTTT")
+  local widgets = wordsWidgets()
+  local tiles, before = rackOnScreen()
+  -- With the board out of the way: the fake client has everything in the same corner of the screen
+  widgets.window:SetSize(1, 1)
+
+  Client.cursor, Client.mouseDown = { 5, 5 }, true
+  tiles[1]:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { widgets.rack.width - 2, 5 }
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal(before:sub(2), select(2, rackOnScreen()), "in hand, it isn't in the rack")
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal(before:sub(2) .. before:sub(1, 1), select(2, rackOnScreen()), "let go at the far end, that is where it now lies")
+
+  tiles = rackOnScreen()
+  Client.cursor, Client.mouseDown = { 60, 5 }, true
+  tiles[7]:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { 1, 5 }
+  widgets.drag:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal(before, select(2, rackOnScreen()), "and back to the front")
+
+  -- Let go over nothing, it is back where it was
+  Client.cursor, Client.mouseDown = { 5, 5 }, true
+  tiles = rackOnScreen()
+  tiles[3]:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { 5000, 5000 }
+  widgets.drag:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  widgets.drag:Fire("OnUpdate", 0.02)
+  equal(before, select(2, rackOnScreen()))
+
+  Client.sounds = {}
+  Client.Button("words_shuffle"):Fire("OnClick")
+  equal("ABCDEFG", heldOnScreen())
+  equal("dieShuffle", Client.sounds[1])
+end
+
+function tests.AnimatorRunsThingsOverTime()
+  Client.Install()
+  local private = {}
+  assert(loadfile("GUI/Widgets.lua"))(ADDON_NAME, private)
+  local frame = CreateFrame("Frame")
+  local animator = private.Widgets.Animator(frame)
+  local log = {}
+  local function say(text)
+    return function(progress)
+      log[#log + 1] = text .. (progress and (" " .. progress) or "")
+    end
+  end
+
+  equal(false, animator:Busy())
+  animator:Play(0.2, say("a"), { onStart = say("a starts"), onDone = say("a done") })
+  animator:Play(0.1, say("b"), { delay = 0.15, onDone = say("b done") })
+  equal(true, animator:Busy())
+  frame:Fire("OnUpdate", 0.1)
+  equal("a starts,a 0.5", table.concat(log, ","))
+  frame:Fire("OnUpdate", 0.1)
+  equal("a 1,b 0.5,a done", table.concat(log, ",", 3))
+  frame:Fire("OnUpdate", 0.1)
+  equal("b 1,b done", table.concat(log, ",", 6))
+  equal(false, animator:Busy())
+
+  -- Stopped, everything is taken to its end, whatever that starts included
+  log = {}
+  animator:Play(1, say("c"), {
+    delay = 5,
+    onStart = say("c starts"),
+    onDone = function()
+      animator:Play(1, say("d"))
+    end,
+  })
+  animator:Stop()
+  equal("c starts,c 1,d 1", table.concat(log, ","))
+  equal(false, animator:Busy())
+end
+
+function tests.DragMovesAboutWhateverTheGameGivesIt()
+  local drag, tile, log = dragOnScreen()
+  dropTarget(drag, log, "rack", 100, 100)
+  local puppet = CreateFrame("Frame", nil, drag.frame)
+  puppet:Hide()
+
+  Client.cursor, Client.mouseDown = { 300, 250 }, true
+  drag:Carry("Q", { puppet = puppet, from = tile })
+  equal(true, puppet:IsShown())
+  equal(false, drag.texture:IsShown())
+  Client.cursor = { 20, 50 }
+  drag.frame:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  drag.frame:Fire("OnUpdate", 0.02)
+  equal("rack drop Q left", log[#log])
+  equal(false, puppet:IsShown())
 end
 
 -----------------------------
