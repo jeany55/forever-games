@@ -26,7 +26,7 @@ local LOG_LINES = 20
 local defaults = {
   -- Matches belong to the character that is playing them
   char = { matches = {}, log = {} },
-  profile = { minimap = { hide = false }, toasts = true, sound = true },
+  profile = { minimap = { hide = false }, toasts = true, sound = true, window = { width = 920, height = 680, focus = false } },
 }
 
 local dataObject
@@ -121,6 +121,8 @@ local function toastText(event, match)
     return L["toast_accepted"]:format(opponent, gameName(match))
   elseif event == "accepted" or event == "moved" then
     return L["toast_your_turn"]:format(gameName(match), opponent)
+  elseif event == "draw" then
+    return L["toast_draw"]:format(opponent, gameName(match))
   elseif event == "finished" or event == "declined" then
     return gameName(match) .. ": " .. MainFrame.Describe(match)
   end
@@ -216,11 +218,14 @@ function ForeverGames:HandleSlashCommand(input)
   elseif command == "log" then
     self:PrintLog(argument)
   elseif command == "challenge" or command == "invite" then
-    local target, gameName = argument:match("^(%S*)%s*(.-)$")
-    local game = Games.List()[1]
+    -- Names can be more than one word, so the game is whatever game name the argument ends with
+    local target, game = argument, Games.List()[1]
     for _, candidate in ipairs(Games.List()) do
-      if gameName ~= "" and (candidate.id == gameName:lower() or candidate.name:lower() == gameName:lower()) then
-        game = candidate
+      for _, label in ipairs({ candidate.id, candidate.name:lower() }) do
+        local suffix = " " .. label
+        if #argument > #suffix and argument:lower():sub(-#suffix) == suffix then
+          target, game = argument:sub(1, -#suffix - 1), candidate
+        end
       end
     end
     local match, err = private.session:Invite(Transport.Normalize(target), game and game.id)

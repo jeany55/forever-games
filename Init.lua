@@ -15,6 +15,7 @@ local _, private = ...
 --- @field Presence Presence Presence class, the running instance is private.presence
 --- @field presence Presence
 --- @field Widgets Widgets
+--- @field Board Board
 --- @field Wizard Wizard
 --- @field Transport Transport
 --- @field Toast Toast

@@ -74,21 +74,30 @@ end
 
 --- Full "Name-Realm" form of a player name. Typed names are fixed up to the capitalisation the
 --- game uses, since names are compared exactly. Only plain ASCII names can be fixed this way.
+--- Character names on Forever can be more than one word ("Quets Al"), so spaces inside are kept.
 --- @param name string?
 --- @return string?
 function Transport.Normalize(name)
   if type(name) ~= "string" then
     return nil
   end
-  name = name:gsub("%s", "")
+  name = name:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
   if name == "" then
     return nil
   end
 
-  local character, characterRealm = name:match("^([^-]+)-(.+)$")
-  character = character or name
+  local character, characterRealm = name:match("^([^-]*)-(.*)$")
+  character = (character or name):gsub("%s+$", "")
+  if character == "" then
+    return nil
+  end
   if not character:find("[\128-\255]") then
-    character = character:sub(1, 1):upper() .. character:sub(2):lower()
+    character = character:lower():gsub("%f[%a]%a", string.upper)
+  end
+  -- Realms are always written without spaces
+  characterRealm = characterRealm and characterRealm:gsub("%s", "")
+  if characterRealm == "" then
+    characterRealm = nil
   end
   return character .. "-" .. (characterRealm or realm())
 end

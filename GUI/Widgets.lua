@@ -62,6 +62,15 @@ function Widgets.Icon(parent, path, size)
   return icon
 end
 
+--- Plays one of the client's interface sounds, unless the player turned the addon's sounds off
+--- @param name string? Key in SOUNDKIT. Ones this client doesn't have are skipped
+function Widgets.PlaySound(name)
+  local kit = name and SOUNDKIT[name]
+  if kit and ForeverGames.db.profile.sound then
+    PlaySound(kit)
+  end
+end
+
 --- Makes a region fade in and out to draw the eye. Returns the animation, :Play() and :Stop() it.
 --- @param region Region
 --- @return AnimationGroup
@@ -81,7 +90,7 @@ end
 --- @param width number
 --- @param rowHeight number
 --- @param createRow fun(content: Frame): Frame
---- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)) }
+--- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)), ScrollTo: fun(self: table, index: number) }
 function Widgets.List(parent, width, rowHeight, createRow)
   local scroll = CreateFrame("ScrollFrame", nil, parent)
   local content = CreateFrame("Frame", nil, scroll)
@@ -112,6 +121,17 @@ function Widgets.List(parent, width, rowHeight, createRow)
     end
     content:SetHeight(math.max(1, #items * rowHeight))
     scroll:SetVerticalScroll(math.min(scroll:GetVerticalScroll(), math.max(0, #items * rowHeight - scroll:GetHeight())))
+  end
+
+  --- Scrolls just far enough to bring a row into view
+  function list:ScrollTo(index)
+    local top, visible = scroll:GetVerticalScroll(), scroll:GetHeight()
+    local rowTop, rowBottom = (index - 1) * rowHeight, index * rowHeight
+    if rowTop < top then
+      scroll:SetVerticalScroll(rowTop)
+    elseif rowBottom > top + visible then
+      scroll:SetVerticalScroll(math.max(0, rowBottom - visible))
+    end
   end
 
   return list

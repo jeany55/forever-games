@@ -3,7 +3,12 @@
 --------------------------
 -- A header saying who is around to play and a New Game button, then the player's games on the
 -- left and the selected one on the right. The window knows nothing about any particular game:
--- the board area is handed to the game's render function.
+-- it gives the game's view a stage to draw on and tells it which position to show. What every
+-- game shares is built here around that stage: the status line, resigning and draw offers, the
+-- list of moves and stepping back through them.
+--
+-- The window can be resized, and "focus" hides everything but the selected game. Either way the
+-- stage is given whatever room is left and the game's view lays itself out in it.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -18,10 +23,17 @@ local Wizard = private.Wizard
 local MainFrame = {}
 private.MainFrame = MainFrame
 
-local WIDTH, HEIGHT = 764, 560
+local MIN_WIDTH, MIN_HEIGHT = 764, 560
 local LIST_WIDTH = 244
 local ROW_HEIGHT = 54
-local BOARD_SIZE = 300
+-- Space between the window's edge and what is in it, and between the panels
+local INSET, GAP = 14, 8
+local HEADER_TOP, HEADER_HEIGHT = 32, 50
+-- Room the selected game's panel keeps around the stage: its title above, the note and buttons below
+local STAGE_TOP, STAGE_BOTTOM, STAGE_SIDE = 66, 72, 12
+local MOVES_WIDTH = 150
+local MOVE_ROW_HEIGHT = 20
+local STEP_BUTTON_WIDTH = 36
 -- Names listed in the "who is available" tooltip before it is cut short
 local TOOLTIP_NAMES = 15
 -- Opening the window looks for players again if the last look is older than this
@@ -40,9 +52,22 @@ local SOURCE_LABELS = { guild = "source_guild", friend = "source_friend", other 
 local frame
 --- @type string?
 local selectedId
--- One board container per game, so each game keeps its own widgets
-local boards = {}
+-- One stage per game, so each game keeps its own widgets
+--- @type table<string, { stage: Frame, view: GameViewObject, width: number?, height: number? }>
+local views = {}
+-- Set while the player looks back at an earlier position of a match. Forgotten as soon as the
+-- match moves on, so news is never hidden behind an old position.
+--- @type { id: string, ply: number, total: number }?
+local review
+-- What the move list last scrolled to, so it only follows the game when something changed
+local movesShown
 local refreshing = false
+
+--- Window settings that are remembered between sessions
+--- @return { width: number, height: number, focus: boolean }
+local function settings()
+  return ForeverGames.db.profile.window
+end
 
 --- One line summary of where a match stands
 --- @param match Match
@@ -73,8 +98,21 @@ function MainFrame.Describe(match)
       text = text .. " (" .. L["result_" .. result.detail] .. ")"
     end
     return text
-  elseif Match.IsMyTurn(match) then
+  end
+
+  local offer = Match.DrawOffer(match)
+  if Match.IsMyTurn(match) then
+    if offer == match.me then
+      return L["status_draw_offering"]
+    elseif offer then
+      return L["status_draw_offered"]:format(opponent)
+    end
     return L["status_your_turn"]
+  end
+  if offer == match.me then
+    return L["status_their_turn_draw"]:format(opponent)
+  elseif offer then
+    return L["status_draw_coming"]:format(opponent)
   end
   return L["status_their_turn"]:format(opponent)
 end
@@ -150,7 +188,23 @@ local function actionsFor(match)
   elseif match.status == "outgoing" then
     return { { text = L["withdraw"], onClick = forget } }
   elseif match.status == "active" then
-    return { { text = L["resign"], onClick = resign } }
+    local actions = { { text = L["resign"], onClick = resign } }
+    if Match.CanAcceptDraw(match) then
+      actions[2] = {
+        text = L["accept_draw"],
+        onClick = function()
+          session:AcceptDraw(id)
+        end,
+      }
+    elseif Match.CanOfferDraw(match) then
+      actions[2] = {
+        text = L["offer_draw"],
+        onClick = function()
+          session:OfferDraw(id)
+        end,
+      }
+    end
+    return actions
   end
   return { { text = L["rematch"], onClick = again }, { text = L["remove"], onClick = forget } }
 end
@@ -406,12 +460,158 @@ local function deliveryNote(match)
   return nil
 end
 
+--- How much room the selected game's view gets
+--- @param history boolean Whether the move list is taking its share
+--- @return number width, number height
+local function stageSize(history)
+  local width = frame:GetWidth() - INSET * 2 - STAGE_SIDE * 2
+  local height = frame:GetHeight() - HEADER_TOP - INSET - STAGE_TOP - STAGE_BOTTOM
+  if not frame.focused then
+    width = width - LIST_WIDTH - GAP
+    height = height - HEADER_HEIGHT - GAP
+  end
+  if history then
+    width = width - MOVES_WIDTH - GAP
+  end
+  return width, height
+end
+
+--- The position of a match that is on screen, as a number of log entries
+--- @param match Match
+--- @return number
+local function shownPly(match)
+  if review and review.id == match.id and review.total == #match.log then
+    return review.ply
+  end
+  return #match.log
+end
+
+--- Shows the position after `ply` log entries. The last one is the game as it stands.
+--- @param match Match
+--- @param ply number
+local function reviewTo(match, ply)
+  local total = #match.log
+  ply = math.max(0, math.min(total, ply))
+  review = ply < total and { id = match.id, ply = ply, total = total } or nil
+  MainFrame.Refresh()
+end
+
+--- Steps a move back or forward, passing over entries that aren't moves
+--- @param match Match
+--- @param direction number -1 or 1
+local function reviewStep(match, direction)
+  local events, total = Match.Events(match), #match.log
+  local ply = shownPly(match)
+  repeat
+    ply = ply + direction
+  until ply <= 0 or ply >= total or events[ply].kind == "move"
+  reviewTo(match, ply)
+end
+
+--- The match whose moves can be stepped through right now
+--- @return Match?
+local function reviewable()
+  local match = selectedId and private.session:Get(selectedId)
+  local game = match and Games.Get(match.game)
+  if game and game.history and (match.status == "active" or match.status == "finished") then
+    return match
+  end
+  return nil
+end
+
+--- One line of the move list: a move number and the move each player made
+--- @param content Frame
+--- @return Frame
+local function createMoveRow(content)
+  local row = CreateFrame("Frame", nil, content)
+  row.number = Widgets.Label(row, "GameFontDisableSmall")
+  row.number:SetPoint("LEFT", 2, 0)
+  row.number:SetWidth(24)
+  row.number:SetJustifyH("RIGHT")
+
+  local width = (MOVES_WIDTH - 8 - 30) / 2
+  row.moves = {}
+  for index = 1, 2 do
+    local button = CreateFrame("Button", nil, row)
+    button:SetSize(width, MOVE_ROW_HEIGHT)
+    button:SetPoint("LEFT", 30 + (index - 1) * width, 0)
+
+    button.current = button:CreateTexture(nil, "BACKGROUND")
+    button.current:SetAllPoints()
+    button.current:SetColorTexture(1, 0.82, 0, 0.22)
+    local hover = button:CreateTexture(nil, "HIGHLIGHT")
+    hover:SetAllPoints()
+    hover:SetColorTexture(1, 1, 1, 0.1)
+
+    button.text = Widgets.Label(button, "GameFontHighlightSmall")
+    button.text:SetPoint("LEFT", 4, 0)
+
+    button:SetScript("OnClick", function(self)
+      local match = reviewable()
+      if match then
+        reviewTo(match, self.ply)
+      end
+    end)
+    row.moves[index] = button
+  end
+  return row
+end
+
+--- @param row Frame
+--- @param item { number: number, moves: { ply: number, text: string, current: boolean }[] }
+local function fillMoveRow(row, item)
+  row.number:SetText(item.number .. ".")
+  for index, button in ipairs(row.moves) do
+    local move = item.moves[index]
+    button:SetShown(move ~= nil)
+    if move then
+      button.ply = move.ply
+      button.text:SetText(move.text)
+      button.current:SetShown(move.current)
+    end
+  end
+end
+
+--- @param match Match
+--- @param ply number The position on screen
+local function refreshMoves(match, ply)
+  local detail = frame.detail
+  local rows, count, current = {}, 0, nil
+  for index, event in ipairs(Match.Events(match)) do
+    if event.kind == "move" then
+      count = count + 1
+      local number = math.ceil(count / 2)
+      rows[number] = rows[number] or { number = number, moves = {} }
+      local move = { ply = index, text = event.notation or match.log[index], current = false }
+      table.insert(rows[number].moves, move)
+      if index <= ply then
+        current = { move = move, row = number }
+      end
+    end
+  end
+  if current then
+    current.move.current = true
+  end
+
+  detail.moves.list:Update(rows, fillMoveRow)
+  -- Keep the move that is on screen in sight, but leave the list alone while nothing changes
+  local shown = match.id .. ":" .. ply .. ":" .. count
+  if shown ~= movesShown then
+    movesShown = shown
+    detail.moves.list:ScrollTo(current and current.row or 1)
+  end
+
+  local total = #match.log
+  detail.steps[1]:SetEnabled(ply > 0)
+  detail.steps[2]:SetEnabled(ply > 0)
+  detail.steps[3]:SetEnabled(ply < total)
+  detail.steps[4]:SetEnabled(ply < total)
+end
+
 --- @param body Frame
 --- @return Frame
 local function createDetailPanel(body)
   local detail = Widgets.Panel(body)
-  detail:SetPoint("TOPLEFT", frame.listPanel, "TOPRIGHT", 8, 0)
-  detail:SetPoint("BOTTOMRIGHT")
 
   detail.icon = Widgets.Icon(detail, private.ICON, 40)
   detail.icon:SetPoint("TOPLEFT", 14, -12)
@@ -423,23 +623,88 @@ local function createDetailPanel(body)
   detail.status:SetPoint("TOPLEFT", detail.header, "BOTTOMLEFT", 0, -5)
   detail.statusPulse = Widgets.Pulse(detail.status)
 
-  detail.seat = Widgets.Label(detail, "GameFontDisableSmall")
-  detail.seat:SetPoint("TOPRIGHT", -14, -16)
+  -- Gives the selected game the whole window, or brings the rest back
+  detail.focus = Widgets.Button(detail, "", 96, 22)
+  detail.focus:SetPoint("TOPRIGHT", -STAGE_SIDE, -12)
+  detail.focus:SetScript("OnClick", function()
+    settings().focus = not settings().focus
+    MainFrame.Refresh()
+  end)
 
-  detail.boardArea = CreateFrame("Frame", nil, detail)
-  detail.boardArea:SetSize(BOARD_SIZE, BOARD_SIZE)
-  detail.boardArea:SetPoint("TOP", 0, -66)
+  detail.seat = Widgets.Label(detail, "GameFontDisableSmall")
+  detail.seat:SetPoint("TOPRIGHT", detail.focus, "BOTTOMRIGHT", -2, -6)
+
+  -- The room a game's view gets. Sized explicitly, never from its anchors: views lay themselves
+  -- out from the numbers before the frame has been drawn
+  detail.stageArea = CreateFrame("Frame", nil, detail)
+  detail.stageArea:SetPoint("TOPLEFT", STAGE_SIDE, -STAGE_TOP)
+  detail.stageArea:EnableMouseWheel(true)
+  detail.stageArea:SetScript("OnMouseWheel", function(_, delta)
+    local match = reviewable()
+    if match then
+      reviewStep(match, delta > 0 and -1 or 1)
+    end
+  end)
 
   -- Shown in place of the board for games that haven't started
   detail.message = Widgets.Label(detail, "GameFontHighlightLarge")
-  detail.message:SetPoint("CENTER", detail.boardArea, "CENTER", 0, 20)
-  detail.message:SetWidth(BOARD_SIZE + 60)
+  detail.message:SetPoint("CENTER", detail.stageArea, "CENTER", 0, 20)
+  detail.message:SetWidth(360)
   detail.message:SetJustifyH("CENTER")
 
   detail.note = Widgets.Label(detail, "GameFontDisableSmall")
-  detail.note:SetPoint("TOP", detail.boardArea, "BOTTOM", 0, -8)
-  detail.note:SetWidth(BOARD_SIZE + 60)
+  detail.note:SetPoint("BOTTOMLEFT", STAGE_SIDE, 46)
+  detail.note:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, 46)
   detail.note:SetJustifyH("CENTER")
+
+  -- The moves so far, for games that write them down. Clicking one shows the position after it
+  detail.moves = Widgets.Panel(detail)
+  detail.moves:SetPoint("TOPRIGHT", -STAGE_SIDE, -STAGE_TOP)
+  detail.moves:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, STAGE_BOTTOM + 28)
+  detail.moves:SetWidth(MOVES_WIDTH)
+  detail.moves.list = Widgets.List(detail.moves, MOVES_WIDTH - 8, MOVE_ROW_HEIGHT, createMoveRow)
+  detail.moves.list.frame:SetPoint("TOPLEFT", 4, -4)
+  detail.moves.list.frame:SetPoint("BOTTOMRIGHT", -4, 4)
+
+  -- To the start, back a move, on a move, to the game as it stands
+  local steps = {
+    {
+      text = "<<",
+      go = function(match)
+        reviewTo(match, 0)
+      end,
+    },
+    {
+      text = "<",
+      go = function(match)
+        reviewStep(match, -1)
+      end,
+    },
+    {
+      text = ">",
+      go = function(match)
+        reviewStep(match, 1)
+      end,
+    },
+    {
+      text = ">>",
+      go = function(match)
+        reviewTo(match, #match.log)
+      end,
+    },
+  }
+  detail.steps = {}
+  for index, step in ipairs(steps) do
+    local button = Widgets.Button(detail, step.text, STEP_BUTTON_WIDTH, 22)
+    button:SetPoint("BOTTOMLEFT", detail.moves, "BOTTOMLEFT", (index - 1) * (STEP_BUTTON_WIDTH + 2), -26)
+    button:SetScript("OnClick", function()
+      local match = reviewable()
+      if match then
+        step.go(match)
+      end
+    end)
+    detail.steps[index] = button
+  end
 
   detail.buttons = {}
   for index = 1, 2 do
@@ -451,10 +716,11 @@ local function createDetailPanel(body)
 end
 
 --- @param match Match?
-local function refreshDetail(match)
+--- @param fresh boolean? The match has news the player is seeing for the first time
+local function refreshDetail(match, fresh)
   local detail = frame.detail
-  for _, board in pairs(boards) do
-    board:Hide()
+  for _, entry in pairs(views) do
+    entry.stage:Hide()
   end
   for _, button in ipairs(detail.buttons) do
     button:Hide()
@@ -471,7 +737,7 @@ local function refreshDetail(match)
   detail.icon:SetTexture(iconFor(match))
   detail.header:SetText(L["versus"]:format(game and game.name or match.game, opponent))
   detail.status:SetText(MainFrame.Describe(match))
-  detail.note:SetText(deliveryNote(match) or "")
+  detail.focus:SetText(frame.focused and L["focus_off"] or L["focus_on"])
   if waiting then
     detail.status:SetTextColor(unpack(Widgets.GREEN))
     detail.statusPulse:Play()
@@ -482,31 +748,56 @@ local function refreshDetail(match)
   end
 
   local showBoard = game ~= nil and (match.status == "active" or match.status == "finished")
+  local history = showBoard and game.history == true
   detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me)) or "")
   detail.message:SetText(showBoard and "" or MainFrame.Describe(match))
+  detail.moves:SetShown(history)
+  for _, button in ipairs(detail.steps) do
+    button:SetShown(history)
+  end
+
+  local width, height = stageSize(history)
+  detail.stageArea:SetSize(width, height)
+  local ply = showBoard and shownPly(match) or #match.log
+  local live = ply == #match.log
+  if live then
+    review = nil
+  end
+  detail.note:SetText(live and (deliveryNote(match) or "") or L["review_note"])
 
   if showBoard then
-    local board = boards[game.id]
-    if not board then
-      board = CreateFrame("Frame", nil, detail.boardArea)
-      -- Sized explicitly: games lay their boards out from this before the frame has been drawn
-      board:SetSize(BOARD_SIZE, BOARD_SIZE)
-      board:SetPoint("CENTER")
-      boards[game.id] = board
+    local entry = views[game.id]
+    if not entry then
+      local stage = CreateFrame("Frame", nil, detail.stageArea)
+      stage:SetPoint("CENTER")
+      entry = { stage = stage, view = game.createView(stage) }
+      views[game.id] = entry
     end
-    board:Show()
-    game.render(board, {
+    if entry.width ~= width or entry.height ~= height then
+      entry.width, entry.height = width, height
+      entry.stage:SetSize(width, height)
+      entry.view:Layout(width, height)
+    end
+    entry.stage:Show()
+    entry.view:Update({
       match = match,
-      state = Match.State(match),
+      state = live and Match.State(match) or Match.StateAt(match, ply),
       seat = match.me,
-      canMove = Match.IsMyTurn(match),
+      canMove = live and Match.IsMyTurn(match),
       submit = function(move)
         local ok, err = private.session:Move(match.id, move)
         if not ok then
           report(err)
         end
       end,
+      ply = ply,
+      live = live,
+      events = Match.Events(match),
+      fresh = fresh == true,
     })
+    if history then
+      refreshMoves(match, ply)
+    end
   end
 
   for index, action in ipairs(actionsFor(match)) do
@@ -552,9 +843,69 @@ end
 -- Construction
 -----------------------------
 
+--- Arranges the panels for the whole window or for just the selected game
+--- @param focused boolean
+local function arrange(focused)
+  if frame.focused == focused then
+    return
+  end
+  frame.focused = focused
+
+  frame.body:ClearAllPoints()
+  if focused then
+    frame.body:SetPoint("TOPLEFT", INSET, -HEADER_TOP)
+  else
+    frame.body:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, -GAP)
+  end
+  frame.body:SetPoint("BOTTOMRIGHT", -INSET, INSET)
+
+  frame.detail:ClearAllPoints()
+  if focused then
+    frame.detail:SetPoint("TOPLEFT")
+  else
+    frame.detail:SetPoint("TOPLEFT", frame.listPanel, "TOPRIGHT", GAP, 0)
+  end
+  frame.detail:SetPoint("BOTTOMRIGHT")
+end
+
+--- The corner the window is resized by
+local function createResizeGrip()
+  frame:SetResizable(true)
+  local maxWidth, maxHeight = math.max(MIN_WIDTH, GetScreenWidth()), math.max(MIN_HEIGHT, GetScreenHeight())
+  if frame.SetResizeBounds then
+    frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, maxWidth, maxHeight)
+  else
+    frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
+    frame:SetMaxResize(maxWidth, maxHeight)
+  end
+
+  local grip = CreateFrame("Button", nil, frame)
+  grip:SetSize(16, 16)
+  grip:SetPoint("BOTTOMRIGHT", -3, 3)
+  grip:SetFrameLevel(frame:GetFrameLevel() + 20)
+  grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  grip:SetScript("OnMouseDown", function()
+    frame:StartSizing("BOTTOMRIGHT")
+  end)
+  grip:SetScript("OnMouseUp", function()
+    frame:StopMovingOrSizing()
+    local window = settings()
+    window.width, window.height = frame:GetWidth(), frame:GetHeight()
+    MainFrame.Refresh()
+  end)
+
+  -- The selected game follows the window while it is being dragged to size
+  frame:SetScript("OnSizeChanged", function()
+    MainFrame.Refresh()
+  end)
+end
+
 local function create()
+  local window = settings()
   frame = CreateFrame("Frame", "ForeverGamesFrame", UIParent, "BasicFrameTemplateWithInset")
-  frame:SetSize(WIDTH, HEIGHT)
+  frame:SetSize(math.max(MIN_WIDTH, window.width), math.max(MIN_HEIGHT, window.height))
   frame:SetPoint("CENTER")
   frame:SetFrameStrata("HIGH")
   frame:SetMovable(true)
@@ -589,12 +940,11 @@ local function create()
   end)
 
   frame.body = CreateFrame("Frame", nil, frame)
-  frame.body:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, -8)
-  frame.body:SetPoint("BOTTOMRIGHT", -14, 14)
-
   frame.listPanel = createListPanel(frame.body)
   frame.detail = createDetailPanel(frame.body)
   frame.empty = createEmptyPanel(frame.body)
+  arrange(false)
+  createResizeGrip()
 
   Wizard.Init(frame, function(matchId)
     if matchId then
@@ -616,10 +966,10 @@ function MainFrame.Refresh()
   refreshing = true
 
   local inWizard = Wizard.IsOpen()
-  frame.header:SetShown(not inWizard)
   frame.body:SetShown(not inWizard)
 
   if inWizard then
+    frame.header:Hide()
     Wizard.Refresh()
   else
     local selected = selectedId and private.session:Get(selectedId)
@@ -627,17 +977,22 @@ function MainFrame.Refresh()
       selected = private.session:List()[1]
       selectedId = selected and selected.id
     end
+    local fresh = selected ~= nil and selected.unread == true
     if selected then
       -- Looking at a match is what clears its "something new" flag
       private.session:MarkRead(selected.id)
     end
     local list = private.session:List()
 
+    -- Focus needs a game to focus on
+    local focused = settings().focus and selected ~= nil
+    arrange(focused)
+    frame.header:SetShown(not focused)
     refreshHeader()
     frame.empty:SetShown(#list == 0)
-    frame.listPanel:SetShown(#list > 0)
+    frame.listPanel:SetShown(#list > 0 and not focused)
     refreshList(list)
-    refreshDetail(selected)
+    refreshDetail(selected, fresh)
   end
 
   refreshing = false
