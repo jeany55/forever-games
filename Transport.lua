@@ -172,12 +172,33 @@ local function battleNetFriends(add)
   end
 
   local found = 0
-  for friend = 1, (BNGetNumFriends()) or 0 do
+  local total, online = BNGetNumFriends()
+  private.Log("Battle.net friends:", tostring(total), "total,", tostring(online), "online, this game is project", tostring(WOW_PROJECT_ID))
+  for friend = 1, total or 0 do
     for account = 1, C_BattleNet.GetFriendNumGameAccounts(friend) or 0 do
       local info = C_BattleNet.GetFriendGameAccountInfo(friend, account)
       local playing = info and info.isOnline and info.clientProgram == BNET_CLIENT_WOW and info.wowProjectID == WOW_PROJECT_ID
-      if playing and info.characterName and info.characterName ~= "" and info.realmName and info.realmName ~= "" then
-        add(info.characterName .. "-" .. info.realmName)
+      local hasCharacter = info and info.characterName and info.characterName ~= ""
+      local hasRealm = info and info.realmName and info.realmName ~= ""
+      if info and info.isOnline then
+        -- No names in the log, just enough to see why a friend was or wasn't greeted
+        private.Log(
+          "Battle.net friend",
+          friend,
+          "is in",
+          tostring(info.clientProgram),
+          "project",
+          tostring(info.wowProjectID),
+          "faction",
+          tostring(info.factionName),
+          hasCharacter and "character known," or "character unknown,",
+          hasRealm and "realm known" or "realm unknown",
+          (playing and hasCharacter) and "-> greeting" or "-> skipped"
+        )
+      end
+      if playing and hasCharacter then
+        -- Without a realm the friend is taken to be on the player's own
+        add(hasRealm and (info.characterName .. "-" .. info.realmName) or info.characterName)
         found = found + 1
       end
     end

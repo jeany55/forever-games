@@ -8,7 +8,7 @@ Games so far: Tic Tac Toe and Chess.
 ## Usage
 
 - `/fg` (or the minimap button) opens the window. The top shows how many guildies and friends are
-  online with the addon
+  online with the addon, checked at login, when the window opens and when you press Refresh
 - **New Game** walks you through picking a game and an opponent
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target

@@ -534,48 +534,54 @@ function tests.PresenceFindsGuildiesAndFriends()
   equal(2, world.changes.Alice, "one change per player found")
 end
 
-function tests.PresenceForgetsPlayersWhoGoQuiet()
+function tests.PresenceDoesNothingUntilAsked()
   local world = presenceWorld({ Alice = "Knights", Bob = "Knights" }, {})
-  world.players.Alice:Tick()
-  world:Deliver()
-  equal("Bob=guild", names(world.players.Alice))
+  for _ = 1, 10 do
+    world.clock = world.clock + 600
+    world.players.Alice:Tick()
+  end
+  equal(0, #world.queue, "nothing is sent on a timer")
+  equal(true, world.players.Alice:CanAnnounce())
 
-  -- Bob keeps answering announcements, so he stays
-  world.clock = world.clock + 6 * 60
-  world.players.Alice:Tick()
-  world:Deliver()
-  world.clock = world.clock + 6 * 60
-  world.players.Alice:Tick()
-  world:Deliver()
-  equal("Bob=guild", names(world.players.Alice))
-
-  -- Then he logs off without a word
-  world.players.Bob = nil
-  world.clock = world.clock + 12 * 60
-  world.players.Alice:Tick()
-  world:Deliver()
-  equal("", names(world.players.Alice))
+  world.players.Alice:Announce()
+  equal(false, world.players.Alice:CanAnnounce(), "refreshing has a cooldown")
+  world.clock = world.clock + 10
+  equal(true, world.players.Alice:CanAnnounce())
 end
 
-function tests.PresenceKeepsLookingRightAfterLogin()
-  -- Bob's friends list isn't known to Alice's client until a little after login
-  local friends = {}
-  local world = presenceWorld({ Alice = false, Bob = false }, { Alice = friends })
-  world.players.Alice:Tick()
+function tests.PresenceRefreshDropsPlayersWhoDoNotAnswer()
+  local world = presenceWorld({ Alice = "Knights", Bob = "Knights", Carol = false }, { Alice = { "Carol" } })
+  world.players.Alice:Announce()
   world:Deliver()
-  equal("", names(world.players.Alice))
+  equal("Bob=guild Carol=friend", names(world.players.Alice))
 
-  friends[1] = "Bob"
+  -- Nobody is dropped just because time passes
+  world.clock = world.clock + 3600
+  world.players.Alice:Tick()
+  equal("Bob=guild Carol=friend", names(world.players.Alice))
+
+  -- Bob logs off without a word, then Alice refreshes
+  world.players.Bob = nil
+  world.players.Alice:Announce()
+  world:Deliver()
   world.clock = world.clock + 30
   world.players.Alice:Tick()
-  world:Deliver()
-  equal("", names(world.players.Alice), "too soon to announce again")
-
-  world.clock = world.clock + 30
+  equal("Bob=guild Carol=friend", names(world.players.Alice), "still inside the time to answer")
+  world.clock = world.clock + 31
   world.players.Alice:Tick()
+  equal("Carol=friend", names(world.players.Alice))
+end
+
+function tests.PresenceRefreshAsksOpponentsToo()
+  -- Erin is neither a guildie nor a friend, Alice only knows her from a game
+  local world = presenceWorld({ Alice = false, Erin = false }, {})
+  world.players.Alice:Touch("Erin")
+  world.clock = world.clock + 100
+  world.players.Alice:Announce()
   world:Deliver()
-  equal("Bob=friend", names(world.players.Alice))
-  equal("Alice=friend", names(world.players.Bob))
+  world.clock = world.clock + 61
+  world.players.Alice:Tick()
+  equal("Erin=other", names(world.players.Alice))
 end
 
 function tests.PresenceLeavesGameMessagesAlone()

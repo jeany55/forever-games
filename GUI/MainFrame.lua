@@ -24,6 +24,10 @@ local ROW_HEIGHT = 54
 local BOARD_SIZE = 300
 -- Names listed in the "who is available" tooltip before it is cut short
 local TOOLTIP_NAMES = 15
+-- Opening the window looks for players again if the last look is older than this
+local STALE_AFTER = 60
+-- How long the header says it is looking after a refresh
+local LOOKING_FOR = 6
 
 local DECLINE_REASONS = {
   nogame = "status_declined_nogame",
@@ -155,9 +159,31 @@ end
 -- Header
 -----------------------------
 
+--- Asks who is online again, if it hasn't just been done
+local function lookForPlayers()
+  if not private.presence:CanAnnounce() then
+    return
+  end
+  private.presence:Announce()
+  -- Redraw when the "looking" message should go and when the button can be used again
+  C_Timer.After(LOOKING_FOR, MainFrame.Refresh)
+  C_Timer.After(11, MainFrame.Refresh)
+  MainFrame.Refresh()
+end
+
 local function refreshHeader()
   local header = frame.header
   local counts = private.presence:Counts()
+  local since = private.presence:SinceAnnounce()
+  header.refresh:SetEnabled(private.presence:CanAnnounce())
+
+  if counts.total == 0 and since and since < LOOKING_FOR then
+    header.dot:SetColorTexture(1, 0.82, 0)
+    header.title:SetText(L["presence_looking"])
+    header.title:SetTextColor(1, 1, 1)
+    header.detail:SetText(L["presence_looking_detail"])
+    return
+  end
 
   if counts.total == 0 then
     header.dot:SetColorTexture(0.45, 0.45, 0.45)
@@ -209,7 +235,7 @@ local function createHeader()
   local presence = CreateFrame("Frame", nil, header)
   presence:SetPoint("TOPLEFT")
   presence:SetPoint("BOTTOMLEFT")
-  presence:SetWidth(420)
+  presence:SetWidth(380)
   presence:EnableMouse(true)
   presence:SetScript("OnEnter", showPresenceTooltip)
   presence:SetScript("OnLeave", GameTooltip_Hide)
@@ -230,6 +256,17 @@ local function createHeader()
   header.newGame:SetScript("OnClick", function()
     MainFrame.NewGame()
   end)
+
+  header.refresh = Widgets.Button(header, L["presence_refresh"], 90, 24)
+  header.refresh:SetPoint("RIGHT", header.newGame, "LEFT", -10, 0)
+  header.refresh:SetScript("OnClick", lookForPlayers)
+  header.refresh:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText(L["presence_refresh"])
+    GameTooltip:AddLine(L["presence_refresh_tooltip"], 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  header.refresh:SetScript("OnLeave", GameTooltip_Hide)
 
   return header
 end
@@ -531,6 +568,10 @@ local function create()
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   frame:SetScript("OnShow", function()
     PlaySound(SOUNDKIT.IG_MAINMENU_OPEN)
+    local since = private.presence:SinceAnnounce()
+    if not since or since > STALE_AFTER then
+      lookForPlayers()
+    end
     MainFrame.Refresh()
   end)
   frame:SetScript("OnHide", Wizard.Reset)

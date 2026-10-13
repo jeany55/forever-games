@@ -76,9 +76,6 @@ function ForeverGames:OnEnable()
       end
     end,
     onReachable = function(peer)
-      if not peer then
-        private.presence:Announce()
-      end
       private.session:Wake(peer)
     end,
     onOffline = function(peer)
@@ -91,7 +88,7 @@ function ForeverGames:OnEnable()
   self:UpdateAttention()
 
   C_Timer.After(HELLO_DELAY, function()
-    private.presence:Tick()
+    private.presence:Announce()
     private.session:Hello()
   end)
   C_Timer.NewTicker(FLUSH_INTERVAL, function()
