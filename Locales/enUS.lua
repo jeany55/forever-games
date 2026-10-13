@@ -11,6 +11,10 @@ L["game_tictactoe_description"] = "Three in a row wins. Quick, simple, over in a
 L["game_chess_description"] = "The full game, with castling, en passant and promotion. Take as long as you like between moves."
 L["chess_white"] = "White"
 L["chess_black"] = "Black"
+L["game_connectfour"] = "Connect Four"
+L["game_connectfour_description"] = "Drop your discs into the rack and line up four of them, across, up or diagonally, before your opponent does."
+L["connectfour_red"] = "Red"
+L["connectfour_yellow"] = "Yellow"
 
 -- How a game ended
 L["result_checkmate"] = "checkmate"
@@ -126,6 +130,7 @@ L["err_no_match"] = "That game no longer exists."
 L["err_not_your_turn"] = "It's not your turn."
 L["err_invalid_move"] = "That move isn't allowed."
 L["err_cell_taken"] = "That square is taken."
+L["err_column_full"] = "That column is full."
 L["err_finished"] = "That game is over."
 L["err_no_draw"] = "A draw can't be offered or accepted right now."
 L["err_match_in_progress"] = "Resign or finish the game first."

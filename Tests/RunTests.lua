@@ -5,7 +5,16 @@
 -- sessions together through a fake network that can drop messages or take a player offline.
 
 local ADDON_NAME = "ForeverGames"
-local ENGINE_FILES = { "Engine/Codec.lua", "Engine/Games.lua", "Engine/Match.lua", "Engine/Session.lua", "Engine/Presence.lua", "Games/TicTacToe.lua", "Games/Chess.lua" }
+local ENGINE_FILES = {
+  "Engine/Codec.lua",
+  "Engine/Games.lua",
+  "Engine/Match.lua",
+  "Engine/Session.lua",
+  "Engine/Presence.lua",
+  "Games/TicTacToe.lua",
+  "Games/Chess.lua",
+  "Games/ConnectFour.lua",
+}
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
@@ -734,6 +743,88 @@ function tests.ChessMatchBetweenTwoPlayers()
 end
 
 -----------------------------
+-- More games
+-----------------------------
+
+--- Plays a line of any game from its starting position, asserting every move is legal
+--- @param id string Game id
+--- @param line string Space separated moves
+--- @return table state, table game, table[] events What each move did
+local function gameAfter(id, line)
+  local game = loadEngine().Games.Get(id)
+  local state, events = game.newState(), {}
+  for move in line:gmatch("%S+") do
+    local seat = game.turn(state)
+    local ok, err = game.validate(state, seat, move)
+    assert(ok, "Move " .. move .. " rejected: " .. tostring(err))
+    events[#events + 1] = game.apply(state, seat, move)
+  end
+  return state, game, events
+end
+
+--- Counts the positions a number of moves deep, the usual check on a move generator
+--- @param game table
+--- @param state table
+--- @param depth number
+--- @param movesOf fun(state: table): string[]
+--- @return number
+local function countPositions(game, state, depth, movesOf)
+  if depth == 0 then
+    return 1
+  end
+  local count = 0
+  for _, move in ipairs(movesOf(state)) do
+    local after = copy(state)
+    game.apply(after, game.turn(after), move)
+    count = count + countPositions(game, after, depth - 1, movesOf)
+  end
+  return count
+end
+
+function tests.ConnectFourFourInAColumnWins()
+  local state, game, events = gameAfter("connectfour", "4 5 4 5 4 5")
+  equal(nil, game.result(state))
+  equal(3, events[1].square, "the first disc lands at the bottom of the column")
+  equal(10, events[3].square, "the next one on top of it")
+
+  state = gameAfter("connectfour", "4 5 4 5 4 5 4")
+  equal(1, game.result(state).winner)
+  table.sort(state.line)
+  equal("3,10,17,24", table.concat(state.line, ","))
+end
+
+function tests.ConnectFourLinesRunEveryWay()
+  local state, game = gameAfter("connectfour", "1 1 2 2 3 3 4")
+  equal(1, game.result(state).winner, "along a row")
+  state = gameAfter("connectfour", "1 2 2 3 4 3 3 4 5 4 4")
+  equal(1, game.result(state).winner, "up a diagonal")
+  state = gameAfter("connectfour", "7 6 6 5 4 5 5 4 3 4 4")
+  equal(1, game.result(state).winner, "down a diagonal")
+  -- The last disc may be anywhere in the line, not only at its end
+  state = gameAfter("connectfour", "1 1 2 2 4 4 3")
+  equal(1, game.result(state).winner)
+end
+
+function tests.ConnectFourRejectsBadMoves()
+  local state, game = gameAfter("connectfour", "3 3 3 3 3 3")
+  local ok, err = game.validate(state, 1, "3")
+  equal(false, ok)
+  equal("column_full", err)
+  equal(false, (game.validate(state, 2, "4")), "not yellow's turn")
+  for _, move in ipairs({ "0", "8", "x", "1.5", "01" }) do
+    equal(false, (game.validate(state, 1, move)), move)
+  end
+end
+
+function tests.ConnectFourFullRackIsADraw()
+  local state, game = gameAfter(
+    "connectfour",
+    "6 6 5 4 6 1 7 1 4 4 3 5 4 4 3 1 1 3 4 5 3 2 2 1 2 2 7 5 5 2 3 3 1 2 7 7 5 7 7 6 6 6"
+  )
+  equal(0, game.result(state).winner)
+end
+
+-----------------------------
 -- Draw offers and history
 -----------------------------
 
@@ -1173,6 +1264,80 @@ function tests.ListPutsMatchesNeedingAttentionFirst()
   else
     equal(other.id, list[1].id)
   end
+end
+
+--- Starts a match of some game where the player with the window moves first
+--- @param game string Game id
+--- @return World, table first, table second, string id, table MainFrame
+local function gameOnScreen(game)
+  local world = World.New()
+  world.seed = 1
+  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(first.session:Invite("Bob-Realm", game))
+  equal(1, match.me)
+  world:Deliver()
+  assert(second.session:Accept(match.id))
+  world:Deliver()
+  local MainFrame = openWindow(first)
+  MainFrame.Open(match.id)
+  return world, first, second, match.id, MainFrame
+end
+
+--- Clicks a square of a board that isn't turned around, counted from the bottom left
+--- @param board table
+--- @param column number From 0
+--- @param row number From 0
+--- @param columns number How many the board has
+--- @param button string?
+local function clickSquare(board, column, row, columns, button)
+  local cell = board.width / columns
+  Client.cursor = { (column + 0.5) * cell, (row + 0.5) * cell }
+  board:Fire("OnUpdate", 0.02)
+  if button then
+    board:Fire("OnMouseDown", button)
+    return
+  end
+  press(board)
+  release(board)
+end
+
+--- The moves in the move list, in the order they were made
+--- @return table[]
+local function listedMoves()
+  local moves = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.ply ~= nil and widget:IsVisible()
+  end)
+  table.sort(moves, function(a, b)
+    return a.ply < b.ply
+  end)
+  return moves
+end
+
+function tests.WindowPlaysConnectFourByPointingAtAColumn()
+  local world, red, yellow, id = gameOnScreen("connectfour")
+  local board = shownBoard()
+  assert(board.width >= 7 * 40, "the rack should make use of the window, got " .. board.width)
+  equal(board.width / 7 * 6, board.height, "seven columns by six rows")
+
+  -- Anywhere in the column will do, the disc falls to the bottom
+  clickSquare(board, 3, 5, 7)
+  equal("4", logOf(red, id))
+  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  settle(board)
+
+  -- Not on the opponent's turn
+  clickSquare(board, 0, 0, 7)
+  equal("4", logOf(red, id))
+
+  world:Deliver()
+  assert(yellow.session:Move(id, "4"))
+  world:Deliver()
+  settle(board)
+
+  -- On a disc that is already there, the next one goes on top
+  clickSquare(board, 3, 0, 7)
+  equal("4,4,4", logOf(red, id))
+  equal(3, red.private.Match.State(red.matches[id]).heights[4])
 end
 
 -----------------------------

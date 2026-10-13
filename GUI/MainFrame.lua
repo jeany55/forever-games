@@ -519,7 +519,8 @@ local function reviewable()
   return nil
 end
 
---- One line of the move list: a move number and the move each player made
+--- One line of the move list: a move number and the move each player made. A player who had to
+--- sit a turn out leaves a gap
 --- @param content Frame
 --- @return Frame
 local function createMoveRow(content)
@@ -558,7 +559,7 @@ local function createMoveRow(content)
 end
 
 --- @param row Frame
---- @param item { number: number, moves: { ply: number, text: string, current: boolean }[] }
+--- @param item { number: number, moves: table<number, { ply: number, text: string, current: boolean }> } Moves by seat
 local function fillMoveRow(row, item)
   row.number:SetText(item.number .. ".")
   for index, button in ipairs(row.moves) do
@@ -577,15 +578,20 @@ end
 local function refreshMoves(match, ply)
   local detail = frame.detail
   local rows, count, current = {}, 0, nil
+  local lastSeat = 2
   for index, event in ipairs(Match.Events(match)) do
     if event.kind == "move" then
       count = count + 1
-      local number = math.ceil(count / 2)
-      rows[number] = rows[number] or { number = number, moves = {} }
+      -- A line is one move by each player in turn. Players don't always alternate, so a new
+      -- line starts whenever the move doesn't fit behind the one before
+      if event.seat <= lastSeat then
+        rows[#rows + 1] = { number = #rows + 1, moves = {} }
+      end
+      lastSeat = event.seat
       local move = { ply = index, text = event.notation or match.log[index], current = false }
-      table.insert(rows[number].moves, move)
+      rows[#rows].moves[event.seat] = move
       if index <= ply then
-        current = { move = move, row = number }
+        current = { move = move, row = #rows }
       end
     end
   end
@@ -779,6 +785,20 @@ local function refreshDetail(match, fresh)
       entry.view:Layout(width, height)
     end
     entry.stage:Show()
+
+    -- Whether the position comes out of the one this view showed last, so it can show the move
+    local events, before = Match.Events(match), entry.shown
+    local sameMatch = before ~= nil and before.id == match.id
+    local changed = not sameMatch or before.ply ~= ply
+    local event = events[ply]
+    local played = nil
+    if changed and event and event.kind == "move" then
+      local stepped = sameMatch and ply == before.ply + 1
+      local arrived = fresh == true and live and event.seat ~= match.me
+      played = (stepped or arrived) and event or nil
+    end
+    entry.shown = { id = match.id, ply = ply }
+
     entry.view:Update({
       match = match,
       state = live and Match.State(match) or Match.StateAt(match, ply),
@@ -792,8 +812,10 @@ local function refreshDetail(match, fresh)
       end,
       ply = ply,
       live = live,
-      events = Match.Events(match),
+      events = events,
       fresh = fresh == true,
+      changed = changed,
+      played = played,
     })
     if history then
       refreshMoves(match, ply)

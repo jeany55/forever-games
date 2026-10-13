@@ -25,7 +25,9 @@ local _, private = ...
 --- @field ply number How many log entries led to this position
 --- @field live boolean False while the player is looking back at an earlier position
 --- @field events MatchEvent[] What every log entry did, events[ply] led to this position
---- @field fresh boolean The player hasn't seen this position before, a good moment to animate how it came about
+--- @field fresh boolean The player hasn't seen this position before
+--- @field changed boolean This isn't the position the view was last asked to show
+--- @field played MatchEvent? The move to show being made: set when the position follows from the last one shown by that move, or when the opponent made it while the player wasn't looking
 
 --- @class GameViewObject
 --- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
@@ -39,7 +41,7 @@ local _, private = ...
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number Number of players, only 2 is supported for now
 --- @field newState fun(): table Fresh game state
---- @field turn fun(state: table): number Seat that moves next
+--- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
 --- @field apply fun(state: table, seat: number, move: string): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list
 --- @field result fun(state: table): { winner: number, detail: string? }? nil while in progress, winner 0 for a draw. detail names how it ended and is shown as L["result_" .. detail]
