@@ -163,7 +163,7 @@ local TALLY_HEIGHT = 22
 local TALLY_GAP = 4
 -- Seconds between one disc starting to turn and the next one further out
 local RIPPLE = 0.07
-local SOUND = "IG_ABILITY_ICON_DROP"
+local SOUND = "chipsCollide"
 
 --- @param seat number
 --- @return string
@@ -259,6 +259,7 @@ function View:Update(view)
       local distance = math.max(math.abs(square % SIZE - column), math.abs(math.floor(square / SIZE) - row))
       board:Flip(square, DISCS[other(event.seat)], (distance - 1) * RIPPLE)
     end
+    board:Pop(event.square)
     private.Widgets.PlaySound(SOUND)
   end
 end

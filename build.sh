@@ -9,7 +9,7 @@ ZIP="ForeverGames-${VERSION}.zip"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/ForeverGames"
-cp -r ForeverGames.toc embeds.xml ./*.lua Engine Games GUI Images Libs Locales LICENSE "$OUT/ForeverGames/"
+cp -r ForeverGames.toc embeds.xml ./*.lua Engine Games GUI Images Sounds Libs Locales LICENSE "$OUT/ForeverGames/"
 
 (cd "$OUT" && zip -qr "$ZIP" ForeverGames)
 rm -rf "$OUT/ForeverGames"

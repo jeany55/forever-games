@@ -13,6 +13,10 @@
 -- The window around the view is the engine's: who is playing, whose turn it is, resigning, draw
 -- offers, the list of moves and stepping back through them. A game opts into the last two with
 -- `draws` and `history`, it doesn't build them.
+--
+-- Games of chance are given their dice and shuffles by the engine (Engine/Random.lua), see
+-- Games/Backgammon.lua. Games where a player holds something the others don't see say what each
+-- of them may know with `visible`, see Games/CrazyEights.lua.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -20,7 +24,7 @@ local _, private = ...
 --- What a view is asked to show
 --- @class GameView
 --- @field match Match
---- @field state table The position to draw. Belongs to the engine: don't change it or keep it
+--- @field state table The position to draw, as the local player may see it. Belongs to the engine: don't change it or keep it
 --- @field seat number The local player's seat
 --- @field names string[] Who is playing, by seat, as their names are shown
 --- @field canMove boolean Whether the local player may move right now
@@ -44,10 +48,11 @@ local _, private = ...
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }
---- @field newState fun(seats: number): table Fresh game state for this many players
+--- @field newState fun(seats: number, random: Random): table Fresh game state for this many players. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
 --- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
---- @field apply fun(state: table, seat: number, move: string): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list
+--- @field apply fun(state: table, seat: number, move: string, random: Random): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list. Whatever the move leaves to chance (the next roll, a card drawn from a pile that had to be shuffled) comes from `random`. Every player gets to see the table, so it mustn't say what only some of them may know
+--- @field visible (fun(state: table, seat: number): table)? For games where players don't all know the same: what a seat may see of a position. Returns a copy with the rest blanked out, shaped like the state itself so the view has only one thing to draw. Views are never shown anything else while the game is on. This is good manners rather than a secret kept: the log every player holds has all of it
 --- @field result fun(state: table): { winner: number, detail: string? }? nil while in progress, winner 0 for a draw. detail names how it ended and is shown as L["result_" .. detail]
 --- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two. The engine ends the game itself once only one player is left
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at

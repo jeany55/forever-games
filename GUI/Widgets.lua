@@ -11,6 +11,10 @@ local Widgets = {}
 private.Widgets = Widgets
 
 local FLAT = "Interface\\Buttons\\WHITE8X8"
+local SOUND_FILES = "Interface\\AddOns\\ForeverGames\\Sounds\\"
+-- The addon's own sounds and how many takes there are of each, so the same thing doesn't sound
+-- the same every time: Sounds/<name><take>.ogg
+local SOUNDS = { cardPlace = 3, cardSlide = 3, chipsCollide = 3, dieThrow = 2, dieShuffle = 1 }
 
 Widgets.GREEN = { 0.3, 0.9, 0.3 }
 Widgets.GREY = { 0.65, 0.65, 0.65 }
@@ -62,12 +66,18 @@ function Widgets.Icon(parent, path, size)
   return icon
 end
 
---- Plays one of the client's interface sounds, unless the player turned the addon's sounds off
---- @param name string? Key in SOUNDKIT. Ones this client doesn't have are skipped
+--- Plays a sound, unless the player turned the addon's sounds off
+--- @param name string? One of the addon's own (SOUNDS above), or a key in SOUNDKIT for one of the client's. Ones this client doesn't have are skipped
 function Widgets.PlaySound(name)
-  local kit = name and SOUNDKIT[name]
-  if kit and ForeverGames.db.profile.sound then
-    PlaySound(kit)
+  if not name or not ForeverGames.db.profile.sound then
+    return
+  end
+  local takes = SOUNDS[name]
+  if takes then
+    -- Which take is played is nobody's business but the ear's, the client's own dice will do
+    PlaySoundFile(SOUND_FILES .. name .. math.random(takes) .. ".ogg", "SFX")
+  elseif SOUNDKIT[name] then
+    PlaySound(SOUNDKIT[name])
   end
 end
 

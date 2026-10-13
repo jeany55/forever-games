@@ -282,7 +282,7 @@ local LAST_MOVE = { 0.95, 0.85, 0.25, 0.4 }
 local MUST_TAKE = { 0.9, 0.35, 0.15, 0.45 }
 local TALLY_HEIGHT = 22
 local TALLY_GAP = 4
-local SOUNDS = { move = "IG_ABILITY_ICON_DROP", capture = "IG_BACKPACK_CLOSE" }
+local SOUNDS = { move = "chipsCollide", capture = "IG_BACKPACK_CLOSE" }
 
 --- @param piece string
 --- @param pixels number? Screen pixels it will be drawn at

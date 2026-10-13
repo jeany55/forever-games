@@ -182,6 +182,11 @@ function Client.Install()
     Client.sounds[#Client.sounds + 1] = kit
   end
 
+  -- One of the addon's own sounds: remembered by what it is, whichever take was played
+  function PlaySoundFile(path)
+    Client.sounds[#Client.sounds + 1] = path:match("([%a]+)%d*%.ogg$")
+  end
+
   function GetCursorPosition()
     return Client.cursor[1], Client.cursor[2]
   end

@@ -842,7 +842,7 @@ local function refreshDetail(match, fresh)
     end
     entry.view:Update({
       match = match,
-      state = live and Match.State(match) or Match.StateAt(match, ply),
+      state = Match.Visible(match, ply),
       seat = match.me,
       names = names,
       canMove = live and Match.IsMyTurn(match),

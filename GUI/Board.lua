@@ -17,6 +17,9 @@
 --
 -- A board needn't be a grid. Given a layout it has holes wherever the game puts them, numbered
 -- however the game likes, and everything round instead of square: see Games/ChineseCheckers.lua.
+-- A layout can also say for itself which square a point of the board belongs to, for a board
+-- where pieces stand in piles and the whole pile is one thing to point at: see
+-- Games/Backgammon.lua, which also writes how many there are on a pile too high to draw.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -27,7 +30,8 @@ local _, private = ...
 --- @field width number Room the board takes up
 --- @field height number
 --- @field at fun(square: number, facing: number): number, number Where the middle of a square is, right and down from the top left corner. facing is what the board was last told with SetFacing, for a board that players look at from different sides
---- @field backdrop { texture: string, size: number, color: number[]? }? A square picture behind it all, centred
+--- @field find (fun(x: number, y: number, facing: number): number?)? The square at a point, right and down from the top left corner, for a board where that takes more than being inside a square's circle
+--- @field backdrop { texture: string, size: number?, width: number?, height: number?, color: number[]? }? A picture behind it all, centred: square with a size, or as wide and high as it says
 
 --- @class BoardOptions
 --- @field columns number? Not needed with a layout
@@ -48,7 +52,7 @@ local _, private = ...
 --- @field onMove fun(from: number, to: number, dropped: boolean)? A piece was put on one of its targets. dropped says it was dragged there, so it is already where it belongs and shouldn't glide
 --- @field place (fun(square: number): number?)? For games where pieces are placed: the square a click on this one puts a piece on, nil for none. Usually the square itself, but a game may let the player point at a whole column. The squares that stand for themselves get marked
 --- @field onPlace fun(square: number)? The player clicked to place a piece on this square
---- @field onCancel fun()? The player clicked away from what they were doing, or waved it off with another mouse button
+--- @field onCancel fun(button: string?)? The player clicked away from what they were doing, or waved it off with another mouse button, which is then said
 
 --- @class Board
 --- @field frame Frame
@@ -74,6 +78,13 @@ local FALL = 0.14
 local FLIP = 0.3
 -- How narrow a piece gets while it turns over, it can't have no width at all
 local FLIP_EDGE = 0.06
+-- Seconds a piece takes to settle where it was put down, and how small it starts out
+local POP = 0.22
+local POP_FROM = 0.45
+-- How far past its size it swells on the way
+local POP_OVER = 0.12
+-- Text on a piece, as a fraction of the square
+local LABEL_SCALE = 0.42
 -- How far the cursor has to travel with the button held before a click becomes a drag
 local DRAG_DISTANCE = 4
 -- A piece being carried is drawn a little larger, as if lifted off the board
@@ -104,6 +115,7 @@ function Board.New(parent, options)
   self.spots = {}
   self.enabled = false
   self.pieces, self.shown, self.tints, self.targets, self.glides, self.flips = {}, {}, {}, {}, {}, {}
+  self.pops, self.labels = {}, {}
 
   local frame = CreateFrame("Frame", nil, parent)
   frame:EnableMouse(true)
@@ -225,6 +237,9 @@ function Board:SquareAt(x, y)
   if self.cell <= 0 or x < 0 or y < 0 then
     return nil
   end
+  if self.layout and self.layout.find then
+    return self.layout.find(x / self.cell, y / self.cell, self.facing)
+  end
   if self.layout then
     -- Whichever square the point is inside the circle of
     local half = self.cell / 2
@@ -283,7 +298,8 @@ function Board:arrange()
   -- Room left around each square for the lines between them
   local inset = self.lines and math.max(1, math.floor(cell * 0.02)) or 0
   if self.backdrop then
-    self.backdrop:SetSize(cell * self.layout.backdrop.size, cell * self.layout.backdrop.size)
+    local backdrop = self.layout.backdrop
+    self.backdrop:SetSize(cell * (backdrop.width or backdrop.size), cell * (backdrop.height or backdrop.size))
   end
   for _, square in ipairs(self.all) do
     local parts = self.squares[square]
@@ -303,6 +319,12 @@ function Board:arrange()
       parts.inlay:ClearAllPoints()
       parts.inlay:SetPoint("CENTER", self.frame, "TOPLEFT", x + cell / 2, -(y + cell / 2))
       parts.inlay:SetSize(cell * self.inlayScale, cell * self.inlayScale)
+    end
+
+    if parts.label then
+      parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(cell * LABEL_SCALE)), "OUTLINE")
+      parts.label:ClearAllPoints()
+      parts.label:SetPoint("CENTER", self.frame, "TOPLEFT", x + cell / 2, -(y + cell / 2))
     end
 
     if not self.glides[square] and not (self.drag and self.drag.square == square) then
@@ -489,6 +511,27 @@ function Board:SetPieces(pieces, textureFor)
   self:refreshMarks()
 end
 
+--- Writes on squares, over whatever stands there: how many pieces a pile is of, say
+--- @param labels table<number, string|number> Text by square. Copied, the caller can reuse the table
+function Board:SetLabels(labels)
+  for _, square in ipairs(self.all) do
+    local text = labels[square]
+    local parts = self.squares[square]
+    if text ~= self.labels[square] then
+      self.labels[square] = text
+      if text and not parts.label then
+        local x, y = self:OffsetOf(square)
+        parts.label = self.frame:CreateFontString(nil, "OVERLAY")
+        parts.label:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(self.cell * LABEL_SCALE)), "OUTLINE")
+        parts.label:SetPoint("CENTER", self.frame, "TOPLEFT", x + self.cell / 2, -(y + self.cell / 2))
+      end
+      if parts.label then
+        parts.label:SetText(text and tostring(text) or "")
+      end
+    end
+  end
+end
+
 --- Colours squares, to point out the last move for example
 --- @param tints table<number, number[]> Colour with alpha by square. Kept, not copied
 function Board:SetTints(tints)
@@ -562,6 +605,13 @@ function Board:Flip(square, from, delay)
   self.squares[square].piece:SetTexture(path)
 end
 
+--- Makes the piece on a square settle into it as if just put down. Call it after SetPieces
+--- @param square number
+function Board:Pop(square)
+  self.pops[square] = 0
+  self:placePiece(square, 0, 0, POP_FROM)
+end
+
 --- @param square number
 --- @param points number[][] Where it starts and where it stops on the way, as distances from its square
 --- @param seconds number How long each stretch takes
@@ -585,6 +635,10 @@ function Board:StopGlides()
     if self.shown[square] then
       self.squares[square].piece:SetTexture(self.shown[square])
     end
+    self:placePiece(square)
+  end
+  for square in pairs(self.pops) do
+    self.pops[square] = nil
     self:placePiece(square)
   end
 end
@@ -615,7 +669,7 @@ function Board:onMouseDown(button)
     self:cancelDrag()
     self:Select(nil)
     if input.onCancel then
-      input.onCancel()
+      input.onCancel(button)
     end
     return
   end
@@ -709,6 +763,19 @@ function Board:onUpdate(elapsed)
         piece:SetTexture(self.shown[square])
       end
       piece:SetWidth(self.cell * math.max(FLIP_EDGE, math.abs(1 - 2 * progress)))
+    end
+  end
+
+  for square, since in pairs(self.pops) do
+    local progress = (since + elapsed) / POP
+    if progress >= 1 then
+      self.pops[square] = nil
+      self:placePiece(square)
+    else
+      self.pops[square] = since + elapsed
+      -- Up to size quickly, a little past it and back
+      local swell = math.sin(progress * math.pi) * POP_OVER
+      self:placePiece(square, 0, 0, POP_FROM + (1 - POP_FROM) * (1 - (1 - progress) ^ 2) + swell)
     end
   end
 

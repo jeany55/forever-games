@@ -129,7 +129,7 @@ local LAST_MOVE = { 1, 1, 1, 0.16 }
 local WON = { 0.3, 0.9, 0.35, 0.6 }
 -- Room kept above the rack for a disc to drop in from
 local HEADROOM = 16
-local SOUND = "IG_BACKPACK_CLOSE"
+local SOUND = "chipsCollide"
 
 --- @class ConnectFourView: GameViewObject
 --- @field board Board

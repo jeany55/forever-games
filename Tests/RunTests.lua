@@ -7,6 +7,7 @@
 local ADDON_NAME = "ForeverGames"
 local ENGINE_FILES = {
   "Engine/Codec.lua",
+  "Engine/Random.lua",
   "Engine/Games.lua",
   "Engine/Match.lua",
   "Engine/Session.lua",
@@ -17,11 +18,13 @@ local ENGINE_FILES = {
   "Games/Reversi.lua",
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
+  "Games/Backgammon.lua",
+  "Games/CrazyEights.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -358,13 +361,13 @@ end
 function tests.UnknownGameIsDeclined()
   local world = World.New()
   local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
-  bob.session:Receive("Alice-Realm", "1:INV:abc:backgammon:1:1")
+  bob.session:Receive("Alice-Realm", "1:INV:abc:mahjong:1:1")
   bob.session:Receive("Alice-Realm", "1:INV:abd:tictactoe:99:1")
   equal(nil, bob.matches.abc)
   equal(nil, bob.matches.abd)
   equal("1:DEC:abc:nogame", world.queue[1].text)
   equal("1:DEC:abd:version", world.queue[2].text)
-  equal(nil, (alice.session:Invite("Bob-Realm", "backgammon")))
+  equal(nil, (alice.session:Invite("Bob-Realm", "mahjong")))
   equal(nil, (alice.session:Invite("Alice-Realm", "tictactoe")))
 end
 
@@ -754,13 +757,14 @@ end
 --- @param line string Space separated moves
 --- @return table state, table game, table[] events What each move did
 local function gameAfter(id, line)
-  local game = loadEngine().Games.Get(id)
-  local state, events = game.newState(), {}
+  local private = loadEngine()
+  local game, random = private.Games.Get(id), private.Random.New(1)
+  local state, events = game.newState(2, random), {}
   for move in line:gmatch("%S+") do
     local seat = game.turn(state)
     local ok, err = game.validate(state, seat, move)
     assert(ok, "Move " .. move .. " rejected: " .. tostring(err))
-    events[#events + 1] = game.apply(state, seat, move)
+    events[#events + 1] = game.apply(state, seat, move, random)
   end
   return state, game, events
 end
@@ -1437,28 +1441,6 @@ function tests.WindowGivesTheBoardTheRoomItHas()
   MainFrame.Refresh()
 end
 
-function tests.WindowPlaysTicTacToe()
-  local world = World.New()
-  world.seed = 1
-  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
-  local match = assert(first.session:Invite("Bob-Realm", "tictactoe"))
-  world:Deliver()
-  assert(second.session:Accept(match.id))
-  world:Deliver()
-  openWindow(first).Open(match.id)
-
-  local cells = Client.Find(function(widget)
-    return widget.kind == "Button" and widget.mark ~= nil and widget:IsVisible()
-  end)
-  equal(9, #cells)
-  assert(cells[1].width > 0, "cells should have been laid out")
-  cells[5]:Fire("OnClick")
-  equal("5", logOf(first, match.id))
-  equal("X", cells[5].mark.text)
-  cells[1]:Fire("OnClick")
-  equal("5", logOf(first, match.id), "not on the opponent's turn")
-end
-
 function tests.ListPutsMatchesNeedingAttentionFirst()
   local world, alice, _, id, first = startedMatch()
   world.clock = world.clock + 10
@@ -1520,6 +1502,41 @@ local function listedMoves()
   return moves
 end
 
+function tests.WindowPlaysTicTacToe()
+  local world = World.New()
+  world.seed = 1
+  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(first.session:Invite("Bob-Realm", "tictactoe"))
+  world:Deliver()
+  assert(second.session:Accept(match.id))
+  world:Deliver()
+  openWindow(first).Open(match.id)
+
+  local board = shownBoard()
+  assert(board.width >= 3 * 60, "the board should make use of the window, got " .. board.width)
+  equal(board.width, board.height)
+
+  -- Cells are counted from the top left, the middle one is the fifth
+  clickSquare(board, 1, 1, 3)
+  equal("5", logOf(first, match.id))
+  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  local crosses = Client.Find(function(widget)
+    return widget.kind == "Texture" and widget.shown and tostring(widget.texture):match("Marks.-x$") ~= nil
+  end)
+  equal(1, #crosses, "a cross where the player clicked")
+  settle(board)
+
+  clickSquare(board, 0, 2, 3)
+  equal("5", logOf(first, match.id), "not on the opponent's turn")
+  world:Deliver()
+  assert(second.session:Move(match.id, "1"))
+  world:Deliver()
+  clickSquare(board, 0, 2, 3)
+  equal("5,1", logOf(first, match.id), "nor on a square that is taken")
+  clickSquare(board, 2, 2, 3)
+  equal("5,1,3", logOf(first, match.id), "the top right one is the third")
+end
+
 function tests.WindowPlaysConnectFourByPointingAtAColumn()
   local world, red, yellow, id = gameOnScreen("connectfour")
   local board = shownBoard()
@@ -1529,7 +1546,7 @@ function tests.WindowPlaysConnectFourByPointingAtAColumn()
   -- Anywhere in the column will do, the disc falls to the bottom
   clickSquare(board, 3, 5, 7)
   equal("4", logOf(red, id))
-  equal("IG_BACKPACK_CLOSE", Client.sounds[#Client.sounds])
+  equal("chipsCollide", Client.sounds[#Client.sounds])
   settle(board)
 
   -- Not on the opponent's turn
@@ -1624,7 +1641,7 @@ function tests.WindowPlaysCheckersOneJumpAtATime()
   clickChecker(board, 10)
   clickChecker(board, 15)
   equal("10-15", logOf(red, id))
-  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  equal("chipsCollide", Client.sounds[#Client.sounds])
   settle(board)
   world:Deliver()
   assert(white.session:Move(id, "22-18"))
@@ -1748,7 +1765,7 @@ function tests.GamesAreFoundByWordAndGenre()
   local everything = idsOf(Games.List())
   equal(everything, idsOf(Games.Search()))
   equal(everything, idsOf(Games.Search("  ")))
-  equal("casual,strategy", table.concat(Games.Genres(), ","))
+  equal("casual,strategy,dice,cards", table.concat(Games.Genres(), ","))
 
   -- The tests see the names of the strings rather than the strings, which is as good to search
   equal("chess", idsOf(Games.Search("chess")))
@@ -1911,10 +1928,11 @@ end
 -- More than two players
 -----------------------------
 
---- Sets up a match of Chinese Checkers that everyone has yet to accept
+--- Sets up a match that everyone has yet to accept
 --- @param count number How many play
+--- @param gameId string? Chinese Checkers if left out
 --- @return World, table[] players In seat order, string id, table host
-local function invitedCrowd(count)
+local function invitedCrowd(count, gameId)
   local world = World.New()
   local everyone, others = {}, {}
   for index, name in ipairs({ "Alice-Realm", "Bob-Realm", "Carol-Realm", "Dave-Realm", "Erin-Realm", "Frank-Realm" }) do
@@ -1924,7 +1942,7 @@ local function invitedCrowd(count)
     end
   end
   local host = everyone[1]
-  local match = assert(host.session:Invite(others, "chinesecheckers"))
+  local match = assert(host.session:Invite(others, gameId or "chinesecheckers"))
   world:Deliver()
 
   local seated = {}
@@ -1934,11 +1952,12 @@ local function invitedCrowd(count)
   return world, seated, match.id, host
 end
 
---- Starts a match of Chinese Checkers that everyone accepted
+--- Starts a match that everyone accepted
 --- @param count number
+--- @param gameId string? Chinese Checkers if left out
 --- @return World, table[] players In seat order, string id, table host
-local function startedCrowd(count)
-  local world, seated, id, host = invitedCrowd(count)
+local function startedCrowd(count, gameId)
+  local world, seated, id, host = invitedCrowd(count, gameId)
   for _, player in ipairs(seated) do
     if player ~= host then
       assert(player.session:Accept(id))
@@ -2849,6 +2868,996 @@ function tests.WizardPicksSeveralPlayersForACrowd()
   local playing = { unpack(started.players) }
   table.sort(playing)
   equal("Alice-Realm,Bob-Realm,Carol-Realm,Erin-Realm", table.concat(playing, ","))
+end
+
+-----------------------------
+-- Chance
+-----------------------------
+
+--- @param random table
+--- @param count number
+--- @param sides number
+--- @return string The rolls, run together
+local function rollsOf(random, count, sides)
+  local rolls = {}
+  for index = 1, count do
+    rolls[index] = random:Roll(sides)
+  end
+  return table.concat(rolls)
+end
+
+function tests.ChanceIsTheSameForEveryone()
+  local Random = loadEngine().Random
+  local seed = Random.Seed("f4240000001")
+  equal(rollsOf(Random.New(seed), 30, 6), rollsOf(Random.New(seed), 30, 6))
+  -- Written down, so that a change to how numbers are made doesn't go unnoticed: two versions
+  -- of the addon that roll differently can't play each other
+  equal("263263412322", rollsOf(Random.New(seed), 12, 6))
+
+  assert(rollsOf(Random.New(Random.Seed("f4240000002")), 30, 6) ~= rollsOf(Random.New(seed), 30, 6), "another match, other dice")
+  assert(Random.Stir(seed, "24-18.13-11") ~= Random.Stir(seed, "24-18.13-10"), "every move stirs it")
+  assert(Random.Stir(Random.Stir(seed, "a"), "b") ~= Random.Stir(Random.Stir(seed, "b"), "a"), "in the order they were made")
+  assert(Random.Stir(Random.Stir(seed, "a"), "b") ~= Random.Stir(seed, "ab"))
+  equal(Random.Stir(seed, "13-7.8-7"), Random.Stir(seed, "13-7.8-7"))
+end
+
+function tests.ChanceIsEven()
+  local Random = loadEngine().Random
+  --- @param counts number[]
+  --- @param expected number
+  --- @param label string
+  local function even(counts, expected, label)
+    for value, count in ipairs(counts) do
+      local close = math.abs(count - expected) < expected * 0.12
+      assert(close, label .. ": " .. value .. " came up " .. count .. " times, not about " .. expected)
+    end
+  end
+
+  -- A long run of rolls
+  local faces, doubles = { 0, 0, 0, 0, 0, 0 }, 0
+  local random = Random.New(42)
+  for _ = 1, 6000 do
+    local first, second = random:Roll(6), random:Roll(6)
+    faces[first], faces[second] = faces[first] + 1, faces[second] + 1
+    doubles = doubles + (first == second and 1 or 0)
+  end
+  even(faces, 2000, "one after the other")
+  even({ doubles }, 1000, "doubles")
+
+  -- The first roll after each of a run of moves that are almost the same, which is how a game uses it
+  faces = { 0, 0, 0, 0, 0, 0 }
+  local seed = Random.Seed("abc")
+  for move = 1, 6000 do
+    local face = Random.New(Random.Stir(seed, "13-" .. move)):Roll(6)
+    faces[face] = faces[face] + 1
+  end
+  even(faces, 1000, "move by move")
+
+  -- Seeds next to each other
+  faces = { 0, 0, 0, 0, 0, 0 }
+  for neighbour = 0, 5999 do
+    local face = Random.New(neighbour):Roll(6)
+    faces[face] = faces[face] + 1
+  end
+  even(faces, 1000, "seed by seed")
+
+  -- A shuffle keeps every card and puts each of them anywhere
+  local first = { 0, 0, 0, 0, 0 }
+  for deal = 1, 5000 do
+    local cards = Random.New(deal):Shuffle({ 1, 2, 3, 4, 5 })
+    first[cards[1]] = first[cards[1]] + 1
+    table.sort(cards)
+    equal("12345", table.concat(cards))
+  end
+  even(first, 1000, "shuffled")
+end
+
+-----------------------------
+-- Backgammon
+-----------------------------
+
+--- A position set up by hand. Points are counted the way each player counts their own
+--- @param white table Checkers by point, with `bar` and `off`
+--- @param red table
+--- @param turn number
+--- @param dice number[] Higher first
+--- @return table state, table game, table random
+local function backgammonAt(white, red, turn, dice)
+  local private = loadEngine()
+  local game = private.Games.Get("backgammon")
+  local state = game.newState(2, private.Random.New(1))
+  for seat, placed in ipairs({ white, red }) do
+    for point = 1, 24 do
+      state.points[seat][point] = placed[point] or 0
+    end
+    state.bar[seat], state.off[seat] = placed.bar or 0, placed.off or 0
+  end
+  state.turn, state.dice = turn, dice
+  game.rules.assess(state)
+  return state, game, private.Random.New(7)
+end
+
+--- The start of the game with a roll of the test's choosing, white to play
+--- @param dice number[]
+--- @return table state, table game, table random
+local function backgammonStart(dice)
+  local start = { [24] = 2, [13] = 5, [8] = 3, [6] = 5 }
+  return backgammonAt(start, start, 1, dice)
+end
+
+--- A whole turn for whoever is to move: the first step there is, until the roll is played
+--- @param game table
+--- @param state table
+--- @param choose (fun(count: number): number)? Which of the steps on offer to take, the first if left out
+--- @return string move
+local function backgammonTurn(game, state, choose)
+  local steps = {}
+  while true do
+    local offered = {}
+    for from, targets in pairs(game.rules.continuations(state, steps)) do
+      for to in pairs(targets) do
+        offered[#offered + 1] = { from = from, to = to }
+      end
+    end
+    if #offered == 0 then
+      break
+    end
+    table.sort(offered, function(a, b)
+      if a.from ~= b.from then
+        return a.from > b.from
+      end
+      return a.to > b.to
+    end)
+    steps[#steps + 1] = offered[choose and choose(#offered) or 1]
+  end
+  local parts = {}
+  for index, step in ipairs(steps) do
+    parts[index] = step.from .. "-" .. step.to
+  end
+  return table.concat(parts, ".")
+end
+
+function tests.BackgammonStartsWithADieEach()
+  local private = loadEngine()
+  local game = private.Games.Get("backgammon")
+  local starters = { 0, 0 }
+  for deal = 1, 60 do
+    local state = game.newState(2, private.Random.New(deal))
+    assert(state.dice[1] > state.dice[2], "the opening roll is never doubles, and the higher die comes first")
+    equal(2, state.playable, "both dice of an opening roll can always be played")
+    starters[state.turn] = starters[state.turn] + 1
+    for seat = 1, 2 do
+      local checkers, pips = 0, 0
+      for point = 1, 24 do
+        checkers, pips = checkers + state.points[seat][point], pips + state.points[seat][point] * point
+      end
+      equal(15, checkers)
+      equal(167, pips)
+    end
+  end
+  assert(starters[1] > 15 and starters[2] > 15, "either player may come to start")
+end
+
+function tests.BackgammonMovesByTheDice()
+  local state, game = backgammonStart({ 6, 1 })
+  local function legal(move)
+    return (game.validate(state, 1, move))
+  end
+  equal(true, legal("13-7.8-7"), "making a point")
+  equal(true, legal("8-7.13-7"), "in either order")
+  equal(true, legal("13-7.7-6"), "one checker by both dice")
+  equal(false, legal("24-18.18-17"), "not by way of a closed point")
+  equal(false, legal("13-7"), "both dice have to be played when they can be")
+  equal(false, legal("13-7.8-7.6-5"))
+  equal(false, legal("13-8.8-7"), "not by a number that wasn't rolled")
+  equal(false, legal("13-7.13-7"), "each die once")
+  equal(false, legal("7-1.8-7"), "nothing there to move")
+  equal(false, legal("6-7.13-7"), "never backwards")
+  equal(false, legal("13-07.8-7"))
+  equal(false, legal(""))
+  equal(false, (game.validate(state, 2, "13-7.8-7")), "not red's turn")
+
+  -- Red has five on their six point, which is white's nineteen
+  state = backgammonStart({ 5, 1 })
+  equal(false, legal("24-19.6-5"), "a point held by two or more is closed")
+  equal(true, legal("13-8.6-5"))
+
+  state = backgammonStart({ 3, 3 })
+  equal(4, state.playable, "doubles are played four times")
+  equal(true, legal("24-21.24-21.13-10.13-10"))
+  equal(true, legal("13-10.10-7.7-4.13-10"), "one checker as far as it goes")
+  equal(false, legal("13-10.10-7.7-4.4-1"), "but not onto the point red starts with two on")
+  equal(false, legal("24-21.24-21.13-10"))
+  equal(false, legal("24-21.24-21"))
+end
+
+function tests.BackgammonHitsGoToTheBar()
+  -- A red checker alone on white's six point
+  local state, game, random = backgammonAt({ [10] = 1, [3] = 14 }, { [19] = 1, [1] = 14 }, 1, { 4, 3 })
+  local event = game.apply(state, 1, "10-6.6-3", random)
+  equal(true, event.steps[1].hit)
+  equal(false, event.steps[2].hit)
+  equal(1, state.bar[2])
+  equal(0, state.points[2][19])
+  equal("10/6* 6/3", event.notation)
+
+  -- Red comes in before moving anything else, and not onto white's three point: it is closed
+  state, game = backgammonAt({ [3] = 15 }, { bar = 1, [1] = 14 }, 2, { 4, 3 })
+  equal(false, (game.validate(state, 2, "1-0")), "nothing moves while a checker is on the bar")
+  equal(false, (game.validate(state, 2, "25-22.22-18")), "that is where white's fifteen are")
+  equal(true, (game.validate(state, 2, "25-21.21-18")))
+  equal(true, (game.validate(state, 2, "25-21.1-0")) == false, "and nothing is borne off with a checker that far back")
+end
+
+function tests.BackgammonSitsOutATurnThatCantBePlayed()
+  -- White has every point of their home closed and red has a checker on the bar
+  local closed = { [1] = 2, [2] = 2, [3] = 2, [4] = 2, [5] = 2, [6] = 2, [13] = 3 }
+  local state, game, random = backgammonAt(closed, { bar = 1, [1] = 14 }, 1, { 2, 1 })
+  local event = game.apply(state, 1, "13-11.13-12", random)
+  equal(1, state.turn, "red can't come in whatever the roll, it is white again")
+  assert(#state.skipped >= 1, "red sat out")
+  equal(2, state.skipped[1].seat)
+  equal(table.concat(state.skipped[1].dice), table.concat(event.dice), "what red rolled is what was rolled next")
+  assert(state.playable > 0)
+  equal(nil, game.result(state))
+end
+
+function tests.BackgammonPlaysAsMuchOfTheRollAsItCan()
+  -- White's back checker is hemmed in. The other can go by the six or by the four, and by
+  -- neither after the other: it has to be the six
+  local state, game = backgammonAt({ [24] = 1, [10] = 1, off = 13 }, { [5] = 2, [7] = 2, [6] = 11 }, 1, { 6, 4 })
+  equal(1, state.playable)
+  equal(6, state.must)
+  equal(true, (game.validate(state, 1, "10-4")))
+  equal(false, (game.validate(state, 1, "10-6")), "the higher die when it is only one of them")
+  local options = game.rules.continuations(state, {})
+  equal(true, options[10][4])
+  equal(nil, options[10][6])
+  equal(nil, options[24])
+
+  -- The four could be played by either checker, but by the front one it would leave no way to
+  -- play the three
+  state, game = backgammonAt({ [10] = 1, [5] = 1, off = 13 }, { [18] = 2, [23] = 2, [1] = 11 }, 1, { 4, 3 })
+  equal(2, state.playable)
+  equal(true, (game.validate(state, 1, "10-6.6-3")))
+  equal(false, (game.validate(state, 1, "5-1")), "not half a roll when all of it can be played")
+  options = game.rules.continuations(state, {})
+  equal(nil, options[5], "the checker that can't be followed up isn't on offer")
+  equal(true, options[10][6])
+end
+
+function tests.BackgammonBearsOffOnceEveryoneIsHome()
+  local state, game, random = backgammonAt({ [6] = 2, [3] = 1, off = 12 }, { [1] = 15 }, 1, { 6, 5 })
+  equal(true, (game.validate(state, 1, "6-0.6-1")), "off by the six, along by the five")
+  equal(false, (game.validate(state, 1, "6-0.6-0")), "a five doesn't bear off from the six point")
+  equal(false, (game.validate(state, 1, "6-0.3-0")), "nor from the three with a checker still behind it")
+
+  -- A roll that is more than it takes bears off from the back, and only from there
+  state, game = backgammonAt({ [4] = 1, [2] = 1, off = 13 }, { [1] = 15 }, 1, { 6, 5 })
+  equal(true, (game.validate(state, 1, "4-0.2-0")))
+  equal(false, (game.validate(state, 1, "2-0.4-0")))
+
+  -- Not while a checker is still on its way home
+  state, game = backgammonAt({ [7] = 1, [2] = 1, off = 13 }, { [1] = 15 }, 1, { 2, 1 })
+  equal(false, (game.validate(state, 1, "2-0.7-6")))
+  equal(true, (game.validate(state, 1, "7-6.2-0")), "but as soon as it is")
+
+  -- The last one off wins. Red hasn't borne anything off: a gammon
+  state, game, random = backgammonAt({ [1] = 1, off = 14 }, { [1] = 15 }, 1, { 6, 5 })
+  local event = game.apply(state, 1, "1-0", random)
+  equal(1, game.result(state).winner)
+  equal("gammon", game.result(state).detail)
+  equal("1/off", event.notation)
+  equal(nil, event.dice[1], "nobody rolls again")
+
+  state, game, random = backgammonAt({ [1] = 1, off = 14 }, { [1] = 14, bar = 1 }, 1, { 6, 5 })
+  game.apply(state, 1, "1-0", random)
+  equal("backgammon", game.result(state).detail, "with a red checker still on the bar")
+
+  state, game, random = backgammonAt({ [1] = 1, off = 14 }, { [1] = 3, off = 12 }, 1, { 6, 5 })
+  game.apply(state, 1, "1-0", random)
+  equal(nil, game.result(state).detail, "an ordinary win")
+end
+
+function tests.BackgammonPlaysThroughToTheEnd()
+  local private = loadEngine()
+  local game, Random = private.Games.Get("backgammon"), private.Random
+  for match = 1, 25 do
+    local chance = Random.Seed("match" .. match)
+    local state = game.newState(2, Random.New(chance))
+    -- Players who move at random, each game differently
+    local whim = Random.New(match)
+    local turns = 0
+    while not game.result(state) do
+      local seat = game.turn(state)
+      local move = backgammonTurn(game, state, function(count)
+        return whim:Roll(count)
+      end)
+      assert(game.validate(state, seat, move), "turn " .. turns .. " of match " .. match .. ": " .. move)
+      chance = Random.Stir(chance, move)
+      game.apply(state, seat, move, Random.New(chance))
+      turns = turns + 1
+      assert(turns < 2000, "the game should end")
+
+      for owner = 1, 2 do
+        local checkers = state.bar[owner] + state.off[owner]
+        for point = 1, 24 do
+          checkers = checkers + state.points[owner][point]
+          assert(state.points[owner][point] == 0 or state.points[3 - owner][25 - point] == 0, "two colours on a point")
+        end
+        equal(15, checkers, "checkers of seat " .. owner)
+      end
+    end
+    equal(15, state.off[game.result(state).winner])
+  end
+end
+
+--- Starts a match of some game between two fresh players
+--- @param gameId string
+--- @param luck number? Where the world's own dice start from, which is what the match gets its id from
+--- @return World, table[] seated The players by seat, string id
+local function startedGame(gameId, luck)
+  local world = World.New()
+  world.seed = luck or 0
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", gameId))
+  world:Deliver()
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  local seated = { [match.me] = alice, [3 - match.me] = bob }
+  return world, seated, match.id
+end
+
+--- Everything about a position, written out to compare
+--- @param value any
+--- @return string
+local function written(value)
+  if type(value) ~= "table" then
+    return tostring(value)
+  end
+  local keys = {}
+  for key in pairs(value) do
+    keys[#keys + 1] = key
+  end
+  table.sort(keys, function(a, b)
+    return tostring(a) < tostring(b)
+  end)
+  local parts = {}
+  for index, key in ipairs(keys) do
+    parts[index] = tostring(key) .. "=" .. written(value[key])
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+function tests.BackgammonRollsTheSameDiceForBothPlayers()
+  local world, seated, id = startedGame("backgammon")
+  local rolled = {}
+  for _ = 1, 40 do
+    local states = {}
+    for seat, player in ipairs(seated) do
+      states[seat] = player.private.Match.State(player.matches[id])
+    end
+    equal(written(states[1]), written(states[2]), "both players have the same position and the same roll to play")
+    if seated[1].matches[id].status ~= "active" then
+      break
+    end
+    rolled[#rolled + 1] = states[1].dice[1] .. states[1].dice[2]
+
+    local mover = seated[states[1].turn]
+    assert(mover.session:Move(id, backgammonTurn(mover.private.Games.Get("backgammon"), states[states[1].turn])))
+    world:Deliver()
+    equal(logOf(seated[1], id), logOf(seated[2], id))
+  end
+
+  -- Losing the saved game and getting it back from the opponent brings the same dice back with it
+  local before = written(seated[1].private.Match.State(seated[1].matches[id]))
+  local returned = world:Relog(seated[1], {})
+  world:Tick(60)
+  world:Tick(60)
+  if returned.matches[id] then
+    equal(before, written(returned.private.Match.State(returned.matches[id])))
+  end
+
+  -- Another match is another game
+  local _, others, otherId = startedGame("backgammon", 5)
+  assert(otherId ~= id)
+  local again = {}
+  for index = 1, 12 do
+    local state = others[1].private.Match.State(others[1].matches[otherId])
+    again[index] = state.dice[1] .. state.dice[2]
+    local mover = others[state.turn]
+    assert(mover.session:Move(otherId, backgammonTurn(mover.private.Games.Get("backgammon"), state)))
+    _:Deliver()
+  end
+  assert(table.concat(again) ~= table.concat(rolled, "", 1, 12), "the same dice in two different matches")
+end
+
+-----------------------------
+-- Backgammon on screen
+-----------------------------
+
+-- The table as Games/Backgammon.lua lays it out, in checkers
+local TABLE_WIDTH, TABLE_HEIGHT = 15.6, 12.7
+local TABLE_EDGE, TABLE_BAR = 0.45, 1.1
+
+--- Moves the cursor onto a point of the table, as the player whose window it is counts them
+--- @param board table
+--- @param point number 25 for the bar, 0 for where checkers are borne off to
+local function pointAtPoint(board, point)
+  local cell = board.width / TABLE_WIDTH
+  local x, y
+  if point == 25 then
+    x, y = TABLE_EDGE + 6 + TABLE_BAR / 2, TABLE_HEIGHT / 2 + 0.75
+  elseif point == 0 then
+    x, y = TABLE_WIDTH - TABLE_EDGE - 0.6, TABLE_HEIGHT - 2
+  else
+    local top = point > 12
+    local column = top and point - 13 or 12 - point
+    x = TABLE_EDGE + column + 0.5 + (column >= 6 and TABLE_BAR or 0)
+    y = top and TABLE_EDGE + 1.2 or TABLE_HEIGHT - TABLE_EDGE - 1.2
+  end
+  Client.cursor = { x * cell, board.height - y * cell }
+  board:Fire("OnUpdate", 0.02)
+end
+
+--- @param board table
+--- @param point number
+--- @param button string?
+local function clickPoint(board, point, button)
+  pointAtPoint(board, point)
+  if button then
+    board:Fire("OnMouseDown", button)
+    return
+  end
+  press(board)
+  release(board)
+end
+
+--- Starts a game of backgammon and opens the window of whoever won the opening roll
+--- @return World, table mover, table opponent, string id, table state
+local function backgammonOnScreen()
+  local world, seated, id = startedGame("backgammon")
+  local state = seated[1].private.Match.State(seated[1].matches[id])
+  local mover = seated[state.turn]
+  local MainFrame = openWindow(mover)
+  MainFrame.Open(id)
+  return world, mover, seated[3 - state.turn], id, mover.private.Match.State(mover.matches[id])
+end
+
+function tests.WindowPlaysBackgammonACheckerAtATime()
+  local world, mover, opponent, id, state = backgammonOnScreen()
+  local board = shownBoard()
+  assert(board.width >= 15 * 20, "the table should make use of the window, got " .. board.width)
+  equal(true, says("status_your_turn"))
+  local play, undo = Client.Button("backgammon_play"), Client.Button("backgammon_undo")
+  equal(false, play.enabled, "nothing to send yet")
+  equal(false, undo.enabled)
+
+  -- The opening roll is never doubles: a checker from the mid point by each die
+  local high, low = state.dice[1], state.dice[2]
+  clickPoint(board, 13)
+  clickPoint(board, 13 - high)
+  equal("", logOf(mover, id), "one checker isn't the turn")
+  equal("chipsCollide", Client.sounds[#Client.sounds])
+  equal(true, undo.enabled)
+  equal(false, play.enabled)
+
+  -- Taken back with the button, made again, and the other one taken back with the right mouse button
+  undo:Fire("OnClick")
+  equal(false, undo.enabled)
+  clickPoint(board, 13)
+  clickPoint(board, 13 - high)
+  clickPoint(board, 13)
+  clickPoint(board, 13 - low)
+  equal(true, play.enabled)
+  clickPoint(board, 1, "RightButton")
+  equal(false, play.enabled)
+  equal(true, undo.enabled)
+
+  -- Dragged this time
+  pointAtPoint(board, 13)
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  pointAtPoint(board, 13 - low)
+  release(board)
+  equal(true, play.enabled)
+  equal("", logOf(mover, id), "and still nothing is sent before the player says so")
+
+  play:Fire("OnClick")
+  equal("13-" .. (13 - high) .. ".13-" .. (13 - low), logOf(mover, id))
+  settle(board)
+  equal(false, play:IsVisible(), "no buttons while it is the other player's turn")
+  world:Deliver()
+  equal(logOf(mover, id), logOf(opponent, id))
+
+  -- Nothing to pick up while waiting
+  clickPoint(board, 13)
+  clickPoint(board, 12)
+  equal(1, #mover.matches[id].log)
+end
+
+function tests.WindowLetsAnotherBackgammonCheckerBePickedUpInstead()
+  local _, mover, _, id, state = backgammonOnScreen()
+  local board = shownBoard()
+  local high, low = state.dice[1], state.dice[2]
+  -- With a checker from the mid point in hand, a click on the eight point isn't a move it can
+  -- make: it picks one up from there
+  clickPoint(board, 13)
+  clickPoint(board, 8)
+  equal(false, Client.Button("backgammon_undo").enabled)
+  clickPoint(board, 8 - low)
+  equal(true, Client.Button("backgammon_undo").enabled)
+  clickPoint(board, 13)
+  clickPoint(board, 13 - high)
+  Client.Button("backgammon_play"):Fire("OnClick")
+  equal("8-" .. (8 - low) .. ".13-" .. (13 - high), logOf(mover, id))
+end
+
+function tests.WindowMovesABackgammonCheckerByBothDice()
+  local _, mover, _, id, state = backgammonOnScreen()
+  local board = shownBoard()
+  local high, low = state.dice[1], state.dice[2]
+  -- The point both dice away from a back checker is open on the opening roll unless it is the
+  -- opponent's six point or their bar point
+  local from = 24
+  local blocked = { [19] = true, [17] = true, [13] = false }
+  if blocked[from - high - low] then
+    from = 13
+  end
+  clickPoint(board, from)
+  clickPoint(board, from - high - low)
+  local play = Client.Button("backgammon_play")
+  if play.enabled then
+    play:Fire("OnClick")
+    local log = logOf(mover, id)
+    local to = from - high - low
+    local first = from .. "-" .. (from - high) .. "." .. (from - high) .. "-" .. to
+    local second = from .. "-" .. (from - low) .. "." .. (from - low) .. "-" .. to
+    assert(log == first or log == second, "one checker moved by both dice, got " .. log)
+  else
+    -- Both ways there were closed, which leaves the checker where it was
+    equal(false, Client.Button("backgammon_undo").enabled)
+  end
+end
+
+-----------------------------
+-- Crazy Eights
+-----------------------------
+
+--- A position set up by hand
+--- @param hands string[][] By seat
+--- @param pile string[] The card on top last
+--- @param deck string[] The next card to be drawn last
+--- @param turn number?
+--- @return table state, table game, table random
+local function crazyEightsAt(hands, pile, deck, turn)
+  local private = loadEngine()
+  local game = private.Games.Get("crazyeights")
+  local state = game.newState(#hands, private.Random.New(1))
+  state.hands, state.pile, state.deck = hands, pile, deck
+  state.suit, state.turn = pile[#pile]:sub(2, 2), turn or 1
+  return state, game, private.Random.New(3)
+end
+
+--- Every card of a position, wherever it is
+--- @param state table
+--- @return string[] Sorted
+local function allCards(state)
+  local cards = { unpack(state.deck) }
+  for _, card in ipairs(state.pile) do
+    cards[#cards + 1] = card
+  end
+  for _, hand in ipairs(state.hands) do
+    for _, card in ipairs(hand) do
+      cards[#cards + 1] = card
+    end
+  end
+  table.sort(cards)
+  return cards
+end
+
+--- A move for whoever's turn it is: the first card that goes, calling its own suit with an
+--- eight, or a card from the deck, or nothing
+--- @param game table
+--- @param state table
+--- @return string
+local function crazyEightsMove(game, state)
+  local seat = game.turn(state)
+  for _, card in ipairs(state.hands[seat]) do
+    for _, move in ipairs({ card, card .. card:sub(2, 2) }) do
+      if game.validate(state, seat, move) then
+        return move
+      end
+    end
+  end
+  return game.validate(state, seat, "d") and "d" or "p"
+end
+
+function tests.CrazyEightsDealsEveryoneAHand()
+  local private = loadEngine()
+  local game = private.Games.Get("crazyeights")
+  local tops = {}
+  for seats = 2, 6 do
+    for deal = 1, 20 do
+      local state = game.newState(seats, private.Random.New(deal * 31 + seats))
+      for seat = 1, seats do
+        equal(seats == 2 and 7 or 5, #state.hands[seat], "cards dealt to each of " .. seats)
+      end
+      local cards = allCards(state)
+      equal(52, #cards)
+      for index = 2, #cards do
+        assert(cards[index] ~= cards[index - 1], "the same card twice: " .. cards[index])
+      end
+      equal(1, #state.pile)
+      assert(state.pile[1]:sub(1, 1) ~= "8", "the pile never starts with an eight")
+      equal(state.pile[1]:sub(2, 2), state.suit)
+      equal(1, state.turn)
+      tops[state.pile[1]] = true
+    end
+  end
+  local different = 0
+  for _ in pairs(tops) do
+    different = different + 1
+  end
+  assert(different > 30, "the deck should come out differently every time, got " .. different .. " starting cards in 100 deals")
+end
+
+function tests.CrazyEightsFollowsSuitOrRank()
+  local state, game, random = crazyEightsAt({ { "QH", "5S", "QC", "8D" }, { "2H", "9C" } }, { "7H" }, { "3C", "4D" })
+  local function check(move)
+    return game.validate(state, state.turn, move)
+  end
+  equal(true, (check("QH")), "the same suit")
+  local ok, err = check("QC")
+  equal(false, ok)
+  equal("card_doesnt_match", err)
+  ok, err = check("5S")
+  equal("card_doesnt_match", err)
+  equal(false, (check("KH")), "not a card that isn't in the hand")
+  equal(false, (check("2H")), "nor one in somebody else's")
+  equal(false, (check("QHS")), "only an eight calls a suit")
+  equal(false, (check("8D")), "and an eight has to")
+  equal(false, (check("1H")))
+  equal(false, (check("QX")))
+  equal(false, (check("")))
+  equal(false, (game.validate(state, 2, "2H")), "not out of turn")
+
+  local event = game.apply(state, 1, "QH", random)
+  equal("QH", event.card)
+  equal(nil, event.called)
+  equal("QH", state.pile[#state.pile])
+  equal(3, #state.hands[1])
+  equal(2, state.turn)
+  equal(false, (check("9C")))
+  equal(true, (check("2H")))
+
+  -- Rank matches too, and changes the suit to follow
+  state = crazyEightsAt({ { "QC", "5S" }, { "2H", "9C" } }, { "QH" }, { "3C" })
+  equal(true, (check("QC")))
+  game.apply(state, 1, "QC", random)
+  equal("C", state.suit)
+  equal(true, (check("9C")))
+  equal(false, (check("2H")))
+end
+
+function tests.CrazyEightsEightsGoOnAnythingAndCallASuit()
+  local state, game, random = crazyEightsAt({ { "8D", "5S" }, { "2H", "9C", "KD" } }, { "7H" }, { "3C", "4D" })
+  equal(true, (game.validate(state, 1, "8DC")))
+  equal(true, (game.validate(state, 1, "8DD")), "its own suit as well")
+  local event = game.apply(state, 1, "8DC", random)
+  equal("8D", event.card)
+  equal("C", event.called)
+  equal("C", state.suit)
+  equal("8D", state.pile[#state.pile])
+
+  equal(false, (game.validate(state, 2, "KD")), "the suit of the eight itself doesn't count, the one called does")
+  equal(false, (game.validate(state, 2, "2H")))
+  equal(true, (game.validate(state, 2, "9C")))
+end
+
+function tests.CrazyEightsDrawsWhenNothingGoes()
+  -- The card on top of the deck is the last one. This one can't be played either
+  local state, game, random = crazyEightsAt({ { "5S", "6S" }, { "2H", "9C" } }, { "7H" }, { "KH", "4D" })
+  local ok, err = game.validate(state, 1, "p")
+  equal(false, ok)
+  equal("draw_first", err)
+  local event = game.apply(state, 1, "d", random)
+  equal(true, event.drew)
+  equal(true, event.passed, "nothing to play even now: the turn moves on by itself")
+  equal(nil, event.card, "what was drawn is nobody else's business")
+  equal("5S,6S,4D", table.concat(state.hands[1], ","))
+  equal(2, state.turn)
+
+  -- This one can: the turn stays, to play it or anything else, or to pass
+  state, game, random = crazyEightsAt({ { "5S", "6S" }, { "2H", "9C" } }, { "7H" }, { "4D", "KH" })
+  event = game.apply(state, 1, "d", random)
+  equal(false, event.passed)
+  equal(1, state.turn)
+  equal(true, state.drew)
+  ok, err = game.validate(state, 1, "d")
+  equal(false, ok, "one card a turn")
+  equal("cant_draw", err)
+  equal(true, (game.validate(state, 1, "KH")))
+  equal(true, (game.validate(state, 1, "p")))
+  game.apply(state, 1, "p", random)
+  equal(2, state.turn)
+  equal(false, state.drew)
+  equal(nil, game.result(state))
+
+  -- Drawing is allowed with a card in hand that could have been played
+  state, game, random = crazyEightsAt({ { "5H", "6S" }, { "2H", "9C" } }, { "7H" }, { "4D", "KC" })
+  equal(true, (game.validate(state, 1, "d")))
+  event = game.apply(state, 1, "d", random)
+  equal(false, event.passed, "and then the turn is still the player's")
+  equal(true, (game.validate(state, 1, "5H")))
+end
+
+function tests.CrazyEightsShufflesThePileBackIn()
+  local state, game, random = crazyEightsAt({ { "5S", "6S" }, { "2H", "9C" } }, { "3D", "4C", "JD", "KH", "7H" }, {})
+  local before = table.concat(allCards(state), ",")
+  local event = game.apply(state, 1, "d", random)
+  equal(true, event.shuffled)
+  equal("7H", table.concat(state.pile, ","), "the card on top stays where it is")
+  equal(3, #state.deck)
+  equal(3, #state.hands[1])
+  equal(before, table.concat(allCards(state), ","), "no card is lost or made")
+
+  -- With nothing under the top card either, there is nothing to draw. Then a turn can be
+  -- passed just like that, and once everyone has in a row the game is stuck
+  state, game, random = crazyEightsAt({ { "5S" }, { "2C" } }, { "7H" }, {})
+  equal(false, (game.validate(state, 1, "d")))
+  equal(true, (game.validate(state, 1, "p")))
+  game.apply(state, 1, "p", random)
+  equal(nil, game.result(state))
+  game.apply(state, 2, "p", random)
+  equal(0, game.result(state).winner)
+  equal("blocked", game.result(state).detail)
+end
+
+function tests.CrazyEightsIsWonByPlayingTheLastCard()
+  local state, game, random = crazyEightsAt({ { "5H" }, { "2H", "9C" }, { "3S" } }, { "7H" }, { "4D" })
+  equal(nil, game.result(state))
+  game.apply(state, 1, "5H", random)
+  equal(1, game.result(state).winner)
+
+  -- A player who resigns gives their cards back and is passed over from then on
+  state, game, random = crazyEightsAt({ { "5H", "6H" }, { "2H", "9C" }, { "3H", "4H" } }, { "7H" }, { "4D" })
+  game.drop(state, 2)
+  equal(0, #state.hands[2])
+  equal("2H,9C", table.concat({ state.deck[2], state.deck[1] }, ","), "under the deck, not on top of it")
+  equal("4D", state.deck[#state.deck])
+  game.apply(state, 1, "5H", random)
+  equal(3, state.turn)
+  game.apply(state, 3, "3H", random)
+  equal(1, state.turn)
+
+  -- Resigning on your own turn hands it on
+  state, game = crazyEightsAt({ { "5H", "6H" }, { "2H", "9C" }, { "3H", "4H" } }, { "7H" }, { "4D" })
+  game.drop(state, 1)
+  equal(2, state.turn)
+end
+
+function tests.CrazyEightsShowsAPlayerOnlyTheirOwnCards()
+  local state, game = crazyEightsAt({ { "5H", "6S" }, { "2H", "9C", "KD" }, { "3S" } }, { "JD", "7H" }, { "4D", "QS" }, 2)
+  local seen = game.visible(state, 2)
+  equal("2H,9C,KD", table.concat(seen.hands[2], ","))
+  equal("?,?", table.concat(seen.hands[1], ","), "how many the others hold, not what")
+  equal("?", table.concat(seen.hands[3], ","))
+  equal("?,?", table.concat(seen.deck, ","))
+  equal("JD,7H", table.concat(seen.pile, ","), "what was played was played in the open")
+  equal("H", seen.suit)
+  equal(2, seen.turn)
+
+  -- What a player sees is a copy: nothing done to it reaches the game
+  seen.hands[2][1], seen.pile[1] = "AS", "AS"
+  equal("2H", state.hands[2][1])
+  equal("JD", state.pile[1])
+  equal("5H,6S", table.concat(state.hands[1], ","))
+
+  -- What the game says about a move is seen by everyone. It never names a card that was drawn
+  local written = {}
+  for key, value in pairs(game.apply(state, 2, "d", loadEngine().Random.New(1))) do
+    written[#written + 1] = key .. "=" .. tostring(value)
+  end
+  table.sort(written)
+  equal("drew=true,passed=false,shuffled=false", table.concat(written, ","))
+end
+
+function tests.CrazyEightsIsPlayedByACrowdWhoEachSeeTheirOwnHand()
+  local world, seated, id = startedCrowd(4, "crazyeights")
+  local moves = 0
+  while seated[1].matches[id].status == "active" do
+    -- Everyone has the same game, and is shown a different one
+    local states = {}
+    for seat, player in ipairs(seated) do
+      local Match = player.private.Match
+      states[seat] = written(Match.State(player.matches[id]))
+      local seen = Match.Visible(player.matches[id])
+      for other, hand in ipairs(seen.hands) do
+        for _, card in ipairs(hand) do
+          equal(other == seat, card ~= "?", "seat " .. seat .. " looking at the hand of seat " .. other)
+        end
+      end
+      for _, card in ipairs(seen.deck) do
+        equal("?", card)
+      end
+    end
+    for seat = 2, #seated do
+      equal(states[1], states[seat], "the game as seat " .. seat .. " has it")
+    end
+
+    local mover
+    for _, player in ipairs(seated) do
+      if player.private.Match.IsMyTurn(player.matches[id]) then
+        mover = player
+      end
+    end
+    local game = mover.private.Games.Get("crazyeights")
+    assert(mover.session:Move(id, crazyEightsMove(game, mover.private.Match.State(mover.matches[id]))))
+    world:Deliver()
+    moves = moves + 1
+    assert(moves < 3000, "the game should end")
+  end
+
+  -- When it is over the cards are on the table
+  for seat, player in ipairs(seated) do
+    equal("finished", player.matches[id].status, "seat " .. seat)
+    local Match = player.private.Match
+    equal(written(Match.State(player.matches[id])), written(Match.Visible(player.matches[id])))
+    equal(logOf(seated[1], id), logOf(player, id))
+  end
+end
+
+function tests.CrazyEightsGoesOnWhenSomeoneResigns()
+  local world, seated, id = startedCrowd(3, "crazyeights")
+  local Match = seated[1].private.Match
+  local before = #Match.State(seated[1].matches[id]).deck
+  assert(seated[2].session:Resign(id))
+  world:Deliver()
+  for _, player in ipairs(seated) do
+    local state = player.private.Match.State(player.matches[id])
+    equal("active", player.matches[id].status)
+    equal(0, #state.hands[2])
+    equal(before + 5, #state.deck)
+    equal(52, #allCards(state))
+  end
+  -- The two who are left play it out
+  local moves = 0
+  while seated[1].matches[id].status == "active" do
+    local state = Match.State(seated[1].matches[id])
+    local mover = seated[state.turn]
+    assert(state.turn ~= 2, "whoever resigned has no more turns")
+    local game = mover.private.Games.Get("crazyeights")
+    assert(mover.session:Move(id, crazyEightsMove(game, mover.private.Match.State(mover.matches[id]))))
+    world:Deliver()
+    moves = moves + 1
+    assert(moves < 3000, "the game should end")
+  end
+end
+
+-----------------------------
+-- Crazy Eights on screen
+-----------------------------
+
+--- The cards of the player's own hand on screen that show a face, left to right
+--- @return table[]
+local function handOnScreen()
+  return Client.Find(function(widget)
+    local inHand = widget.kind == "Button" and widget.scripts.OnEnter ~= nil
+    return inHand and widget.card ~= nil and widget.card ~= "?" and widget:IsVisible()
+  end)
+end
+
+--- The backs on screen that are in somebody's hand
+--- @return table[]
+local function backsOnScreen()
+  return Client.Find(function(widget)
+    return widget.kind == "Button" and widget.card == "?" and widget.scripts.OnEnter ~= nil and widget:IsVisible()
+  end)
+end
+
+--- The deck, which is the one card on the table that is seen from the back and isn't in a hand
+--- @return table
+local function deckOnScreen()
+  local found = Client.Find(function(widget)
+    local single = widget.kind == "Button" and widget.SetPlayable ~= nil and widget.count ~= nil
+    return single and widget.scripts.OnClick ~= nil and widget:IsVisible()
+  end)
+  assert(#found == 1, "Expected one deck, found " .. #found)
+  return found[1]
+end
+
+--- @param card string
+--- @return table The card of the player's hand showing that face
+local function cardOnScreen(card)
+  for _, button in ipairs(handOnScreen()) do
+    if button.card == card then
+      return button
+    end
+  end
+  error("no " .. card .. " in the hand on screen")
+end
+
+function tests.WindowPlaysCrazyEights()
+  local world, first, second, id = gameOnScreen("crazyeights")
+  local Match, game = first.private.Match, first.private.Games.Get("crazyeights")
+  local match = first.matches[id]
+  equal(7, #handOnScreen(), "the player's own cards, face up")
+  equal(7, #backsOnScreen(), "and the opponent's from the back")
+  equal(true, says("status_your_turn"))
+
+  -- Whatever was dealt: play a card if one goes, or draw
+  local played = 0
+  for _ = 1, 40 do
+    if match.status ~= "active" then
+      break
+    end
+    local state = Match.State(match)
+    if state.turn ~= match.me then
+      local before = #match.log
+      for _, button in ipairs(handOnScreen()) do
+        button:Fire("OnClick")
+      end
+      deckOnScreen():Fire("OnClick")
+      equal(before, #match.log, "nothing can be played or drawn out of turn")
+      assert(second.session:Move(id, crazyEightsMove(game, second.private.Match.State(second.matches[id]))))
+      world:Deliver()
+    else
+      local move = crazyEightsMove(game, state)
+      local before = #match.log
+      if move == "d" then
+        equal(true, deckOnScreen().playable)
+        deckOnScreen():Fire("OnClick")
+        equal("d", match.log[before + 1])
+        equal("cardSlide", Client.sounds[#Client.sounds])
+      elseif move == "p" then
+        Client.Button("crazyeights_pass"):Fire("OnClick")
+        equal("p", match.log[before + 1])
+      elseif #move == 3 then
+        -- An eight: nothing is sent until a suit is called
+        cardOnScreen(move:sub(1, 2)):Fire("OnClick")
+        equal(before, #match.log)
+        equal(true, says("crazyeights_call"))
+        local suits = Client.Find(function(widget)
+          return widget.kind == "Button" and widget.suit == move:sub(3, 3) and widget:IsVisible()
+        end)
+        equal(1, #suits)
+        suits[1]:Fire("OnClick")
+        equal(move, match.log[before + 1])
+      else
+        -- A card that doesn't go isn't played by clicking it
+        for _, button in ipairs(handOnScreen()) do
+          if not game.validate(state, match.me, button.card) and button.card:sub(1, 1) ~= "8" then
+            button:Fire("OnClick")
+          end
+        end
+        equal(before, #match.log)
+        cardOnScreen(move):Fire("OnClick")
+        equal(move, match.log[before + 1])
+        equal("cardPlace", Client.sounds[#Client.sounds])
+        played = played + 1
+      end
+      world:Deliver()
+      equal(logOf(first, id), logOf(second, id))
+    end
+    -- What is on screen is what the player holds, and as many backs as the opponent does
+    if match.status == "active" then
+      local state = Match.State(match)
+      equal(#state.hands[match.me], #handOnScreen())
+      equal(#state.hands[3 - match.me], #backsOnScreen())
+      equal(tostring(#state.deck), tostring(deckOnScreen().count:GetText()))
+    end
+  end
+  assert(played > 0, "at least one card should have been played by clicking it")
+end
+
+function tests.WindowTurnsTheCardsOverWhenCrazyEightsIsOver()
+  local world, first, second, id = gameOnScreen("crazyeights")
+  equal(7, #backsOnScreen())
+  assert(second.session:Resign(id))
+  world:Deliver()
+  equal("finished", first.matches[id].status)
+  equal(0, #backsOnScreen(), "no secrets once the game is over")
 end
 
 -----------------------------

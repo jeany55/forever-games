@@ -5,6 +5,9 @@
 -- it is always derived by replaying the log, which is what makes resyncing clients a matter of
 -- exchanging the log entries one of them is missing.
 --
+-- That goes for games of chance as well: the dice are worked out from the match id and the moves
+-- in the log (Engine/Random.lua), so replaying the log rolls them again the way they fell.
+--
 -- A log entry is a move string owned by the game, or one of the engine's own entries:
 --   !s         everyone has accepted and the game begins. Only in matches of more than two,
 --              where it is the first entry and nothing can be played before it. Two players
@@ -67,6 +70,7 @@ local _, private = ...
 --- @field started boolean Whether the game has begun
 --- @field out table<number, boolean> Seats that resigned
 --- @field left number How many are still playing
+--- @field chance number What dice and shuffles follow from, see Engine/Random.lua
 
 --- @class MatchModel
 local Match = {}
@@ -232,7 +236,9 @@ local function step(game, replay, entry)
     return false, err or "invalid_move"
   end
 
-  local event = game.apply(replay.state, seat, entry) or {}
+  -- Every move stirs what the dice come from, the one being made included
+  replay.chance = private.Random.Stir(replay.chance, entry)
+  local event = game.apply(replay.state, seat, entry, private.Random.New(replay.chance)) or {}
   event.kind, event.seat = "move", seat
   replay.events[#replay.events + 1] = event
   if replay.offer and replay.offer ~= seat then
@@ -252,8 +258,10 @@ end
 --- @return Replay
 local function newReplay(match, game)
   local seats = #match.players
+  local chance = private.Random.Seed(match.id)
   return {
-    state = game.newState(seats),
+    state = game.newState(seats, private.Random.New(chance)),
+    chance = chance,
     events = {},
     -- A match started before the game learned about draws is played out the way it started, the
     -- opponent may still be on the version that doesn't know them
@@ -299,6 +307,21 @@ end
 function Match.State(match)
   local replay = replayOf(match)
   return replay and replay.state
+end
+
+--- The position as the local player may see it. A game with something to hide (the cards in
+--- another player's hand) says what that leaves, see GameDefinition.visible. Once the game is
+--- over there are no secrets left and everyone sees everything.
+--- @param match Match
+--- @param count number? How many log entries in, the game as it stands if left out
+--- @return table? state nil if the game isn't installed
+function Match.Visible(match, count)
+  local game = private.Games.Get(match.game)
+  local state = Match.StateAt(match, count or #match.log)
+  if not state or not game.visible or Match.Result(match) then
+    return state
+  end
+  return game.visible(state, match.me)
 end
 
 --- @param match Match
