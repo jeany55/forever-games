@@ -1,0 +1,24 @@
+## Interface: 16001
+## Title: Forever Games
+## Notes: Play classic games against your friends and guildies, at your own pace
+## Author: Jeany
+## Version: 0.1.0
+## IconTexture: Interface\Icons\INV_Misc_Dice_01
+## X-Category: Social
+## X-GameType: FOREVER
+## SavedVariables: ForeverGamesDB
+
+embeds.xml
+
+Locales\enUS.lua
+Init.lua
+Engine\Codec.lua
+Engine\Games.lua
+Engine\Match.lua
+Engine\Session.lua
+Games\TicTacToe.lua
+Games\Chess.lua
+Transport.lua
+GUI\Toast.lua
+GUI\MainFrame.lua
+Core.lua
