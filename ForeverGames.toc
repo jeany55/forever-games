@@ -16,9 +16,12 @@ Engine\Codec.lua
 Engine\Games.lua
 Engine\Match.lua
 Engine\Session.lua
+Engine\Presence.lua
 Games\TicTacToe.lua
 Games\Chess.lua
 Transport.lua
+GUI\Widgets.lua
 GUI\Toast.lua
+GUI\Wizard.lua
 GUI\MainFrame.lua
 Core.lua

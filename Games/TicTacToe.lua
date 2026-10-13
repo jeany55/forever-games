@@ -148,6 +148,8 @@ end
 private.Games.Register({
   id = "tictactoe",
   name = L["game_tictactoe"],
+  description = L["game_tictactoe_description"],
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\tictactoe",
   version = 1,
   seats = 2,
   newState = newState,

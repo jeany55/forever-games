@@ -47,14 +47,36 @@ function ForeverGames:OnEnable()
     end,
   })
 
+  private.presence = private.Presence.New({
+    me = Transport.PlayerName(),
+    now = time,
+    broadcast = Transport.Broadcast,
+    whisper = Transport.Send,
+    friends = Transport.OnlineFriends,
+    onChange = function()
+      MainFrame.Refresh()
+    end,
+  })
+
   Transport.Init({
-    onMessage = function(sender, text)
-      private.session:Receive(sender, text)
+    onMessage = function(sender, text, viaGuild)
+      if private.presence:Handle(sender, text, viaGuild) then
+        return
+      end
+      -- Games are only ever played over whispers
+      if not viaGuild then
+        private.presence:Touch(sender)
+        private.session:Receive(sender, text)
+      end
     end,
     onReachable = function(peer)
+      if not peer then
+        private.presence:Announce()
+      end
       private.session:Wake(peer)
     end,
     onOffline = function(peer)
+      private.presence:Remove(peer)
       private.session:PeerOffline(peer)
     end,
   })
@@ -63,9 +85,11 @@ function ForeverGames:OnEnable()
   self:UpdateAttention()
 
   C_Timer.After(HELLO_DELAY, function()
+    private.presence:Tick()
     private.session:Hello()
   end)
   C_Timer.NewTicker(FLUSH_INTERVAL, function()
+    private.presence:Tick()
     private.session:Flush()
   end)
 end
@@ -163,6 +187,8 @@ function ForeverGames:HandleSlashCommand(input)
 
   if command == "" then
     MainFrame.Toggle()
+  elseif command == "new" then
+    MainFrame.NewGame()
   elseif command == "challenge" or command == "invite" then
     local target, gameName = argument:match("^(%S*)%s*(.-)$")
     local game = Games.List()[1]

@@ -7,7 +7,9 @@ Games so far: Tic Tac Toe and Chess.
 
 ## Usage
 
-- `/fg` (or the minimap button) opens the window
+- `/fg` (or the minimap button) opens the window. The top shows how many guildies and friends are
+  online with the addon
+- **New Game** walks you through picking a game and an opponent
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -32,9 +34,10 @@ runs the engine tests with a stock `lua` (5.1), no game client needed.
   - `Games.lua` game registry
   - `Match.lua` a match is a log of moves, state is derived by replaying it
   - `Session.lua` challenges, moves, retries and resync
+  - `Presence.lua` who is online with the addon
 - `Games/` one file per game
 - `Transport.lua` addon messages, lockdown and online/offline detection
-- `GUI/` main window and toast
+- `GUI/` main window, new game wizard and toast
 - `Core.lua` wires it all together
 
 ### Adding a game
