@@ -57,6 +57,7 @@ function ForeverGames:OnEnable()
     now = time,
     broadcast = Transport.Broadcast,
     whisper = Transport.Send,
+    greet = Transport.SendSlowly,
     friends = Transport.OnlineFriends,
     onChange = function()
       MainFrame.Refresh()

@@ -26,6 +26,7 @@ local _, private = ...
 --- @field now fun(): number
 --- @field broadcast fun(text: string) Sends to the player's guild, does nothing without one
 --- @field whisper fun(target: string, text: string)
+--- @field greet (fun(target: string, text: string))? Whisper for greeting friends, may be delayed. Defaults to whisper
 --- @field friends fun(): string[] Full names of the friends who are online
 --- @field onChange fun() Called when the set of available players changes
 
@@ -34,6 +35,7 @@ local _, private = ...
 --- @field players table<string, PresencePlayer>
 --- @field replied table<string, number> When each player was last answered
 --- @field lastAnnounce number?
+--- @field announcements number How many times this player has announced
 local Presence = {}
 Presence.__index = Presence
 private.Presence = Presence
@@ -43,18 +45,22 @@ local HEY = private.Codec.PROTOCOL_VERSION .. ":HEY"
 local HEY_GUILD = HEY .. ":G"
 
 local ANNOUNCE_INTERVAL = 5 * 60
+-- Right after login the friends list and guild may not be loaded yet, so the first few
+-- announcements come quickly until somebody answers
+local EAGER_INTERVAL = 45
+local EAGER_ANNOUNCEMENTS = 4
 -- Long enough to miss one announcement without being dropped
 local EXPIRE_AFTER = 11 * 60
 local REPLY_COOLDOWN = 30
 -- Friends are greeted one whisper each, keep that well under the addon message throttle
-local MAX_FRIENDS = 20
+local MAX_FRIENDS = 40
 
 local SOURCE_ORDER = { guild = 1, friend = 2, other = 3 }
 
 --- @param env PresenceEnv
 --- @return Presence
 function Presence.New(env)
-  return setmetatable({ env = env, players = {}, replied = {} }, Presence)
+  return setmetatable({ env = env, players = {}, replied = {}, announcements = 0 }, Presence)
 end
 
 --- @param name string
@@ -84,14 +90,16 @@ end
 --- Tells the guild and online friends that this player is here, and asks who else is
 function Presence:Announce()
   self.lastAnnounce = self.env.now()
+  self.announcements = self.announcements + 1
   self.env.broadcast(HI)
+  local greet = self.env.greet or self.env.whisper
 
   for index, name in ipairs(self.env.friends()) do
     if index > MAX_FRIENDS then
       break
     end
     if name ~= self.env.me then
-      self.env.whisper(name, HI)
+      greet(name, HI)
     end
   end
 end
@@ -110,7 +118,8 @@ function Presence:Tick()
     self.env.onChange()
   end
 
-  if not self.lastAnnounce or now - self.lastAnnounce >= ANNOUNCE_INTERVAL then
+  local eager = next(self.players) == nil and self.announcements < EAGER_ANNOUNCEMENTS
+  if not self.lastAnnounce or now - self.lastAnnounce >= (eager and EAGER_INTERVAL or ANNOUNCE_INTERVAL) then
     self:Announce()
   end
 end

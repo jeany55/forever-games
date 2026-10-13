@@ -139,15 +139,75 @@ function Transport.Broadcast(text)
   end
 end
 
---- @return string[] Full names of the friends who are online
-function Transport.OnlineFriends()
-  local names = {}
-  for index = 1, C_FriendList.GetNumFriends() do
-    local info = C_FriendList.GetFriendInfoByIndex(index)
-    if info and info.connected and info.name then
-      names[#names + 1] = Transport.Normalize(info.name)
+--- Whispers that can wait, sent one a second. Greeting a long friends list all at once would
+--- run into the addon message throttle and hold up moves.
+local slowQueue = {}
+local slowTicker
+
+--- @param target string Full player name
+--- @param text string
+function Transport.SendSlowly(target, text)
+  slowQueue[#slowQueue + 1] = { target = target, text = text }
+  if slowTicker then
+    return
+  end
+  slowTicker = C_Timer.NewTicker(1, function()
+    local message = table.remove(slowQueue, 1)
+    if message then
+      Transport.Send(message.target, message.text)
+    end
+    if #slowQueue == 0 and slowTicker then
+      slowTicker:Cancel()
+      slowTicker = nil
+    end
+  end)
+end
+
+--- Characters that Battle.net friends are playing right now in this version of the game
+--- @param add fun(name: string)
+--- @return number found
+local function battleNetFriends(add)
+  if not (BNGetNumFriends and C_BattleNet and C_BattleNet.GetFriendNumGameAccounts) then
+    return 0
+  end
+
+  local found = 0
+  for friend = 1, (BNGetNumFriends()) or 0 do
+    for account = 1, C_BattleNet.GetFriendNumGameAccounts(friend) or 0 do
+      local info = C_BattleNet.GetFriendGameAccountInfo(friend, account)
+      local playing = info and info.isOnline and info.clientProgram == BNET_CLIENT_WOW and info.wowProjectID == WOW_PROJECT_ID
+      if playing and info.characterName and info.characterName ~= "" and info.realmName and info.realmName ~= "" then
+        add(info.characterName .. "-" .. info.realmName)
+        found = found + 1
+      end
     end
   end
+  return found
+end
+
+--- Friends who are online: the character friends list plus Battle.net friends playing this game
+--- @return string[] Full names
+function Transport.OnlineFriends()
+  local names, seen = {}, {}
+  local function add(name)
+    name = Transport.Normalize(name)
+    if name and not seen[name] then
+      seen[name] = true
+      names[#names + 1] = name
+    end
+  end
+
+  local total, characters = C_FriendList.GetNumFriends() or 0, 0
+  for index = 1, total do
+    local info = C_FriendList.GetFriendInfoByIndex(index)
+    if info and info.connected and info.name then
+      add(info.name)
+      characters = characters + 1
+    end
+  end
+  local battleNet = battleNetFriends(add)
+
+  private.Log("friends online:", characters, "of", total, "character friends,", battleNet, "Battle.net friends in game, guild:", tostring(IsInGuild()))
   return names
 end
 
@@ -208,6 +268,8 @@ function Transport.Init(newHandlers)
   frame:RegisterEvent("CHAT_MSG_ADDON")
   frame:RegisterEvent("CHAT_MSG_SYSTEM")
   frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+  -- The friends list is only filled in once the client has asked the server for it
+  C_FriendList.ShowFriends()
   -- Not every client build has the restriction events
   pcall(frame.RegisterEvent, frame, "ADDON_RESTRICTION_STATE_CHANGED")
 
