@@ -2,8 +2,8 @@
 --  Presence
 --------------------------
 -- Keeps track of who is online with the addon right now, so the player can see who they could
--- challenge. On login and every few minutes the player says hi to their guild and to their online
--- friends, and everyone who has the addon answers.
+-- challenge. At login, when the window opens and whenever the player asks, they say hi to their
+-- guild and to their online friends, and everyone who has the addon answers.
 --
 --   HI      sender is online with the addon and wants to know who else is
 --   HEY     answer to a HI that arrived as a whisper
@@ -35,7 +35,7 @@ local _, private = ...
 --- @field players table<string, PresencePlayer>
 --- @field replied table<string, number> When each player was last answered
 --- @field lastAnnounce number?
---- @field announcements number How many times this player has announced
+--- @field settled boolean? Whether the last refresh has been tidied up after
 local Presence = {}
 Presence.__index = Presence
 private.Presence = Presence
@@ -44,15 +44,13 @@ local HI = private.Codec.PROTOCOL_VERSION .. ":HI"
 local HEY = private.Codec.PROTOCOL_VERSION .. ":HEY"
 local HEY_GUILD = HEY .. ":G"
 
-local ANNOUNCE_INTERVAL = 5 * 60
--- Right after login the friends list and guild may not be loaded yet, so the first few
--- announcements come quickly until somebody answers
-local EAGER_INTERVAL = 45
-local EAGER_ANNOUNCEMENTS = 4
--- Long enough to miss one announcement without being dropped
-local EXPIRE_AFTER = 11 * 60
-local REPLY_COOLDOWN = 30
--- Friends are greeted one whisper each, keep that well under the addon message throttle
+-- How long players get to answer a refresh before the ones who didn't are dropped. Friends are
+-- greeted one a second, so this has to cover a long friends list.
+local ANSWER_WINDOW = 60
+-- Shortest time between two refreshes
+local REFRESH_COOLDOWN = 10
+-- Someone in both the guild and the friends list is greeted twice, answer once
+local REPLY_COOLDOWN = 5
 local MAX_FRIENDS = 40
 
 local SOURCE_ORDER = { guild = 1, friend = 2, other = 3 }
@@ -60,7 +58,7 @@ local SOURCE_ORDER = { guild = 1, friend = 2, other = 3 }
 --- @param env PresenceEnv
 --- @return Presence
 function Presence.New(env)
-  return setmetatable({ env = env, players = {}, replied = {}, announcements = 0 }, Presence)
+  return setmetatable({ env = env, players = {}, replied = {} }, Presence)
 end
 
 --- @param name string
@@ -76,7 +74,8 @@ function Presence:mark(name, source)
     player = { name = name, source = source }
     self.players[name] = player
     changed = true
-  elseif SOURCE_ORDER[source] < SOURCE_ORDER[player.source] then
+  elseif source == "guild" and player.source ~= "guild" then
+    -- Being a guildie is the one thing worth correcting, an opponent answering a greeting stays an opponent
     player.source = source
     changed = true
   end
@@ -87,40 +86,60 @@ function Presence:mark(name, source)
   end
 end
 
---- Tells the guild and online friends that this player is here, and asks who else is
+--- Asks who is around: greets the guild, online friends and everyone already known. Players
+--- who don't answer are dropped once they have had time to. Nothing calls this on a timer, it
+--- runs at login, when the window opens and when the player asks for a refresh.
 function Presence:Announce()
   self.lastAnnounce = self.env.now()
-  self.announcements = self.announcements + 1
+  self.settled = false
   self.env.broadcast(HI)
   local greet = self.env.greet or self.env.whisper
 
+  local greeted = {}
   for index, name in ipairs(self.env.friends()) do
     if index > MAX_FRIENDS then
       break
     end
     if name ~= self.env.me then
+      greeted[name] = true
+      greet(name, HI)
+    end
+  end
+  -- Guildies hear the broadcast, anyone else already listed has to be asked directly
+  for name, player in pairs(self.players) do
+    if player.source ~= "guild" and not greeted[name] then
       greet(name, HI)
     end
   end
 end
 
---- Call regularly. Forgets players who went quiet and announces again when it is time.
+--- Whether enough time has passed since the last refresh to ask again
+--- @return boolean
+function Presence:CanAnnounce()
+  return not self.lastAnnounce or self.env.now() - self.lastAnnounce >= REFRESH_COOLDOWN
+end
+
+--- @return number? Seconds since the last refresh, nil if there hasn't been one
+function Presence:SinceAnnounce()
+  return self.lastAnnounce and self.env.now() - self.lastAnnounce
+end
+
+--- Call regularly. Once a refresh has had time to be answered, drops the players who stayed silent.
 function Presence:Tick()
-  local now = self.env.now()
+  if self.settled or not self.lastAnnounce or self.env.now() - self.lastAnnounce < ANSWER_WINDOW then
+    return
+  end
+  self.settled = true
+
   local changed = false
   for name, player in pairs(self.players) do
-    if now - player.seen > EXPIRE_AFTER then
+    if player.seen < self.lastAnnounce then
       self.players[name] = nil
       changed = true
     end
   end
   if changed then
     self.env.onChange()
-  end
-
-  local eager = next(self.players) == nil and self.announcements < EAGER_ANNOUNCEMENTS
-  if not self.lastAnnounce or now - self.lastAnnounce >= (eager and EAGER_INTERVAL or ANNOUNCE_INTERVAL) then
-    self:Announce()
   end
 end
 
