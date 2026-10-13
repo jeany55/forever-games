@@ -68,7 +68,7 @@ end
 --- @param name string
 --- @param matches table? Saved matches to start from
 function World:AddPlayer(name, matches)
-  local player = { name = name, online = true, blocked = false, events = {}, private = loadEngine() }
+  local player = { name = name, online = true, blocked = false, events = {}, refused = {}, private = loadEngine() }
   player.matches = matches or {}
   player.session = player.private.Session.New({
     me = name,
@@ -85,6 +85,9 @@ function World:AddPlayer(name, matches)
       if player.onEvent then
         player.onEvent(event, match)
       end
+    end,
+    onRefused = function(host, gameId, reason)
+      player.refused[#player.refused + 1] = host .. ":" .. gameId .. ":" .. reason
     end,
     send = function(target, text)
       if player.blocked then
@@ -11611,6 +11614,177 @@ do
     equal(grid.tints[clash], grid.tints[right], "both of them")
     assert(grid.tints[clash] ~= grid.tints[cell])
   end
+end
+
+-----------------------------
+-- Games linked in chat
+-----------------------------
+
+function tests.CodecReadsAnAsk()
+  local Codec = loadEngine().Codec
+  local message = Codec.Decode(Codec.Encode("ASK", "abc123", "chess", 2))
+  equal("ASK", message.type)
+  equal("abc123", message.id)
+  equal("chess", message.game)
+  equal(2, message.gameVersion)
+  equal(nil, Codec.Decode(Codec.Encode("ASK", "abc123", "chess")), "no version")
+end
+
+function tests.LinkedGameGoesToWhoeverAsksFirst()
+  local world = World.New()
+  local alice, bob, carol = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm"), world:AddPlayer("Carol-Realm")
+  assert(alice.session:Offer("chess", { seat = 2 }))
+  assert(alice.session:Offered("chess"))
+
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  -- Clicked again before the answer is there, which asks nothing new
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  world:Deliver()
+
+  local id, match = next(bob.matches)
+  equal("active", match.status, "asking is accepting")
+  equal("active", alice.matches[id].status)
+  equal(2, alice.matches[id].me, "the seat that was asked for")
+  equal(1, match.me)
+  equal("joined:" .. id, bob.events[#bob.events])
+  equal(nil, next(bob.matches, id), "one game, however often it was clicked")
+  for _, event in ipairs(bob.events) do
+    assert(not event:find("^invite"), "there is nothing to answer")
+  end
+  equal(nil, alice.session:Offered("chess"), "taken")
+
+  assert(bob.session:Move(id, "e2e4"))
+  world:Deliver()
+  equal("e2e4", logOf(alice, id))
+
+  -- Too late
+  assert(carol.session:Ask("Alice-Realm", "chess"))
+  world:Deliver()
+  equal(nil, next(carol.matches))
+  equal("Alice-Realm:chess:closed", carol.refused[1])
+end
+
+function tests.LinkedGameIsPlayedByTheRulesItWasLinkedWith()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local game = alice.private.Games.Get("checkers")
+  local option = game.options[1]
+  local Games = alice.private.Games
+  local changed
+  for _, value in ipairs(Games.Choices(option)) do
+    if Games.Chosen(game, { [option.id] = value }) then
+      changed = value
+    end
+  end
+  assert(alice.session:Offer(game.id, { options = { [option.id] = changed } }))
+  assert(bob.session:Ask("Alice-Realm", game.id))
+  world:Deliver()
+  local _, match = next(bob.matches)
+  assert(changed ~= nil, "something to change")
+  equal(changed, match.options[option.id])
+end
+
+function tests.LinkWithNoGameBehindItIsRefused()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  -- Anyone can type what a link says
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  world:Deliver()
+  equal(nil, next(alice.matches))
+  equal(nil, next(bob.matches))
+  equal("Alice-Realm:chess:closed", bob.refused[1])
+
+  -- An hour on the link is still in chat, the game isn't open any more
+  assert(alice.session:Offer("chess"))
+  world:Tick(60 * 60 + 1)
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  world:Deliver()
+  equal(nil, next(bob.matches))
+  equal(2, #bob.refused)
+
+  equal("self_invite", select(2, alice.session:Ask("Alice-Realm", "chess")))
+  equal("unknown_game", select(2, bob.session:Ask("Alice-Realm", "nosuchgame")))
+  equal("player_count", select(2, alice.session:Offer("solitaire")), "a link is to a game for two")
+end
+
+function tests.LinkedGameOfSomeoneOfflineIsGivenUpOn()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  assert(alice.session:Offer("chess"))
+  alice.online = false
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  world:Deliver()
+  bob.session:PeerOffline("Alice-Realm")
+  equal("Alice-Realm:chess:offline", bob.refused[1])
+
+  -- A challenge from them later on is a challenge like any other, not something that was asked for
+  alice.online = true
+  local match = assert(alice.session:Invite("Bob-Realm", "chess"))
+  world:Deliver()
+  equal("incoming", bob.matches[match.id].status)
+end
+
+function tests.ChallengeNobodyAskedForIsStillAnswered()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  assert(alice.session:Offer("chess"))
+  world:AddPlayer("Carol-Realm")
+  assert(bob.session:Ask("Alice-Realm", "chess"))
+  -- Someone else challenges them in the meantime
+  local other = assert(world.players["Carol-Realm"].session:Invite("Bob-Realm", "chess"))
+  world:Deliver()
+  equal("incoming", bob.matches[other.id].status)
+end
+
+function tests.LinksInChatAreTurnedIntoLinks()
+  local private = loadEngine()
+  private.ADDON_NAME = ADDON_NAME
+  assert(loadfile("Links.lua"))(ADDON_NAME, private)
+  local Links = private.Links
+  local chess = private.Games.Get("chess")
+
+  local text = Links.Text(chess)
+  equal("[Forever Games: " .. chess.name .. "]", text)
+  local decorated = Links.Decorate("anyone for " .. text .. "?", "Quets Al-Realm")
+  assert(decorated:find("^anyone for |c%x+|Haddon:ForeverGames:chess:Quets Al%-Realm|h%[Forever Games: " .. chess.name .. "%]|h|r%?$"), decorated)
+  local host, gameId = Links.Parse(decorated:match("|H(.-)|h"))
+  equal("Quets Al-Realm", host)
+  equal("chess", gameId)
+
+  equal(nil, Links.Decorate("nothing to see here", "Bob-Realm"))
+  equal(nil, Links.Decorate("[Forever Games: No Such Game]", "Bob-Realm"))
+  equal(nil, Links.Decorate("[Forever Games: " .. private.Games.Get("solitaire").name .. "]", "Bob-Realm"), "nobody to play it with")
+  equal(nil, Links.Parse("addon:SomethingElse:chess:Bob-Realm"))
+  equal(nil, Links.Parse("item:12345"))
+end
+
+function tests.WizardLinksAGameInChat()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  openWizard(alice)
+  local linked, said
+  alice.private.Links = {
+    Insert = function(game)
+      linked = game.id
+    end,
+  }
+  function ForeverGames:Print(text)
+    said = text
+  end
+  for _, card in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "chess" and widget:IsVisible()
+  end)) do
+    card:Fire("OnClick")
+  end
+
+  -- Nobody is picked, and nobody has to be
+  equal(false, Client.Button("wizard_send").enabled)
+  Client.Button("wizard_link"):Fire("OnClick")
+  equal("chess", linked)
+  equal("link_ready", said)
+  assert(alice.session:Offered("chess"))
+  equal(nil, next(alice.matches), "there is no game until someone asks")
+  equal(false, alice.private.Wizard.IsOpen())
 end
 
 -----------------------------

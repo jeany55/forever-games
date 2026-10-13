@@ -18,6 +18,9 @@
 --   MOV:id:n:total:entry                  entry n of the match log, sender has `total` entries
 --   ACK:id:n                              sender has n log entries
 --   SYN:id:n                              sender has n log entries and wants whatever it is missing
+--   ASK:id:game:gameVersion               ask whoever linked a game in chat to play it. The id is
+--                                         the asker's, and what the challenge that answers it is
+--                                         called. A DEC with that id says there is no such game
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -131,6 +134,12 @@ function Codec.Decode(text)
       if not message.seats or not message.mine or not message.names then
         return nil
       end
+    end
+  elseif messageType == "ASK" then
+    message.game = fields[4]
+    message.gameVersion = toCount(fields[5])
+    if not Codec.IsSafeField(message.game) or not message.gameVersion then
+      return nil
     end
   elseif messageType == "WHO" then
     message.names = toNames(fields, 4)

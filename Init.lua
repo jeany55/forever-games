@@ -28,6 +28,7 @@ local _, private = ...
 --- @field Sudoku Sudoku What makes and solves the puzzles of Games/Sudoku.lua
 --- @field Wizard Wizard
 --- @field Transport Transport
+--- @field Links Links
 --- @field Toast Toast
 --- @field MainFrame MainFrame
 private.ADDON_NAME = "ForeverGames"

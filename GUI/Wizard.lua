@@ -10,6 +10,8 @@
 -- the challenge. The next game of the same kind starts out set the same way.
 -- A game for one has nobody to pick, and begins as soon as it is chosen. One that has rules to
 -- set goes on to the second step all the same, with only those on it.
+-- A game for two doesn't need anyone picked either: it can be linked in chat instead, and is
+-- then played with whoever clicks the link first.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -33,6 +35,8 @@ local PLAYER_ROW_HEIGHT = 26
 local COLUMN_WIDTH = 350
 -- Where the list of players starts, under the box and the buttons that narrow it down
 local PLAYERS_TOP = 96
+-- The button that links the game in chat, next to what is said under the players
+local LINK_WIDTH = 110
 -- How many of the players last played with are offered before anyone asks for them
 local RECENT_MOST = 6
 -- The panel the game and its rules are in, and the lines of it
@@ -193,6 +197,19 @@ local function send()
   end
   remembered()[chosenGame.id] = Games.Chosen(chosenGame, chosenRules)
   Wizard.Close(match.id)
+end
+
+--- Leaves the game open to whoever clicks a link to it, and hands the player the link to send
+local function link()
+  local game, err = private.session:Offer(chosenGame.id, { options = chosenRules, seat = chosenSeat })
+  if not game then
+    panel.error:SetText(L["err_" .. err])
+    return
+  end
+  remembered()[game.id] = Games.Chosen(game, chosenRules)
+  private.Links.Insert(game)
+  ForeverGames:Print(L["link_ready"]:format(game.name))
+  Wizard.Close()
 end
 
 --- The game was chosen. One that is played alone begins there and then unless it has rules to
@@ -1001,9 +1018,21 @@ local function createOpponentStep(parent)
   -- What the challenge needs to get there
   panel.whoHint = Widgets.Label(who, "GameFontDisableSmall")
   panel.whoHint:SetPoint("BOTTOMLEFT", 10, 8)
-  panel.whoHint:SetPoint("BOTTOMRIGHT", -10, 8)
+  panel.whoHint:SetPoint("BOTTOMRIGHT", -10 - LINK_WIDTH - 8, 8)
   panel.whoHint:SetHeight(36)
   panel.whoHint:SetJustifyV("BOTTOM")
+
+  -- Or nobody in particular: a link for chat, and the game is whoever's clicks it first
+  panel.linkButton = Widgets.Button(who, L["wizard_link"], LINK_WIDTH, 22)
+  panel.linkButton:SetPoint("BOTTOMRIGHT", -10, 10)
+  panel.linkButton:SetScript("OnClick", link)
+  panel.linkButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText(L["wizard_link"])
+    GameTooltip:AddLine(L["wizard_link_tip"], 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.linkButton:SetScript("OnLeave", GameTooltip_Hide)
 
   return step
 end
@@ -1015,6 +1044,8 @@ local function refreshPlayers()
   panel.chosenCount:SetText(crowd and L["wizard_chosen"]:format(#opponents(), mostOpponents()) or "")
   panel.whoHint:SetText(L[crowd and "wizard_by_name_hint_more" or "wizard_by_name_hint"])
   panel.nameHint:SetShown((panel.nameBox:GetText() or "") == "")
+  -- A link is to a game for two
+  panel.linkButton:SetShown(Games.CanSeat(chosenGame, 2))
 
   local x = 10
   for _, button in ipairs(panel.groupButtons) do

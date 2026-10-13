@@ -9,6 +9,7 @@ local L = private.L
 local Games = private.Games
 local Match = private.Match
 local Transport = private.Transport
+local Links = private.Links
 local Toast = private.Toast
 local MainFrame = private.MainFrame
 
@@ -25,7 +26,7 @@ local LOG_LINES = 20
 
 local defaults = {
   -- Matches belong to the character that is playing them
-  char = { matches = {}, log = {} },
+  char = { matches = {}, log = {}, offers = {} },
   profile = {
     minimap = { hide = false },
     toasts = true,
@@ -57,6 +58,12 @@ function ForeverGames:OnEnable()
     me = Transport.PlayerName(),
     matches = self.db.char.matches,
     records = self.db.profile.records,
+    offers = self.db.char.offers,
+    onRefused = function(host, gameId, reason)
+      local game = Games.Get(gameId)
+      local text = L[reason == "offline" and "link_offline" or (reason == "version" and "link_version" or "link_closed")]
+      self:Print(text:format(Transport.DisplayName(host), game and game.name or gameId))
+    end,
     send = Transport.Send,
     now = time,
     random = math.random,
@@ -96,6 +103,10 @@ function ForeverGames:OnEnable()
       private.session:PeerOffline(peer)
     end,
   })
+
+  Links.Init(function(host, gameId)
+    self:OnLinkClicked(host, gameId)
+  end)
 
   self:RegisterMinimapIcon()
   self:UpdateAttention()
@@ -158,6 +169,11 @@ function ForeverGames:OnMatchEvent(event, match)
   local players = "seat " .. match.me .. " of " .. table.concat(match.players, ",")
   private.Log("match", event, match.id, match.game, players, match.status, "entries:", #match.log, "acked:", table.concat(acked, ","))
 
+  if event == "joined" then
+    -- The player clicked a link to get here, the game is what they are waiting to see
+    MainFrame.Open(match.id)
+  end
+
   local text = toastText(event, match)
   if text and not MainFrame.IsViewing(match.id) then
     if self.db.profile.toasts then
@@ -172,6 +188,23 @@ function ForeverGames:OnMatchEvent(event, match)
 
   MainFrame.Refresh()
   self:UpdateAttention()
+end
+
+--- A link to a game someone left open was clicked
+--- @param host string Full name of whoever linked it
+--- @param gameId string
+function ForeverGames:OnLinkClicked(host, gameId)
+  local game = Games.Get(gameId)
+  local name = game and game.name or gameId
+  if host == Transport.PlayerName() then
+    return self:Print(L[private.session:Offered(gameId) and "link_own_open" or "link_own_closed"]:format(name))
+  end
+  local ok, err = private.session:Ask(host, gameId)
+  if ok then
+    self:Print(L["link_asking"]:format(Transport.DisplayName(host), name))
+  else
+    self:Print(L["err_" .. err])
+  end
 end
 
 --- Shows how many matches are waiting on the player next to the minimap icon's data broker entry

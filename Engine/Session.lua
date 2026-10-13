@@ -27,6 +27,10 @@
 -- A game for one is a match like any other with nobody else in it: there is no challenge, it is
 -- never anyone's turn but the player's, and nothing about it is ever sent. It doesn't count as
 -- waiting on the player either, a game nobody else is in can wait for as long as it likes.
+--
+-- A game for two can also be left open to whoever wants it: the player links it in chat, and the
+-- first one to click the link asks for it. Asking is as good as accepting, so the challenge that
+-- comes back is on at once. Whoever asks too late, or for a game that was never open, is told so.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -39,6 +43,14 @@ local _, private = ...
 --- @field random fun(max: number): number
 --- @field notify fun(event: string, match: Match)
 --- @field records table<string, table<string, number>>? The best the player ever did at the games played alone, by game id and key. Persisted. Forgotten with the session if left out
+--- @field offers table<string, Offer>? The games the player linked in chat that nobody took yet, by game id. Persisted. Forgotten with the session if left out
+--- @field onRefused (fun(host: string, gameId: string, reason: string))? Called when a game the player asked for isn't to be had
+
+--- A game that is open to whoever clicks its link first
+--- @class Offer
+--- @field options table<string, any>? How the rules are set, nil for the usual way
+--- @field seat number? The seat the player asked for, nil to leave it to chance
+--- @field expires number
 
 --- @class Session
 --- @field env SessionEnv
@@ -47,6 +59,7 @@ local _, private = ...
 --- @field offered table<string, table<number, number>> Highest log entry already on its way to each seat, by match id
 --- @field gathering table<string, table> Challenges that have yet to say who everyone playing is, by match id
 --- @field checkedIn table<string, number> When the player a match is waiting on was last asked how much of it they have, by match id
+--- @field asked table<string, { host: string, game: string, expires: number }> Games the player asked for by clicking a link and hasn't heard about yet, by the id they gave them
 local Session = {}
 Session.__index = Session
 private.Session = Session
@@ -65,6 +78,10 @@ local CHECK_IN = 60 * 60
 local DAY = 24 * 60 * 60
 local KEEP_FINISHED = 30 * DAY
 local KEEP_DECLINED = 7 * DAY
+-- How long a game linked in chat stays open to whoever clicks the link
+local OFFER_LIFETIME = 60 * 60
+-- How long a challenge that was asked for is accepted without asking the player again
+local ASK_WINDOW = 60
 
 --- @param env SessionEnv
 --- @return Session
@@ -73,7 +90,8 @@ function Session.New(env)
     Match.Upgrade(match)
   end
   env.records = env.records or {}
-  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {} }, Session)
+  env.offers = env.offers or {}
+  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, asked = {} }, Session)
 end
 
 -----------------------------
@@ -338,7 +356,7 @@ end
 --- starts a game for one, where the game is one
 --- @param targets string|string[] Full player names
 --- @param gameId string
---- @param setup { options: table<string, any>?, seat: number? }? How the rules are set, by option id, and for a game of two the seat the local player takes. The usual rules and a seat at random if left out
+--- @param setup { options: table<string, any>?, seat: number?, id: string? }? How the rules are set, by option id, and for a game of two the seat the local player takes. The usual rules and a seat at random if left out. A match that was asked for goes by the id it was asked for with
 --- @return Match?, string? error
 function Session:Invite(targets, gameId, setup)
   setup = setup or {}
@@ -394,7 +412,7 @@ function Session:Invite(targets, gameId, setup)
       mySeat = name == self.env.me and seat or mySeat
     end
   end
-  local id = string.format("%x%06x", now, self.env.random(0xFFFFFF))
+  local id = setup.id or string.format("%x%06x", now, self.env.random(0xFFFFFF))
 
   --- @type Match
   local match = {
@@ -419,6 +437,112 @@ function Session:Invite(targets, gameId, setup)
   end
   self.env.notify("changed", match)
   return match
+end
+
+-----------------------------
+-- Games linked in chat
+-----------------------------
+
+--- Leaves a game for two open to whoever asks for it first. Linking the same game again sets
+--- it up anew.
+--- @param gameId string
+--- @param setup { options: table<string, any>?, seat: number? }? As for a challenge
+--- @return GameDefinition?, string? error
+function Session:Offer(gameId, setup)
+  setup = setup or {}
+  local game = Games.Get(gameId)
+  if not game then
+    return nil, "unknown_game"
+  end
+  if not Games.CanSeat(game, 2) then
+    return nil, "player_count"
+  end
+  self.env.offers[game.id] = {
+    options = Games.Chosen(game, setup.options),
+    seat = (setup.seat == 1 or setup.seat == 2) and setup.seat or nil,
+    expires = self.env.now() + OFFER_LIFETIME,
+  }
+  return game
+end
+
+--- @param gameId string
+--- @return Offer? The game of that kind the player has open, if there is one
+function Session:Offered(gameId)
+  local offer = self.env.offers[gameId]
+  if offer and offer.expires <= self.env.now() then
+    self.env.offers[gameId] = nil
+    return nil
+  end
+  return offer
+end
+
+--- Asks a player for the game they linked in chat
+--- @param host string Full name of whoever linked it
+--- @param gameId string
+--- @return boolean, string? error
+function Session:Ask(host, gameId)
+  local game = Games.Get(gameId)
+  if not game then
+    return false, "unknown_game"
+  end
+  if host == self.env.me then
+    return false, "self_invite"
+  end
+  if self:openMatchesWith(host) >= MAX_OPEN_PER_PEER then
+    return false, "too_many_matches"
+  end
+
+  local now = self.env.now()
+  for id, asked in pairs(self.asked) do
+    if asked.expires <= now then
+      self.asked[id] = nil
+    elseif asked.host == host and asked.game == game.id then
+      -- Clicked twice, the answer to the first is still on its way
+      return true
+    end
+  end
+
+  local id = string.format("%x%06x", now, self.env.random(0xFFFFFF))
+  if not self.env.send(host, Codec.Encode("ASK", id, game.id, game.version)) then
+    return false, "not_sent"
+  end
+  self.asked[id] = { host = host, game = game.id, expires = now + ASK_WINDOW }
+  return true
+end
+
+--- A game the player asked for isn't to be had
+--- @param id string
+--- @param reason string
+function Session:refused(id, reason)
+  local asked = self.asked[id]
+  self.asked[id] = nil
+  if self.env.onRefused then
+    self.env.onRefused(asked.host, asked.game, reason)
+  end
+end
+
+--- Someone clicked a link to a game of ours
+--- @param sender string
+--- @param message Message
+function Session:onAsk(sender, message)
+  local function refuse(reason)
+    self.env.send(sender, Codec.Encode("DEC", message.id, reason))
+  end
+
+  local game = Games.Get(message.game)
+  local offer = game and self:Offered(game.id)
+  if not game or not offer then
+    -- Taken by someone quicker, run out, or never there: anyone can type what a link says
+    return refuse("closed")
+  end
+  if game.version ~= message.gameVersion then
+    return refuse("version")
+  end
+  local match, err = self:Invite(sender, game.id, { options = offer.options, seat = offer.seat, id = message.id })
+  if not match then
+    return refuse(err == "too_many_matches" and "busy" or "closed")
+  end
+  self.env.offers[game.id] = nil
 end
 
 --- @param id string
@@ -760,6 +884,11 @@ end
 --- @param peerName string
 function Session:PeerOffline(peerName)
   self.peers[peerName] = { attempts = 0, nextTry = self.env.now() + RETRY_MAX }
+  for id, asked in pairs(self.asked) do
+    if asked.host == peerName then
+      self:refused(id, "offline")
+    end
+  end
 end
 
 --- Drops matches nobody will look at again
@@ -769,6 +898,11 @@ function Session:Prune()
     local age = now - (match.updated or 0)
     if (match.status == "declined" and age > KEEP_DECLINED) or (match.status == "finished" and age > KEEP_FINISHED) then
       self.env.matches[id] = nil
+    end
+  end
+  for gameId, offer in pairs(self.env.offers) do
+    if offer.expires <= now then
+      self.env.offers[gameId] = nil
     end
   end
 end
@@ -825,6 +959,15 @@ function Session:onInvite(sender, message)
   }
   if not message.seats then
     self.env.matches[match.id] = match
+    local asked = self.asked[match.id]
+    if asked and asked.host == sender and asked.game == game.id and asked.expires > now then
+      -- The player asked for this game, there is nothing left to answer
+      self.asked[match.id] = nil
+      match.status = "active"
+      self:send(match, message.seat, "ACC")
+      self:touch(match, "joined")
+      return
+    end
     self:touch(match, "invite", true)
     return
   end
@@ -1105,6 +1248,14 @@ function Session:Receive(sender, text)
     return
   end
 
+  if message.type == "ASK" then
+    -- Asked twice, the challenge that answered the first time is on its way already
+    if not match then
+      self:onAsk(sender, message)
+    end
+    return
+  end
+
   if message.type == "WHO" then
     if not match then
       self:onRoster(sender, message.id, message.names)
@@ -1124,8 +1275,11 @@ function Session:Receive(sender, text)
   end
 
   if not match then
+    local asked = self.asked[message.id]
     if message.type ~= "DEC" then
       self.env.send(sender, Codec.Encode("DEC", message.id, "gone"))
+    elseif asked and asked.host == sender then
+      self:refused(message.id, message.reason or "closed")
     end
     return
   end

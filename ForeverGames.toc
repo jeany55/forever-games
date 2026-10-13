@@ -46,6 +46,7 @@ Games\Minesweeper.lua
 Games\2048.lua
 Games\Sudoku.lua
 Transport.lua
+Links.lua
 GUI\Toast.lua
 GUI\Wizard.lua
 GUI\MainFrame.lua

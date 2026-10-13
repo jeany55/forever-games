@@ -24,6 +24,10 @@ Sudoku and 2048, for when nobody is around.
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
+- A game for two doesn't need anyone picked: **Link in Chat** puts `[Forever Games: Chess]` where
+  you type, to send to your party, your guild or anyone else. Everyone with the addon sees it
+  as a link, and the first to click it plays you, by the rules you set. The game stays open for
+  an hour
 - A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
   One with something to set up, like how hard Minesweeper is, asks for that first, and
   `/fg play` goes by what you said last.
@@ -120,6 +124,7 @@ nothing: that catches mistakes in what the window does, not in how it looks.
   - `Presence.lua` who is online with the addon
 - `Games/` one file per game: its rules and its view
 - `Transport.lua` addon messages, lockdown and online/offline detection
+- `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
 - `GUI/` main window, new game wizard and toast
   - `Board.lua` a board of squares and pieces for games to draw on: any size and shape, pieces
     that are moved by drag and drop or placed with a click, target marks, pieces that glide,
