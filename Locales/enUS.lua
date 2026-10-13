@@ -97,7 +97,10 @@ L["tooltip_nothing"] = "Nothing waiting for you"
 L["tooltip_left_click"] = "|cffffd100Left Click|r to open"
 
 -- Chat
-L["help_usage"] = "Usage: /fg to open, /fg new to start a game, /fg challenge <player> [game] to challenge someone directly"
+L["help_usage"] = "Usage: /fg to open, /fg new to start a game, /fg challenge <player> [game] to challenge someone directly, /fg log to see recent activity"
+
+L["log_cleared"] = "Log cleared."
+L["log_shown"] = "Showing the last %d of %d log lines. The full log is saved when you log out or /reload."
 
 -- Errors
 L["err_unknown_game"] = "That game is not installed."
