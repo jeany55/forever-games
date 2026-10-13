@@ -22,6 +22,11 @@
 -- A game can also be for one (`seats = 1`), see Games/Solitaire.lua. There is nobody to
 -- challenge and nothing to send: it begins as soon as it is picked, it is always the player's
 -- turn, and with `undo` a move can be taken back.
+--
+-- A game can let whoever sets it up change some of its rules (`options`): what a bonus is worth,
+-- whether taking is compulsory. What they chose travels with the challenge and is kept with the
+-- match, and the game is handed all of it when the state is made: see Games/Words.lua. Only what
+-- isn't the default is ever sent or kept, so a game without any is a game by the usual rules.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -45,6 +50,16 @@ local _, private = ...
 --- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
 --- @field Update fun(self: GameViewObject, view: GameView) Show a position. Called on every change and often when nothing changed at all, so it has to be cheap and must not restart animations
 
+--- Something about a game that whoever sets it up may change
+--- @class GameOption
+--- @field id string Sent over the wire, letters and digits only. Keep it short
+--- @field name string
+--- @field description string? A sentence about what it does, for the tooltip
+--- @field choices (number|string)[]? What it can be set to. Left out for something that is on or off
+--- @field default number|string|boolean What it is unless somebody says otherwise. Changing it changes the rules: bump `version`
+--- @field label (fun(value: number|string): string)? How a choice is shown, the value itself if left out
+--- @field when (fun(rules: table<string, any>): boolean)? Whether it matters with the rest set the way it is. One that doesn't isn't offered
+
 --- @class GameDefinition
 --- @field id string Unique id sent over the wire, letters and digits only
 --- @field name string Display name
@@ -53,7 +68,8 @@ local _, private = ...
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }. 1 for a game the player plays alone
---- @field newState fun(seats: number, random: Random): table Fresh game state for this many players. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
+--- @field options GameOption[]? What whoever sets a game up may change about its rules, in the order they are offered
+--- @field newState fun(seats: number, random: Random, rules: table<string, any>): table Fresh game state for this many players. `rules` has what every option is set to for this match, by id: keep in the state whatever the rules need of it later. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
 --- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
 --- @field apply fun(state: table, seat: number, move: string, random: Random): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list. Whatever the move leaves to chance (the next roll, a card drawn from a pile that had to be shuffled) comes from `random`. Every player gets to see the table, so it mustn't say what only some of them may know
@@ -109,6 +125,153 @@ function Games.CanSeat(game, seats)
   return false
 end
 
+--- What an option can be set to
+--- @param option GameOption
+--- @return (number|string|boolean)[]
+function Games.Choices(option)
+  return option.choices or { true, false }
+end
+
+--- @param value number|string|boolean
+--- @return string How a value is written in a challenge
+local function written(value)
+  if type(value) == "boolean" then
+    return value and "1" or "0"
+  end
+  return tostring(value)
+end
+
+--- @param option GameOption
+--- @param value any
+--- @return boolean
+local function allows(option, value)
+  for _, choice in ipairs(Games.Choices(option)) do
+    if choice == value then
+      return true
+    end
+  end
+  return false
+end
+
+--- What every option is set to: what was chosen where that is something the option can be,
+--- and what the game does by default for the rest
+--- @param options GameOption[]?
+--- @param chosen table<string, any>?
+--- @return table<string, any>
+function Games.Rules(options, chosen)
+  local rules = {}
+  for _, option in ipairs(options or {}) do
+    local value = chosen and chosen[option.id]
+    if value == nil or not allows(option, value) then
+      value = option.default
+    end
+    rules[option.id] = value
+  end
+  return rules
+end
+
+--- What is left of a choice of rules once everything that is the default anyway is taken out
+--- @param game GameDefinition
+--- @param chosen table<string, any>?
+--- @return table<string, any>? nil for the usual rules
+function Games.Chosen(game, chosen)
+  local rules, kept = Games.Rules(game.options, chosen), nil
+  for _, option in ipairs(game.options or {}) do
+    if rules[option.id] ~= option.default then
+      kept = kept or {}
+      kept[option.id] = rules[option.id]
+    end
+  end
+  return kept
+end
+
+--- Writes a choice of rules down for a challenge: "lore=10+bingo=100"
+--- @param game GameDefinition
+--- @param chosen table<string, any>?
+--- @return string? nil for the usual rules
+function Games.EncodeOptions(game, chosen)
+  local kept = Games.Chosen(game, chosen)
+  if not kept then
+    return nil
+  end
+  local parts = {}
+  for _, option in ipairs(game.options) do
+    if kept[option.id] ~= nil then
+      parts[#parts + 1] = option.id .. "=" .. written(kept[option.id])
+    end
+  end
+  return table.concat(parts, "+")
+end
+
+--- Reads the rules a challenge came with
+--- @param game GameDefinition
+--- @param text string?
+--- @return table<string, any>? chosen nil for the usual rules
+--- @return boolean understood False if it names an option this game doesn't have here, or something it can't be set to
+function Games.DecodeOptions(game, text)
+  if not text then
+    return nil, true
+  end
+  local chosen = {}
+  for part in text:gmatch("[^+]+") do
+    local id, value = part:match("^(%w+)=(.+)$")
+    local found = false
+    for _, option in ipairs(game.options or {}) do
+      if option.id == id and chosen[id] == nil then
+        for _, choice in ipairs(Games.Choices(option)) do
+          if written(choice) == value then
+            chosen[id], found = choice, true
+          end
+        end
+      end
+    end
+    if not found then
+      return nil, false
+    end
+  end
+  return Games.Chosen(game, chosen), true
+end
+
+--- How a setting of an option is shown to the players
+--- @param option GameOption
+--- @param value number|string|boolean
+--- @return string
+function Games.OptionLabel(option, value)
+  if type(value) == "boolean" then
+    return private.L[value and "option_on" or "option_off"]
+  end
+  return option.label and option.label(value) or tostring(value)
+end
+
+--- The options that matter with the rules set the way they are
+--- @param game GameDefinition
+--- @param rules table<string, any> Everything set, see Games.Rules
+--- @return GameOption[]
+function Games.OptionsFor(game, rules)
+  local offered = {}
+  for _, option in ipairs(game.options or {}) do
+    if not option.when or option.when(rules) then
+      offered[#offered + 1] = option
+    end
+  end
+  return offered
+end
+
+--- What is different about a match from the way the game is usually played, a line for each
+--- thing: "All seven tiles: +100"
+--- @param game GameDefinition
+--- @param chosen table<string, any>?
+--- @return string[] Nothing for the usual rules
+function Games.DescribeOptions(game, chosen)
+  local rules, lines = Games.Rules(game.options, chosen), {}
+  for _, option in ipairs(Games.OptionsFor(game, rules)) do
+    if rules[option.id] ~= option.default then
+      lines[#lines + 1] = private.L["option_line"]:format(option.name, Games.OptionLabel(option, rules[option.id]))
+    end
+  end
+  return lines
+end
+
 --- @param definition GameDefinition
 function Games.Register(definition)
   assert(private.Codec.IsSafeField(definition.id), "Game id must be alphanumeric")
@@ -122,6 +285,13 @@ function Games.Register(definition)
   assert(counts[#counts] <= 2 or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
   for _, key in ipairs(REQUIRED) do
     assert(type(definition[key]) == "function", "Game " .. definition.id .. " is missing " .. key)
+  end
+  local seen = {}
+  for _, option in ipairs(definition.options or {}) do
+    local named = type(option.id) == "string" and option.id:match("^%w+$") ~= nil and not seen[option.id]
+    assert(named, "Game " .. definition.id .. " has an option with a bad or repeated id")
+    assert(allows(option, option.default), "Option " .. option.id .. " of " .. definition.id .. " can't be what it is by default")
+    seen[option.id] = true
   end
 
   registry[definition.id] = definition

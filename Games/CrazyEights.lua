@@ -87,8 +87,9 @@ end
 
 --- @param seats number
 --- @param random Random
+--- @param rules table<string, any>? The usual ones if left out
 --- @return CrazyEightsState
-local function newState(seats, random)
+local function newState(seats, random, rules)
   local deck = {}
   for suit in SUITS:gmatch(".") do
     for rank in RANKS:gmatch(".") do
@@ -102,7 +103,8 @@ local function newState(seats, random)
   for seat = 1, seats do
     state.hands[seat] = {}
   end
-  for _ = 1, DEALT[seats] or DEALT_CROWD do
+  local dealt = rules and rules.dealt or 0
+  for _ = 1, dealt > 0 and dealt or DEALT[seats] or DEALT_CROWD do
     for seat = 1, seats do
       table.insert(state.hands[seat], table.remove(deck))
     end
@@ -669,6 +671,19 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\crazyeights",
   version = 1,
   seats = { 2, 3, 4, 5, 6 },
+  options = {
+    {
+      id = "dealt",
+      name = L["crazyeights_option_dealt"],
+      description = L["crazyeights_option_dealt_tip"],
+      -- Six players with eight cards each still leave some to draw
+      choices = { 0, 5, 7, 8 },
+      default = 0,
+      label = function(value)
+        return value == 0 and L["crazyeights_option_dealt_usual"] or tostring(value)
+      end,
+    },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

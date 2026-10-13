@@ -21,6 +21,10 @@
 -- are left holding added to their score while they lose it. It also ends when everyone has gone
 -- two turns in a row without laying anything, and then everyone loses what they hold.
 --
+-- Whoever sets a game up can change what the bonuses are worth, leave the words from Azeroth
+-- out altogether and say how many blanks are in the bag (OPTIONS). The state carries what they
+-- chose as `rules`, and everything that scores goes by that.
+--
 -- Nobody sees the bag or anybody else's tiles: `visible` leaves the local player with how many
 -- there are, and nothing the game says about a move names a tile that was drawn.
 --
@@ -47,10 +51,59 @@ local KINDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" .. BLANK
 -- A tile the local player doesn't get to see the face of
 local HIDDEN = "?"
 local PASS = "p"
--- For laying every tile held at once
-local ALL_TILES_BONUS = 50
--- For a word from Azeroth, by the rank its list gives it: any of them, and the legendary ones
-local LORE_BONUS = { 5, 15 }
+
+--- @param value number
+--- @return string
+local function bonusLabel(value)
+  return value == 0 and L["option_off"] or ("+" .. value)
+end
+
+--- @param rules table<string, any>
+--- @return boolean
+local function withAzeroth(rules)
+  return rules.azeroth
+end
+
+-- What whoever sets a game up may change. `lore` and `legend` are what a word from Azeroth is
+-- worth on top, by the rank its list gives it: any of them, and the legendary ones. `bingo` is
+-- for laying every tile held at once
+--- @type GameOption[]
+local OPTIONS = {
+  { id = "azeroth", name = L["words_option_azeroth"], description = L["words_option_azeroth_tip"], default = true },
+  {
+    id = "lore",
+    name = L["words_option_lore"],
+    description = L["words_option_lore_tip"],
+    choices = { 0, 5, 10, 20 },
+    default = 5,
+    label = bonusLabel,
+    when = withAzeroth,
+  },
+  {
+    id = "legend",
+    name = L["words_option_legend"],
+    description = L["words_option_legend_tip"],
+    choices = { 0, 15, 30, 50 },
+    default = 15,
+    label = bonusLabel,
+    when = withAzeroth,
+  },
+  {
+    id = "bingo",
+    name = L["words_option_bingo"],
+    description = L["words_option_bingo_tip"],
+    choices = { 0, 25, 50, 100 },
+    default = 50,
+    label = bonusLabel,
+  },
+  {
+    id = "blanks",
+    name = L["words_option_blanks"],
+    description = L["words_option_blanks_tip"],
+    choices = { 0, 2, 4 },
+    default = 2,
+  },
+}
 
 -- How many tiles there are of each letter and what one is worth. Azeroth is fond of K and Z
 local TILES = {
@@ -109,6 +162,7 @@ local PREMIUMS = { d = { letter = 2 }, t = { letter = 3 }, D = { word = 2 }, T =
 --- @field idle number Turns in a row on which nothing was laid
 --- @field out table<number, boolean> Seats that resigned
 --- @field outcome { winner: number, detail: string? }?
+--- @field rules table<string, any> What every one of OPTIONS is set to in this game
 
 --- A word a move made
 --- @class WordsWord
@@ -156,10 +210,19 @@ local function nameOf(square)
   return string.char(65 + square % SIZE) .. (math.floor(square / SIZE) + 1)
 end
 
+--- What a word is on Azeroth, in a game that has its words in it
+--- @param state WordsState
+--- @param text string
+--- @return LexiconEntry?
+local function loreOf(state, text)
+  return state.rules.azeroth and Lexicon.Entry("warcraft", text) or nil
+end
+
+--- @param state WordsState
 --- @param text string
 --- @return boolean
-local function isWord(text)
-  return Lexicon.Has("english", text) or Lexicon.Has("warcraft", text)
+local function isWord(state, text)
+  return Lexicon.Has("english", text) or (state.rules.azeroth and Lexicon.Has("warcraft", text))
 end
 
 --- Hands the turn to the next player who is still in the game
@@ -185,18 +248,20 @@ end
 
 --- @param seats number
 --- @param random Random
+--- @param rules table<string, any>? The usual ones if left out
 --- @return WordsState
-local function newState(seats, random)
+local function newState(seats, random, rules)
+  rules = rules or private.Games.Rules(OPTIONS)
   local bag = {}
   for tile in KINDS:gmatch(".") do
-    for _ = 1, TILES[tile][1] do
+    for _ = 1, tile == BLANK and rules.blanks or TILES[tile][1] do
       bag[#bag + 1] = tile
     end
   end
   random:Shuffle(bag)
 
   --- @type WordsState
-  local state = { seats = seats, board = {}, bag = bag, racks = {}, scores = {}, turn = 1, idle = 0, out = {} }
+  local state = { seats = seats, board = {}, bag = bag, racks = {}, scores = {}, turn = 1, idle = 0, out = {}, rules = rules }
   for seat = 1, seats do
     state.racks[seat], state.scores[seat] = {}, 0
     draw(state, seat)
@@ -339,14 +404,14 @@ local function measure(state, placed, across)
     return nil, "words_too_short"
   end
 
-  local score = #squares == RACK and ALL_TILES_BONUS or 0
+  local score = #squares == RACK and state.rules.bingo or 0
   for _, word in ipairs(words) do
-    if not isWord(word.text) then
+    if not isWord(state, word.text) then
       return nil, "words_not_a_word", word
     end
-    word.lore = Lexicon.Entry("warcraft", word.text)
+    word.lore = loreOf(state, word.text)
     if word.lore then
-      word.score = word.score + (LORE_BONUS[word.lore.rank] or LORE_BONUS[1])
+      word.score = word.score + (word.lore.rank > 1 and state.rules.legend or state.rules.lore)
     end
     score = score + word.score
   end
@@ -483,7 +548,7 @@ local function apply(state, seat, move, random)
   state.idle = 0
 
   --- @type WordsEvent
-  local event = { placed = placed, words = words, score = score, allTiles = #used == RACK }
+  local event = { placed = placed, words = words, score = score, allTiles = #used == RACK and state.rules.bingo > 0 }
   event.notation = ("%s %s +%d"):format(nameOf(words[1].square), words[1].text, score)
   event.drew = draw(state, seat)
   if #state.racks[seat] == 0 then
@@ -716,7 +781,7 @@ local function loreOn(state)
       local starts = state.board[square] and not (state.board[before] and (not across or square % SIZE > 0))
       if starts then
         local word = wordThrough(state, {}, square, across)
-        local lore = word.length > 1 and Lexicon.Entry("warcraft", word.text)
+        local lore = word.length > 1 and loreOf(state, word.text)
         if lore then
           for _, on in ipairs(squaresOf(word)) do
             found[on] = math.max(found[on] or 0, lore.rank)
@@ -1589,7 +1654,7 @@ function View:showTip(square)
   if state.board[square] then
     for _, across in ipairs({ true, false }) do
       local word = wordThrough(state, {}, square, across)
-      local lore = word.length > 1 and Lexicon.Entry("warcraft", word.text)
+      local lore = word.length > 1 and loreOf(state, word.text)
       if lore then
         local color = lore.rank > 1 and LEGEND or GOLD
         local what = L["words_group_" .. lore.group]
@@ -1850,8 +1915,9 @@ function View:noteText(draft)
     for _, entry in ipairs(draft.entries) do
       laid = laid + (entry.square and 1 or 0)
     end
-    if laid == RACK then
-      lines[#lines + 1] = GOLD_TEXT .. L["words_all_tiles"]:format(ALL_TILES_BONUS) .. "|r"
+    local bonus = view.state.rules.bingo
+    if laid == RACK and bonus > 0 then
+      lines[#lines + 1] = GOLD_TEXT .. L["words_all_tiles"]:format(bonus) .. "|r"
     end
   elseif preview.wrong then
     lines[1] = RED .. L["words_not_word"]:format(preview.wrong.text) .. "|r"
@@ -2132,7 +2198,7 @@ function View:celebrate(event)
 
   if event.allTiles then
     local banner = self.banner
-    banner:SetText(L["words_all_tiles"]:format(ALL_TILES_BONUS))
+    banner:SetText(L["words_all_tiles"]:format(self.view.state.rules.bingo))
     animator:Play(2, function(progress)
       banner:ClearAllPoints()
       banner:SetPoint("CENTER", self.effects, "BOTTOMLEFT", middleX, middleY + 10 * progress)
@@ -2176,6 +2242,7 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\words",
   version = 1,
   seats = { 2, 3, 4 },
+  options = OPTIONS,
   newState = newState,
   turn = function(state)
     return state.turn

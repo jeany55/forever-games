@@ -6893,6 +6893,446 @@ function tests.WizardStartsAGameForOneAtOnce()
 end
 
 -----------------------------
+-- Game options
+-----------------------------
+
+function tests.OptionsAreWrittenDownOnlyWhereTheyDiffer()
+  local Games = loadEngine().Games
+  local words = Games.Get("words")
+  equal(nil, Games.EncodeOptions(words, nil))
+  equal(nil, Games.EncodeOptions(words, { lore = 5, bingo = 50 }), "the usual rules are nothing to send")
+  equal("lore=10+bingo=100", Games.EncodeOptions(words, { bingo = 100, lore = 10, legend = 15 }))
+  equal("azeroth=0", Games.EncodeOptions(words, { azeroth = false }))
+  equal(nil, Games.EncodeOptions(words, { lore = 7, nonsense = 1 }), "what an option can't be is left the way it was")
+
+  local chosen, understood = Games.DecodeOptions(words, "lore=10+bingo=100")
+  equal(true, understood)
+  equal(10, chosen.lore)
+  equal(100, chosen.bingo)
+  equal(nil, chosen.legend)
+  equal(false, Games.DecodeOptions(words, "azeroth=0").azeroth)
+  equal(true, select(2, Games.DecodeOptions(words, nil)))
+  equal(nil, (Games.DecodeOptions(words, "lore=5")), "the default, spelled out, is still the usual rules")
+  for _, bad in ipairs({ "lore=7", "nonsense=1", "lore", "lore=10+lore=20", "azeroth=yes" }) do
+    equal(false, select(2, Games.DecodeOptions(words, bad)), bad)
+  end
+  equal(false, select(2, Games.DecodeOptions(Games.Get("chess"), "lore=10")), "a game without options has none to set")
+
+  local rules = Games.Rules(words.options, { lore = 20, blanks = 3 })
+  equal(20, rules.lore)
+  equal(2, rules.blanks)
+  equal(true, rules.azeroth)
+  equal(1, #Games.DescribeOptions(words, { lore = 20 }))
+  equal(1, #Games.DescribeOptions(words, { azeroth = false, lore = 20 }), "a bonus for words that aren't in the game isn't worth a line")
+  equal(0, #Games.DescribeOptions(words, nil))
+end
+
+function tests.CodecCarriesTheRules()
+  local Codec = loadEngine().Codec
+  local invite = Codec.Decode("1:INV:abc:words:1:2:lore=10+bingo=100")
+  equal("lore=10+bingo=100", invite.options)
+  equal(2, invite.seat)
+  equal(nil, invite.seats)
+
+  invite = Codec.Decode(Codec.Encode("INV", "abc", "words", 1, 2, "azeroth=0", 3, 1, 3, "Carol-Realm"))
+  equal("azeroth=0", invite.options)
+  equal(3, invite.seats)
+  equal(1, invite.mine)
+  equal("Carol-Realm", invite.names[3])
+
+  equal(nil, Codec.Decode("1:INV:abc:words:1:2").options)
+end
+
+function tests.ChallengeComesWithItsRules()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", "words", { options = { lore = 20, bingo = 50, blanks = 4 }, seat = 2 }))
+  equal(2, match.me, "the seat that was asked for")
+  equal(20, match.options.lore)
+  equal(nil, match.options.bingo, "only what differs is kept")
+  world:Deliver()
+  equal("Alice-Realm>Bob-Realm 1:INV:" .. match.id .. ":words:1:2:lore=20+blanks=4", world.sent[1])
+
+  local theirs = bob.matches[match.id]
+  equal("incoming", theirs.status)
+  equal(20, theirs.options.lore)
+  equal(4, theirs.options.blanks)
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  for _, player in ipairs({ alice, bob }) do
+    local state = player.private.Match.State(player.matches[match.id])
+    equal(20, state.rules.lore)
+    equal(15, state.rules.legend)
+    equal(4, state.rules.blanks)
+    equal(106 - 14, #state.bag, "two more blanks in the bag")
+  end
+
+  -- The usual rules travel the way a challenge always did, for clients from before there were any
+  local plain = assert(alice.session:Invite("Bob-Realm", "words", { seat = 1 }))
+  world:Deliver()
+  equal("Alice-Realm>Bob-Realm 1:INV:" .. plain.id .. ":words:1:1", world.sent[#world.sent])
+  equal(nil, bob.matches[plain.id].options)
+  equal(1, plain.me)
+
+  -- For more than two as well
+  world:AddPlayer("Carol-Realm")
+  local crowd = assert(alice.session:Invite({ "Bob-Realm", "Carol-Realm" }, "words", { options = { azeroth = false } }))
+  world:Deliver()
+  equal(false, bob.matches[crowd.id].options.azeroth)
+  equal(false, world.players["Carol-Realm"].matches[crowd.id].options.azeroth)
+end
+
+function tests.RulesThisClientDoesNotKnowAreDeclined()
+  local world = World.New()
+  local bob = world:AddPlayer("Bob-Realm")
+  bob.session:Receive("Alice-Realm", "1:INV:abc:words:1:1:lore=10+wild=1")
+  equal(nil, bob.matches.abc)
+  equal("Bob-Realm>Alice-Realm 1:DEC:abc:version", world.queue[1].from .. ">" .. world.queue[1].to .. " " .. world.queue[1].text)
+  world.queue = {}
+  bob.session:Receive("Alice-Realm", "1:INV:abd:chess:1:1:lore=10")
+  equal(nil, bob.matches.abd)
+end
+
+function tests.SessionKnowsWhoWasPlayedLast()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  world:AddPlayer("Carol-Realm")
+  assert(alice.session:Invite("Bob-Realm", "tictactoe"))
+  world.clock = world.clock + 3 * 24 * 60 * 60
+  assert(alice.session:Invite("Carol-Realm", "tictactoe"))
+  assert(alice.session:Invite({}, "solitaire"))
+  world.clock = world.clock + 60
+  local opponents = alice.session:Opponents()
+  equal(2, #opponents)
+  equal("Carol-Realm", opponents[1].name)
+  equal(60, opponents[1].ago)
+  equal("Bob-Realm", opponents[2].name)
+  equal(3 * 24 * 60 * 60 + 60, opponents[2].ago)
+end
+
+function tests.WordsBonusesAreWhatTheGameWasSetUpWith()
+  local private = loadEngine()
+  local game = private.Games.Get("words")
+  --- @param chosen table?
+  --- @param rack string
+  --- @param move string
+  --- @return table? event, string? err
+  local function played(chosen, rack, move)
+    local state = game.newState(2, private.Random.New(1), private.Games.Rules(game.options, chosen))
+    state.bag, state.board = tilesOf("TTT"), {}
+    state.racks[1] = tilesOf(rack)
+    local ok, err = game.validate(state, 1, move)
+    if not ok then
+      return nil, err
+    end
+    return game.apply(state, 1, move, private.Random.New(3))
+  end
+
+  -- F4 A1 doubled R1 M3 E1 doubled R1 S1, the word doubled: 28 before the bonus
+  equal(78, played(nil, "FARMERS", "aB8.FARMERS").score)
+  equal(128, played({ bingo = 100 }, "FARMERS", "aB8.FARMERS").score)
+  local plain = played({ bingo = 0 }, "FARMERS", "aB8.FARMERS")
+  equal(28, plain.score)
+  equal(false, plain.allTiles, "nothing to make a fuss about")
+
+  -- A name everybody knows, and one that is only known
+  local usual = played(nil, "THRALLX", "aD8.THRALL")
+  local legend = played({ legend = 50 }, "THRALLX", "aD8.THRALL")
+  equal(35, legend.score - usual.score)
+  equal(usual.score - 15, played({ legend = 0 }, "THRALLX", "aD8.THRALL").score)
+  equal(usual.score, played({ lore = 20 }, "THRALLX", "aD8.THRALL").score, "a legend gets its own bonus, not the other")
+  local known = played(nil, "BAINEXY", "aD8.BAINE")
+  equal(15, played({ lore = 20 }, "BAINEXY", "aD8.BAINE").score - known.score)
+  equal(1, known.words[1].lore.rank, "Baine is from Azeroth, and no legend")
+
+  -- Without Azeroth its names aren't words at all
+  equal("words_not_a_word", select(2, played({ azeroth = false }, "JAINAXY", "aD8.JAINA")))
+  equal(true, played(nil, "JAINAXY", "aD8.JAINA") ~= nil)
+  equal(nil, played({ azeroth = false }, "FARMERS", "aB8.FARMERS").words[1].lore)
+
+  for _, blanks in ipairs({ 0, 2, 4 }) do
+    local state = game.newState(2, private.Random.New(5), private.Games.Rules(game.options, { blanks = blanks }))
+    local all = { unpack(state.bag) }
+    for seat = 1, 2 do
+      for _, tile in ipairs(state.racks[seat]) do
+        all[#all + 1] = tile
+      end
+    end
+    equal(102 + blanks, #all)
+    equal(blanks, select(2, table.concat(all):gsub("_", "")))
+  end
+end
+
+function tests.CheckersTakingCanBeLeftToThePlayer()
+  local private = loadEngine()
+  local game = private.Games.Get("checkers")
+  local state, random = game.newState(2, private.Random.New(1), { forced = false }), private.Random.New(1)
+  for move in ("11-15 22-18"):gmatch("%S+") do
+    game.apply(state, game.turn(state), move, random)
+  end
+  equal(true, (game.validate(state, 1, "15-22")), "the jump is still on")
+  equal(true, (game.validate(state, 1, "9-13")), "and so is anything else")
+  equal(true, #checkersMoves(state) > 1)
+
+  state = game.newState(2, private.Random.New(1), { forced = true })
+  for move in ("11-15 22-18"):gmatch("%S+") do
+    game.apply(state, game.turn(state), move, random)
+  end
+  equal("15-22", table.concat(checkersMoves(state), ","))
+end
+
+function tests.BattleshipHitCanFireAgain()
+  local private = loadEngine()
+  local game = private.Games.Get("battleship")
+  for _, again in ipairs({ true, false }) do
+    local state = game.newState(2, private.Random.New(1), { again = again })
+    game.apply(state, 1, FLEET_ROWS)
+    game.apply(state, 2, FLEET_COLUMNS)
+    equal(true, game.apply(state, 1, "f1").hit)
+    equal(again and 1 or 2, game.turn(state))
+    if again then
+      equal(false, game.apply(state, 1, "a10").hit)
+      equal(2, game.turn(state), "a miss hands the turn over as ever")
+    end
+  end
+end
+
+function tests.CrazyEightsDealsAsManyCardsAsAsked()
+  local private = loadEngine()
+  local game = private.Games.Get("crazyeights")
+  equal(7, #game.newState(2, private.Random.New(1)).hands[1])
+  equal(7, #game.newState(2, private.Random.New(1), { dealt = 0 }).hands[2])
+  equal(5, #game.newState(4, private.Random.New(1), { dealt = 0 }).hands[4])
+  equal(5, #game.newState(2, private.Random.New(1), { dealt = 5 }).hands[1])
+  local state = game.newState(6, private.Random.New(1), { dealt = 8 })
+  equal(8, #state.hands[6])
+  equal(52 - 48 - 1, #state.deck)
+end
+
+--- The buttons of a line of the rules in the wizard, by what they say
+--- @param name string What the line is about
+--- @return table<string, table> buttons, string on The one that is chosen
+local function ruleChoices(name)
+  local row = Client.Find(function(widget)
+    return widget.choices ~= nil and widget.name ~= nil and widget.name.text == name and widget:IsVisible()
+  end)[1]
+  assert(row, "no line of the rules about " .. name)
+  local buttons, on = {}, nil
+  for _, choice in ipairs(row.choices) do
+    if choice:IsVisible() then
+      buttons[choice.label.text] = choice
+      on = choice.picked and choice.label.text or on
+    end
+  end
+  return buttons, on
+end
+
+--- @param id string
+local function pickGame(id)
+  Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget.game.id == id and widget:IsVisible()
+  end)[1]:Fire("OnClick")
+end
+
+function tests.WizardSetsTheRulesOfAGame()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local bob = world:AddPlayer("Bob-Realm")
+  local wizard = openWizard(alice)
+  pickGame("words")
+  equal(true, says("words_option_lore"))
+  local _, on = ruleChoices("words_option_lore")
+  equal("+5", on)
+  local buttons = ruleChoices("words_option_lore")
+  buttons["+20"]:Fire("OnClick")
+  equal("+20", select(2, ruleChoices("words_option_lore")))
+  ruleChoices("words_option_bingo")["option_off"]:Fire("OnClick")
+  ruleChoices("wizard_turn")["wizard_turn_2"]:Fire("OnClick")
+
+  -- Without the words from Azeroth there is nothing to say about what they are worth
+  ruleChoices("words_option_azeroth")["option_off"]:Fire("OnClick")
+  equal(false, says("words_option_lore"))
+  equal(false, says("words_option_legend"))
+  equal(true, says("words_option_blanks"))
+  ruleChoices("words_option_azeroth")["option_on"]:Fire("OnClick")
+  equal("+20", select(2, ruleChoices("words_option_lore")), "set the way it was")
+
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnTextChanged and widget:IsVisible()
+  end)[1]
+  name:SetText("Bob-Realm")
+  Client.Button("wizard_send"):Fire("OnClick")
+  world:Deliver()
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal(2, started.me)
+  equal(20, started.options.lore)
+  equal(0, started.options.bingo)
+  equal(nil, started.options.azeroth)
+  equal(20, bob.matches[started.id].options.lore)
+
+  -- The next one starts out the same way, and can be put back
+  wizard.Open()
+  pickGame("words")
+  equal("+20", select(2, ruleChoices("words_option_lore")))
+  equal("wizard_seat_random", select(2, ruleChoices("wizard_turn")), "the seat is asked for anew every time")
+  Client.Button("wizard_reset"):Fire("OnClick")
+  equal("+5", select(2, ruleChoices("words_option_lore")))
+  equal("+50", select(2, ruleChoices("words_option_bingo")))
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "wizard_reset" and widget:IsVisible()
+  end), "nothing left to put back")
+
+  -- A game that names its seats offers them by name, one without options says so
+  wizard.Open()
+  pickGame("chess")
+  local sides = ruleChoices("wizard_seat")
+  assert(sides["chess_white"] and sides["chess_black"] and sides["wizard_seat_random"])
+  equal(false, says("wizard_no_options"), "which side to take is something to set")
+  sides["chess_black"]:Fire("OnClick")
+  name:SetText("Bob-Realm")
+  Client.Button("wizard_send"):Fire("OnClick")
+  for _, match in pairs(alice.matches) do
+    if match.game == "chess" then
+      equal(2, match.me)
+    end
+  end
+
+  -- With more than two the seats are drawn
+  wizard.Open()
+  pickGame("chinesecheckers")
+  equal(true, says("wizard_seat"), "two can play it")
+  for _, player in ipairs({ "Bob-Realm", "Carol-Realm" }) do
+    name:SetText(player)
+    name:Fire("OnEnterPressed")
+  end
+  equal(false, says("wizard_seat"))
+  equal(true, says("wizard_no_options"))
+end
+
+function tests.WizardOffersWhoWasPlayedLastFirst()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  for _, name in ipairs({ "Bob-Realm", "Carol-Realm", "Dave-Realm", "Erin-Realm", "Frank-Realm" }) do
+    world:AddPlayer(name)
+  end
+  -- Dave is someone Alice played a while ago and who isn't around, Carol a guildie she played today
+  assert(alice.session:Invite("Dave-Realm", "tictactoe"))
+  world.clock = world.clock + 5 * 24 * 60 * 60
+  assert(alice.session:Invite("Carol-Realm", "tictactoe"))
+  openWizard(alice)
+  function alice.private.presence:List()
+    return {
+      { name = "Bob-Realm", source = "guild" },
+      { name = "Carol-Realm", source = "guild" },
+      { name = "Erin-Realm", source = "friend" },
+    }
+  end
+  pickGame("chess")
+
+  --- @return string What the list says from the top, headers in brackets
+  local function shown()
+    local lines = {}
+    for _, row in ipairs(Client.Find(function(widget)
+      return widget.kind == "Button" and widget.header ~= nil and widget.source ~= nil and widget:IsVisible()
+    end)) do
+      lines[#lines + 1] = row.player or ("[" .. row.header.text .. "]")
+    end
+    return table.concat(lines, " ")
+  end
+  local function row(player)
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.player == player and widget.source ~= nil and widget:IsVisible()
+    end)[1]
+  end
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnTextChanged and widget:IsVisible()
+  end)[1]
+  local function type(text)
+    name:SetText(text)
+    name:Fire("OnTextChanged", true)
+  end
+  local send = Client.Button("wizard_send")
+
+  equal("[wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+  equal("source_guild  -  wizard_played_today", row("Carol-Realm").source.text)
+  equal("wizard_played_days", row("Dave-Realm").source.text)
+  equal(false, send.enabled)
+
+  -- Narrowed down by what they are
+  clickGenre("wizard_guild")
+  equal("[wizard_recent] Carol-Realm [wizard_guild] Bob-Realm", shown())
+  clickGenre("wizard_friends")
+  equal("[wizard_friends] Erin-Realm", shown())
+  clickGenre("wizard_recent")
+  equal("[wizard_recent] Carol-Realm Dave-Realm", shown())
+  clickGenre("wizard_all_games")
+
+  -- And by name. Down to one, that is who the challenge would go to
+  type("er")
+  equal("[wizard_friends] Erin-Realm", shown())
+  equal(true, row("Erin-Realm").selected:IsShown())
+  equal(true, send.enabled)
+
+  -- Someone who isn't on the list can be had by name
+  type("Frank-Realm")
+  equal("[wizard_by_name] Frank-Realm", shown())
+  equal(true, send.enabled)
+  -- Enter picks, it is the button that sends
+  name:Fire("OnEnterPressed")
+  equal("", name:GetText())
+  equal(2, (function()
+    local count = 0
+    for _ in pairs(alice.matches) do
+      count = count + 1
+    end
+    return count
+  end)(), "nothing was sent")
+  equal("[wizard_chosen_also] Frank-Realm [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+
+  -- A click on someone else and it is them instead
+  row("Bob-Realm"):Fire("OnClick")
+  equal(true, row("Bob-Realm").selected:IsShown())
+  equal(nil, row("Frank-Realm"))
+  send:Fire("OnClick")
+  local challenged = {}
+  for _, match in pairs(alice.matches) do
+    if match.game == "chess" then
+      challenged[#challenged + 1] = match.players[match.me == 1 and 2 or 1]
+    end
+  end
+  equal("Bob-Realm", table.concat(challenged, ","))
+end
+
+function tests.WindowSaysWhatRulesAChallengeComesWith()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", "words", { options = { bingo = 100 } }))
+  world:Deliver()
+  local MainFrame = openWindow(bob)
+  MainFrame.Open(match.id)
+  local message = Client.Find(function(widget)
+    return widget.text ~= nil and widget.text:find("rules_custom", 1, true) and widget.text:find("status_incoming", 1, true) and widget:IsVisible()
+  end)
+  equal(1, #message, "the challenge says it comes with rules of its own")
+
+  -- And a rematch is played by them again
+  Client.Button("accept"):Fire("OnClick")
+  world:Deliver()
+  assert(bob.session:Resign(match.id))
+  world:Deliver()
+  Client.Button("rematch"):Fire("OnClick")
+  local again
+  for id, other in pairs(bob.matches) do
+    again = id ~= match.id and other or again
+  end
+  equal(100, again.options.bingo)
+end
+
+-----------------------------
 -- Runner
 -----------------------------
 

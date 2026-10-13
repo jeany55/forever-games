@@ -148,9 +148,13 @@ local function fleetMove(ships)
   return table.concat(parts, ".")
 end
 
+--- @param _ number
+--- @param __ Random
+--- @param rules table<string, any>? The usual ones if left out
 --- @return BattleshipState
-local function newState()
+local function newState(_, __, rules)
   return {
+    again = rules ~= nil and rules.again,
     turn = 1,
     placed = { false, false },
     fleets = { {}, {} },
@@ -214,6 +218,10 @@ local function apply(state, seat, move)
     if state.afloat[target] == 0 then
       state.outcome = { winner = seat }
     end
+  end
+  if ship and state.again then
+    -- Whoever finds something fires once more
+    state.turn = seat
   end
   return { square = square, target = target, hit = ship ~= nil, sunk = sunk and index or nil, notation = move }
 end
@@ -838,6 +846,9 @@ private.Games.Register({
   icon = IMAGES .. "Icons\\battleship",
   version = 1,
   seats = 2,
+  options = {
+    { id = "again", name = L["battleship_option_again"], description = L["battleship_option_again_tip"], default = false },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

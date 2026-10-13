@@ -9,6 +9,9 @@
 --   INV:id:game:gameVersion:inviterSeat:seats:yourSeat[:seat:name...]
 --                                         the same for a match of more than two: how many are
 --                                         playing, where the receiver sits and who else sits where
+--   Either may say how the rules are set, where that isn't the way the game is usually played:
+--   a field of its own right after inviterSeat, "lore=10+bingo=100" (see Games.EncodeOptions).
+--   It is the one field there with a "=" in it
 --   WHO:id:seat:name[:seat:name...]       the players an INV had no room left for
 --   ACC:id                                accept a challenge
 --   DEC:id[:reason]                       decline / cancel a challenge
@@ -33,6 +36,7 @@ Codec.MAX_LENGTH = 255
 --- @field game string?
 --- @field gameVersion number?
 --- @field seat number?
+--- @field options string? How the rules are set in a challenge, as it was sent
 --- @field seats number? How many are playing, in a challenge to a match of more than two
 --- @field mine number? Seat of whoever the challenge is sent to
 --- @field names table<number, string>? Full player names by seat
@@ -118,6 +122,9 @@ function Codec.Decode(text)
     message.seat = toCount(fields[6])
     if not Codec.IsSafeField(message.game) or not message.gameVersion or not message.seat then
       return nil
+    end
+    if fields[7] and fields[7]:find("=", 1, true) then
+      message.options = table.remove(fields, 7)
     end
     if fields[7] then
       message.seats, message.mine, message.names = toCount(fields[7]), toCount(fields[8]), toNames(fields, 9)

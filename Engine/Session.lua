@@ -166,11 +166,14 @@ end
 --- @param seat number
 --- @return boolean sent
 function Session:sendInvite(match, seat)
+  local type, fields = "INV", { match.game, match.gameVersion, match.me }
+  local game = Games.Get(match.game)
+  fields[#fields + 1] = game and Games.EncodeOptions(game, match.options)
   if #match.players == 2 then
-    return self:send(match, seat, "INV", match.game, match.gameVersion, match.me)
+    return self:send(match, seat, type, unpack(fields))
   end
 
-  local type, fields = "INV", { match.game, match.gameVersion, match.me, #match.players, seat }
+  fields[#fields + 1], fields[#fields + 2] = #match.players, seat
   for other, name in ipairs(match.players) do
     if other ~= match.me and other ~= seat then
       if #Codec.Encode(type, match.id, unpack(fields)) + #tostring(other) + #name + 2 > Codec.MAX_LENGTH then
@@ -255,6 +258,32 @@ function Session:List()
   return list
 end
 
+--- Everyone the player has a game with on their list, or had: whoever they played last first
+--- @return { name: string, ago: number }[] Full names, and how many seconds ago their last game together was touched
+function Session:Opponents()
+  local now, last = self.env.now(), {}
+  for _, match in pairs(self.env.matches) do
+    if not match.hidden then
+      for seat, name in pairs(match.players) do
+        if seat ~= match.me then
+          last[name] = math.max(last[name] or 0, match.updated or 0)
+        end
+      end
+    end
+  end
+  local list = {}
+  for name, updated in pairs(last) do
+    list[#list + 1] = { name = name, ago = math.max(0, now - updated) }
+  end
+  table.sort(list, function(a, b)
+    if a.ago ~= b.ago then
+      return a.ago < b.ago
+    end
+    return a.name < b.name
+  end)
+  return list
+end
+
 --- @param id string
 --- @return Match?
 function Session:Get(id)
@@ -280,8 +309,9 @@ end
 
 --- Starts a game for one. There is nobody to ask, so it is on at once
 --- @param game GameDefinition
+--- @param options table<string, any>? How the rules are set, the usual way if left out
 --- @return Match
-function Session:startSolo(game)
+function Session:startSolo(game, options)
   local now = self.env.now()
   --- @type Match
   local match = {
@@ -289,6 +319,7 @@ function Session:startSolo(game)
     game = game.id,
     gameVersion = game.version,
     players = { self.env.me },
+    options = Games.Chosen(game, options),
     me = 1,
     log = {},
     status = "active",
@@ -305,8 +336,10 @@ end
 --- starts a game for one, where the game is one
 --- @param targets string|string[] Full player names
 --- @param gameId string
+--- @param setup { options: table<string, any>?, seat: number? }? How the rules are set, by option id, and for a game of two the seat the local player takes. The usual rules and a seat at random if left out
 --- @return Match?, string? error
-function Session:Invite(targets, gameId)
+function Session:Invite(targets, gameId, setup)
+  setup = setup or {}
   local game = Games.Get(gameId)
   if not game then
     return nil, "unknown_game"
@@ -316,7 +349,7 @@ function Session:Invite(targets, gameId)
   end
   if #targets == 0 then
     if Games.CanSeat(game, 1) then
-      return self:startSolo(game)
+      return self:startSolo(game, setup.options)
     end
     return nil, "no_target"
   end
@@ -346,7 +379,7 @@ function Session:Invite(targets, gameId)
   local now = self.env.now()
   local players, mySeat
   if #targets == 1 then
-    mySeat = self.env.random(2)
+    mySeat = (setup.seat == 1 or setup.seat == 2) and setup.seat or self.env.random(2)
     players = { mySeat == 1 and self.env.me or targets[1], mySeat == 1 and targets[1] or self.env.me }
   else
     -- Everyone sits somewhere at random
@@ -367,6 +400,7 @@ function Session:Invite(targets, gameId)
     game = game.id,
     gameVersion = game.version,
     players = players,
+    options = Games.Chosen(game, setup.options),
     me = mySeat,
     log = {},
     status = "outgoing",
@@ -695,6 +729,11 @@ function Session:onInvite(sender, message)
   if (message.seats and seats < 3) or not Games.CanSeat(game, seats) then
     return
   end
+  -- Rules this client can't play by come from a version of the game it doesn't have
+  local options, understood = Games.DecodeOptions(game, message.options)
+  if not understood then
+    return refuse("version")
+  end
   if self:openMatchesWith(sender) >= MAX_OPEN_PER_PEER then
     return refuse("busy")
   end
@@ -706,6 +745,7 @@ function Session:onInvite(sender, message)
     game = game.id,
     gameVersion = game.version,
     players = { [message.seat] = sender, [mySeat] = self.env.me },
+    options = options,
     me = mySeat,
     log = {},
     status = "incoming",

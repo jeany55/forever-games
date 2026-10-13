@@ -189,7 +189,8 @@ local function rematch(match)
   for index, seat in ipairs(Match.Others(match)) do
     others[index] = match.players[seat]
   end
-  local newMatch, err = private.session:Invite(others, match.game)
+  -- By the rules the last one was played by
+  local newMatch, err = private.session:Invite(others, match.game, { options = match.options })
   if not newMatch then
     return report(err)
   end
@@ -764,6 +765,24 @@ local function createDetailPanel(body)
   detail.seat = Widgets.Label(detail, "GameFontDisableSmall")
   detail.seat:SetPoint("TOPRIGHT", detail.focus, "BOTTOMRIGHT", -2, -6)
 
+  -- Says so when whoever set the game up changed its rules, and what to when pointed at
+  detail.rules = CreateFrame("Frame", nil, detail)
+  detail.rules:SetPoint("RIGHT", detail.seat, "LEFT", -10, 0)
+  detail.rules:EnableMouse(true)
+  detail.rules.label = Widgets.Label(detail.rules, "GameFontNormalSmall", L["rules_custom"])
+  detail.rules.label:SetPoint("RIGHT")
+  detail.rules:SetSize(detail.rules.label:GetStringWidth() + 4, 14)
+  detail.rules:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText(L["rules_custom"])
+    GameTooltip:AddLine(L["rules_custom_tip"], 1, 1, 1, true)
+    for _, line in ipairs(self.lines or {}) do
+      GameTooltip:AddLine(line, unpack(Widgets.GOLD))
+    end
+    GameTooltip:Show()
+  end)
+  detail.rules:SetScript("OnLeave", GameTooltip_Hide)
+
   -- The room a game's view gets. Sized explicitly, never from its anchors: views lay themselves
   -- out from the numbers before the frame has been drawn
   detail.stageArea = CreateFrame("Frame", nil, detail)
@@ -888,7 +907,15 @@ local function refreshDetail(match, fresh)
 
   local history = showBoard and game.history == true
   detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me, #match.players)) or "")
-  detail.message:SetText(showBoard and "" or MainFrame.Describe(match))
+  -- A challenge says what it is a challenge to: the rules are part of what is being accepted
+  local rules = game and Games.DescribeOptions(game, match.options) or {}
+  local message = MainFrame.Describe(match)
+  if #rules > 0 then
+    message = message .. "\n\n|cffffd100" .. L["rules_custom"] .. "|r\n|cffffffff" .. table.concat(rules, "\n") .. "|r"
+  end
+  detail.message:SetText(showBoard and "" or message)
+  detail.rules.lines = rules
+  detail.rules:SetShown(showBoard and #rules > 0)
   detail.moves:SetShown(history)
   for _, button in ipairs(detail.steps) do
     button:SetShown(history)

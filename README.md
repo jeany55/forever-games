@@ -15,6 +15,12 @@ nobody is around.
   a kind of game or how many are playing, to narrow the list down. Click the star on a game to
   keep it at the top, the rest are listed by name. The list scrolls with the mouse wheel and
   fits as many games next to each other as the window has room for
+- The second step is who to play, and how. Whoever you played last is at the top, online or not,
+  then your guildies and friends who are online with the addon. Type to narrow the list down, or
+  type the name of anyone else. Next to it is what the game lets you change about its rules: what
+  the bonuses in Words with Warcraft are worth, whether taking is compulsory in Checkers, which
+  side you play. Whoever you challenge sees what you changed before they accept, and the next
+  game of that kind starts out set the same way
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
@@ -142,6 +148,12 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
   played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
   when there is one worth showing
+
+A game can let whoever sets it up change some of its rules with `options`: each has an `id`, a
+`name`, a `default` and the `choices` it can be set to (leave those out for something that is on
+or off). `newState` is handed what they are all set to as its third argument, and keeps what the
+rules need of it in the state. The wizard, the challenge and the rematch are the engine's. See
+`Games/Words.lua`.
 
 Give the game a `genre` so it can be found in the new game wizard: one that is there already
 (`strategy`, `casual`, `dice`, `cards`, `words`, `solo`) or a new one, with its name in the locale file as `genre_<name>`.

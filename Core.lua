@@ -33,6 +33,8 @@ local defaults = {
     window = { width = 920, height = 680, focus = false },
     -- Ids of the games the player starred in the new game wizard
     favourites = {},
+    -- How the player last set the rules of each game in the wizard, by game id
+    rules = {},
   },
 }
 

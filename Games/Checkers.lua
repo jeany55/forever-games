@@ -162,8 +162,9 @@ end
 
 --- @param board table<number, string>
 --- @param seat number
+--- @param free boolean? Taking is up to the player
 --- @return table<string, CheckersMove>
-local function legalMoves(board, seat)
+local function legalMoves(board, seat, free)
   local jumps, steps = {}, {}
   for square, piece in pairs(board) do
     if ownerOf(piece) == seat then
@@ -175,6 +176,12 @@ local function legalMoves(board, seat)
         end
       end
     end
+  end
+  if free then
+    for key, move in pairs(steps) do
+      jumps[key] = move
+    end
+    return jumps
   end
   -- Taking is compulsory: with a jump on, nothing else is allowed
   return next(jumps) and jumps or steps
@@ -195,7 +202,7 @@ end
 --- Works out the legal moves and whether the game is over. Called after every move
 --- @param state CheckersState
 local function evaluate(state)
-  state.legal = legalMoves(state.board, state.turn)
+  state.legal = legalMoves(state.board, state.turn, state.free)
   local key = positionKey(state)
   state.positions[key] = (state.positions[key] or 0) + 1
 
@@ -213,15 +220,18 @@ end
 -- Rules
 -----------------------------
 
+--- @param _ number
+--- @param __ Random
+--- @param rules table<string, any>? The usual ones if left out
 --- @return CheckersState
-local function newState()
+local function newState(_, __, rules)
   local board = {}
   for number = 1, 12 do
     board[squareOf(number)] = "r"
     board[squareOf(number + 20)] = "w"
   end
   --- @type CheckersState
-  local state = { board = board, turn = RED, legal = {}, quiet = 0, positions = {} }
+  local state = { board = board, turn = RED, legal = {}, quiet = 0, positions = {}, free = rules ~= nil and not rules.forced }
   evaluate(state)
   return state
 end
@@ -428,7 +438,7 @@ function View:draw()
   if state.last then
     tints[state.last.path[1]], tints[state.last.path[#state.last.path]] = LAST_MOVE, LAST_MOVE
   end
-  if view.canMove and not walked then
+  if view.canMove and not walked and not state.free then
     -- Taking is compulsory, show which pieces that leaves to move
     for _, move in pairs(state.legal) do
       if #move.captures > 0 then
@@ -492,6 +502,9 @@ private.Games.Register({
   seats = 2,
   draws = true,
   history = true,
+  options = {
+    { id = "forced", name = L["checkers_option_forced"], description = L["checkers_option_forced_tip"], default = true },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

@@ -38,6 +38,7 @@ local _, private = ...
 --- @field game string Game id
 --- @field gameVersion number
 --- @field players string[] Full player names by seat
+--- @field options table<string, any>? What the rules were set to where that isn't what the game does by default, by option id
 --- @field me number The local player's seat
 --- @field host number? Seat of whoever set the match up, in matches of more than two
 --- @field log string[]
@@ -265,7 +266,7 @@ local function newReplay(match, game)
   local seats = #match.players
   local chance = private.Random.Seed(match.id)
   return {
-    state = game.newState(seats, private.Random.New(chance)),
+    state = game.newState(seats, private.Random.New(chance), private.Games.Rules(game.options, match.options)),
     chance = chance,
     events = {},
     -- A match started before the game learned about draws is played out the way it started, the
