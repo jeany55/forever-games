@@ -3,7 +3,7 @@
 A World of Warcraft Forever addon for playing classic games against your friends and guildies, at
 your own pace. Make a move, go pull a boss, come back later.
 
-Games so far: Tic Tac Toe and Chess.
+Games so far: Tic Tac Toe, Chess, Connect Four, Reversi and Checkers.
 
 ## Usage
 
@@ -15,6 +15,11 @@ Games so far: Tic Tac Toe and Chess.
 - In chess, drag a piece or click it and then where it goes. Click a move in the list, use the
   buttons under it or scroll the mouse wheel over the board to look back through the game.
   **Offer Draw** goes out with your next move, and your opponent turns it down by playing on
+- In Connect Four, click anywhere in a column to drop a disc into it. In Reversi, click one of
+  the marked squares to place a disc
+- Checkers moves like chess: drag a piece or click it and then where it goes. When a piece can
+  take, the ones that have to are pointed out. A piece that can go on jumping stays in your hand
+  until it has: click each square in turn, or right click to take it back and choose again
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -48,8 +53,9 @@ nothing: that catches mistakes in what the window does, not in how it looks.
 - `Games/` one file per game: its rules and its view
 - `Transport.lua` addon messages, lockdown and online/offline detection
 - `GUI/` main window, new game wizard and toast
-  - `Board.lua` a board of squares and pieces for games to draw on: any size, drag and drop,
-    target marks, gliding pieces
+  - `Board.lua` a board of squares and pieces for games to draw on: any size and shape, pieces
+    that are moved by drag and drop or placed with a click, target marks, pieces that glide,
+    drop and turn over, and a shared set of round pieces
 - `Core.lua` wires it all together
 - `Tools/` scripts that made the textures in `Images/`
 
@@ -60,16 +66,24 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
 
 - **Rules**: `newState`, `turn`, `validate`, `apply` and `result`, pure functions over a state
   table. A move is a short string the game defines (letters, digits and `-+.=_`). `apply` can
-  return a table saying what the move did, which the view gets back to animate from
+  return a table saying what the move did, which the view gets back to animate from. `turn`
+  decides who is next and needn't alternate: Reversi hands the turn straight back when a player
+  has nowhere to go
 - **View**: `createView(stage)` builds the game's widgets in the frame it is given and returns an
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
-  played on a grid get most of it from `GUI/Board.lua`
+  played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
+  when there is one worth showing
 
 Everything else is the engine's and the same for every game: challenges, turn notifications,
 saving, delivery, resigning, and for games that ask for them draw offers (`draws = true`) and
 the move list with stepping back through the game (`history = true`).
 
-`Games/TicTacToe.lua` is the smallest example, `Games/Chess.lua` uses all of it.
+`Games/TicTacToe.lua` is the smallest example, `Games/Chess.lua` uses all of it. For a game
+where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`, and at
+`Games/Checkers.lua` for moves made in several steps.
+
+The round pieces and the icons of the games played with them are drawn by
+`Tools/make_discs.py`.
 
 ## Credits
 

@@ -7,6 +7,7 @@
 --
 -- To add a game, drop a file in Games/, list it in the .toc and call private.Games.Register from
 -- it. Games/TicTacToe.lua is the smallest example, Games/Chess.lua uses everything on offer.
+-- Games/ConnectFour.lua and Games/Reversi.lua place pieces instead of moving them.
 --
 -- The window around the view is the engine's: who is playing, whose turn it is, resigning, draw
 -- offers, the list of moves and stepping back through them. A game opts into the last two with
