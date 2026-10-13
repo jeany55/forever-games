@@ -48,6 +48,7 @@ local DECLINE_REASONS = {
   nogame = "status_declined_nogame",
   version = "status_declined_version",
   busy = "status_declined_busy",
+  strangers = "status_declined_strangers",
   gone = "status_declined_gone",
 }
 local SOURCE_LABELS = { guild = "source_guild", friend = "source_friend", other = "source_other" }
@@ -67,7 +68,7 @@ local movesShown
 local refreshing = false
 
 --- Window settings that are remembered between sessions
---- @return { width: number, height: number, focus: boolean }
+--- @return { width: number, height: number, focus: boolean, scale: number }
 local function settings()
   return ForeverGames.db.profile.window
 end
@@ -1064,16 +1065,24 @@ local function arrange(focused)
   frame.detail:SetPoint("BOTTOMRIGHT")
 end
 
---- The corner the window is resized by
-local function createResizeGrip()
-  frame:SetResizable(true)
-  local maxWidth, maxHeight = math.max(MIN_WIDTH, GetScreenWidth()), math.max(MIN_HEIGHT, GetScreenHeight())
+--- Makes the window as big as the player wants everything in it, and lets it be resized up to
+--- the size of the screen, which is fewer of the window's own points the bigger it is drawn
+local function applyScale()
+  local scale = settings().scale / 100
+  frame:SetScale(scale)
+  local maxWidth, maxHeight = math.max(MIN_WIDTH, GetScreenWidth() / scale), math.max(MIN_HEIGHT, GetScreenHeight() / scale)
   if frame.SetResizeBounds then
     frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, maxWidth, maxHeight)
   else
     frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
     frame:SetMaxResize(maxWidth, maxHeight)
   end
+end
+
+--- The corner the window is resized by
+local function createResizeGrip()
+  frame:SetResizable(true)
+  applyScale()
 
   local grip = CreateFrame("Button", nil, frame)
   grip:SetSize(16, 16)
@@ -1201,6 +1210,26 @@ function MainFrame.Refresh()
   end
 
   refreshing = false
+end
+
+--- Call when the player changed how big the window is drawn
+function MainFrame.ApplyScale()
+  if frame then
+    applyScale()
+    MainFrame.Refresh()
+  end
+end
+
+--- Puts the window back in the middle of the screen at the size it started out with
+function MainFrame.ResetWindow()
+  local window, usual = settings(), ForeverGames.db.defaults.profile.window
+  window.width, window.height = usual.width, usual.height
+  if frame then
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER")
+    frame:SetSize(window.width, window.height)
+    MainFrame.Refresh()
+  end
 end
 
 --- @param id string?

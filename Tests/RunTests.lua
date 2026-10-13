@@ -89,6 +89,9 @@ function World:AddPlayer(name, matches)
     onRefused = function(host, gameId, reason)
       player.refused[#player.refused + 1] = host .. ":" .. gameId .. ":" .. reason
     end,
+    takes = function(sender)
+      return not player.knows or player.knows[sender] == true
+    end,
     send = function(target, text)
       if player.blocked then
         return false
@@ -1175,7 +1178,7 @@ end
 --- @return table MainFrame
 local function openWindow(player)
   Client.Install()
-  ForeverGames = { db = { profile = { sound = true, window = { width = 920, height = 680, focus = false } } }, printed = {} }
+  ForeverGames = { db = { profile = { sound = true, window = { width = 920, height = 680, focus = false, scale = 100 } } }, printed = {} }
   function ForeverGames:Print(text)
     self.printed[#self.printed + 1] = text
   end
@@ -11785,6 +11788,78 @@ function tests.WizardLinksAGameInChat()
   assert(alice.session:Offered("chess"))
   equal(nil, next(alice.matches), "there is no game until someone asks")
   equal(false, alice.private.Wizard.IsOpen())
+end
+
+function tests.ChallengeFromAStrangerIsTurnedAway()
+  local world = World.New()
+  local alice, bob, carol = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm"), world:AddPlayer("Carol-Realm")
+  -- Bob only plays with the players he knows, and Carol is the one he knows
+  bob.knows = { ["Carol-Realm"] = true }
+
+  local match = assert(alice.session:Invite("Bob-Realm", "chess"))
+  world:Deliver()
+  equal(nil, next(bob.matches), "Bob never hears of it")
+  equal(0, #bob.events)
+  equal("declined", alice.matches[match.id].status)
+  equal("strangers", alice.matches[match.id].declineReason)
+
+  -- Nothing is asked again of someone who said no
+  local sent = #world.sent
+  world:Tick(3600)
+  equal(sent, #world.sent)
+
+  local known = assert(carol.session:Invite("Bob-Realm", "chess"))
+  world:Deliver()
+  equal("incoming", bob.matches[known.id].status)
+  equal("invite:" .. known.id, bob.events[1])
+end
+
+function tests.CrowdHostedByAStrangerIsTurnedAway()
+  local world = World.New()
+  local alice, bob, carol = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm"), world:AddPlayer("Carol-Realm")
+  -- Who else sits at the table is the host's business, it is the host who has to be known
+  bob.knows = { ["Carol-Realm"] = true }
+  carol.knows = { ["Alice-Realm"] = true }
+
+  local match = assert(alice.session:Invite({ "Bob-Realm", "Carol-Realm" }, "chinesecheckers"))
+  world:Deliver()
+  equal(nil, next(bob.matches))
+  equal("declined", alice.matches[match.id].status)
+  equal("strangers", alice.matches[match.id].declineReason)
+  equal("Bob-Realm", alice.matches[match.id].players[alice.matches[match.id].declinedBy])
+end
+
+function tests.StrangerCanStillBeChallengedAndAskedForALinkedGame()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  bob.knows = {}
+
+  -- Turning strangers away is about what they start, not about what Bob starts with them
+  local match = assert(bob.session:Invite("Alice-Realm", "chess"))
+  world:Deliver()
+  assert(alice.session:Accept(match.id))
+  world:Deliver()
+  equal("active", bob.matches[match.id].status)
+
+  -- Clicking a link is asking for the game, the challenge that comes back is wanted
+  assert(alice.session:Offer("tictactoe"))
+  assert(bob.session:Ask("Alice-Realm", "tictactoe"))
+  world:Deliver()
+  local linked
+  for id, candidate in pairs(bob.matches) do
+    if candidate.game == "tictactoe" then
+      linked = id
+    end
+  end
+  equal("active", bob.matches[linked].status)
+  equal("active", alice.matches[linked].status)
+
+  -- And a link Bob left in chat is open to whoever clicks it
+  assert(bob.session:Offer("reversi"))
+  assert(alice.session:Ask("Bob-Realm", "reversi"))
+  world:Deliver()
+  equal(nil, bob.session:Offered("reversi"))
+  equal(0, #alice.refused)
 end
 
 -----------------------------

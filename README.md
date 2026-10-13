@@ -88,6 +88,10 @@ Sudoku and 2048, for when nobody is around.
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
+- `/fg options` (or a right click on the minimap button) opens the options, which are also in the
+  game's own settings under AddOns: whether your turn coming up is shown, heard or both, whether
+  that happens in combat, and whether it waits until you are out of an instance; the games' own sounds; whether anyone can challenge
+  you or only friends and guildies; the minimap button, and how big the window is drawn
 - `/fg log` shows recent activity (messages sent and received, with results). The full log is saved
   per character in the `ForeverGames.lua` saved variables file on logout or `/reload`
 

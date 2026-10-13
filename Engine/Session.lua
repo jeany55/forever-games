@@ -45,6 +45,7 @@ local _, private = ...
 --- @field records table<string, table<string, number>>? The best the player ever did at the games played alone, by game id and key. Persisted. Forgotten with the session if left out
 --- @field offers table<string, Offer>? The games the player linked in chat that nobody took yet, by game id. Persisted. Forgotten with the session if left out
 --- @field onRefused (fun(host: string, gameId: string, reason: string))? Called when a game the player asked for isn't to be had
+--- @field takes (fun(sender: string): boolean)? Whether the player takes challenges from this player. From everyone if left out
 
 --- A game that is open to whoever clicks its link first
 --- @class Offer
@@ -938,11 +939,17 @@ function Session:onInvite(sender, message)
   if not understood then
     return refuse("version")
   end
+  local now = self.env.now()
+  -- A game the player asked for by clicking a link is one they want, whoever linked it
+  local asked = not message.seats and self.asked[message.id]
+  local wanted = asked and asked.host == sender and asked.game == game.id and asked.expires > now
+  if not wanted and self.env.takes and not self.env.takes(sender) then
+    return refuse("strangers")
+  end
   if self:openMatchesWith(sender) >= MAX_OPEN_PER_PEER then
     return refuse("busy")
   end
 
-  local now = self.env.now()
   --- @type Match
   local match = {
     id = message.id,
@@ -959,8 +966,7 @@ function Session:onInvite(sender, message)
   }
   if not message.seats then
     self.env.matches[match.id] = match
-    local asked = self.asked[match.id]
-    if asked and asked.host == sender and asked.game == game.id and asked.expires > now then
+    if wanted then
       -- The player asked for this game, there is nothing left to answer
       self.asked[match.id] = nil
       match.status = "active"

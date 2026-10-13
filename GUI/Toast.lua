@@ -1,8 +1,10 @@
 --------------------------
 --  Toast
 --------------------------
--- A small click-through-to-open notification. Never shown during combat: whatever arrives then
--- is held back and the most recent one is shown once the fight is over.
+-- A small click-through-to-open notification, and the sound that goes with it. The player can
+-- have either without the other. Not during combat unless the player asked for that, nor in a
+-- dungeon, raid or battleground if the player said so: whatever arrives then is held back and
+-- the most recent one is shown once the fight is over or the player is back outside.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -57,26 +59,48 @@ local function create()
     end
   end)
 
-  -- Show what was held back once combat ends
+  -- Show what was held back once combat ends, or the player has left the instance
   frame:RegisterEvent("PLAYER_REGEN_ENABLED")
-  frame:SetScript("OnEvent", function()
-    if held then
-      local toast = held
-      held = nil
-      Toast.Show(toast.text, toast.onClick)
-    end
-  end)
+  frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+  frame:SetScript("OnEvent", Toast.Release)
+end
+
+--- Whether this is no time to bother the player
+--- @return boolean
+local function mustWait()
+  local profile = ForeverGames.db.profile
+  return (not profile.combat and InCombatLockdown()) or (profile.quiet and IsInInstance()) == true
+end
+
+--- Shows what was held back, if the time has come
+function Toast.Release()
+  if held and not mustWait() then
+    local toast = held
+    held = nil
+    Toast.Show(toast.text, toast.onClick)
+  end
 end
 
 --- @param text string
 --- @param onClick fun()? Called when the toast is left clicked
 function Toast.Show(text, onClick)
+  local profile = ForeverGames.db.profile
+  if not profile.toasts and not profile.alert then
+    return
+  end
   if not frame then
     create()
   end
 
-  if InCombatLockdown() then
+  if mustWait() then
     held = { text = text, onClick = onClick }
+    return
+  end
+
+  if profile.alert then
+    PlaySound(SOUNDKIT.TELL_MESSAGE)
+  end
+  if not profile.toasts then
     return
   end
 

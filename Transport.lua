@@ -45,6 +45,8 @@ local lastWhisper = {}
 -- Battle.net game accounts of friends who are in game, by full character name and the reverse
 local gameAccounts = {}
 local accountNames = {}
+-- Who was heard on the guild channel, by full name. Only a guildmate can speak there
+local guildSenders = {}
 
 --- Turns a global format string like "%s has come online." into a pattern capturing its arguments
 --- @param format string?
@@ -219,22 +221,25 @@ end
 
 --- Characters that Battle.net friends are playing right now in this version of the game
 --- @param add fun(name: string)
+--- @param quiet boolean? Leaves what was found out of the log
 --- @return number found
-local function battleNetFriends(add)
+local function battleNetFriends(add, quiet)
   if not (BNGetNumFriends and C_BattleNet and C_BattleNet.GetFriendNumGameAccounts) then
     return 0
   end
 
   local found = 0
   local total, online = BNGetNumFriends()
-  private.Log("Battle.net friends:", tostring(total), "total,", tostring(online), "online, this game is project", tostring(WOW_PROJECT_ID))
+  if not quiet then
+    private.Log("Battle.net friends:", tostring(total), "total,", tostring(online), "online, this game is project", tostring(WOW_PROJECT_ID))
+  end
   for friend = 1, total or 0 do
     for account = 1, C_BattleNet.GetFriendNumGameAccounts(friend) or 0 do
       local info = C_BattleNet.GetFriendGameAccountInfo(friend, account)
       local playing = info and info.isOnline and info.clientProgram == BNET_CLIENT_WOW and info.wowProjectID == WOW_PROJECT_ID
       local hasCharacter = info and info.characterName and info.characterName ~= ""
       local hasRealm = info and info.realmName and info.realmName ~= ""
-      if info and info.isOnline then
+      if info and info.isOnline and not quiet then
         -- No names in the log, just enough to see why a friend was or wasn't greeted
         private.Log(
           "Battle.net friend",
@@ -292,6 +297,48 @@ function Transport.OnlineFriends()
 
   private.Log("friends online:", characters, "of", total, "character friends,", battleNet, "Battle.net friends in game, guild:", tostring(IsInGuild()))
   return names
+end
+
+--- @param name string Full player name
+--- @return boolean
+local function isFriend(name)
+  if gameAccounts[name] then
+    return true
+  end
+  for index = 1, C_FriendList.GetNumFriends() or 0 do
+    local info = C_FriendList.GetFriendInfoByIndex(index)
+    if info and info.name and Transport.Normalize(info.name) == name then
+      return true
+    end
+  end
+  -- A Battle.net friend who started playing since the friends were last looked through
+  battleNetFriends(function() end, true)
+  return gameAccounts[name] ~= nil
+end
+
+--- @param name string Full player name
+--- @return boolean
+local function isGuildmate(name)
+  if not IsInGuild() then
+    return false
+  end
+  if guildSenders[name] then
+    return true
+  end
+  for index = 1, GetNumGuildMembers() or 0 do
+    local member = GetGuildRosterInfo(index)
+    if member and Transport.Normalize(member) == name then
+      return true
+    end
+  end
+  return false
+end
+
+--- Whether a player is on the friends list, a Battle.net friend or in the player's guild
+--- @param name string Full player name
+--- @return boolean
+function Transport.IsFriendOrGuildmate(name)
+  return isFriend(name) or isGuildmate(name)
 end
 
 --- Name from a "player not found" message, if it is the bounce of one of our own whispers
@@ -376,6 +423,11 @@ function Transport.Init(newHandlers)
   frame:RegisterEvent("PLAYER_ENTERING_WORLD")
   -- The friends list is only filled in once the client has asked the server for it
   C_FriendList.ShowFriends()
+  -- And so is the guild roster, which says who is a guildmate
+  local requestRoster = (C_GuildInfo and C_GuildInfo.GuildRoster) or GuildRoster
+  if requestRoster and IsInGuild() then
+    requestRoster()
+  end
   -- Not every client build has the restriction events
   pcall(frame.RegisterEvent, frame, "ADDON_RESTRICTION_STATE_CHANGED")
 
@@ -387,7 +439,11 @@ function Transport.Init(newHandlers)
         private.Log("recv unreadable payload, lockdown")
       elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
         private.Log("recv", channel, sender, text)
-        handlers.onMessage(Transport.Normalize(sender), text, channel == "GUILD")
+        local name = Transport.Normalize(sender)
+        if channel == "GUILD" and name then
+          guildSenders[name] = true
+        end
+        handlers.onMessage(name, text, channel == "GUILD")
       end
     elseif event == "BN_CHAT_MSG_ADDON" then
       local prefix, text, _, account = ...

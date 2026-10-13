@@ -12,6 +12,7 @@ local Transport = private.Transport
 local Links = private.Links
 local Toast = private.Toast
 local MainFrame = private.MainFrame
+local Options = private.Options
 
 --- @class ForeverGames: AceAddon-3.0, AceConsole-3.0, AceEvent-3.0
 --- @field db AceDBObject-3.0
@@ -29,9 +30,19 @@ local defaults = {
   char = { matches = {}, log = {}, offers = {} },
   profile = {
     minimap = { hide = false },
+    -- Whether a turn that comes up is shown, and whether it is heard
     toasts = true,
+    alert = true,
+    -- Whether that happens in the middle of a fight, or waits for it to end
+    combat = false,
+    -- Whether that waits for the player to be out of a dungeon, raid or battleground
+    quiet = false,
+    -- What the games themselves sound like: cards, dice, pieces
     sound = true,
-    window = { width = 920, height = 680, focus = false },
+    -- Who the player takes challenges from: "anyone", or only "known" friends and guildmates
+    challenges = "anyone",
+    -- The scale is in hundredths of the window's usual size
+    window = { width = 920, height = 680, focus = false, scale = 100 },
     -- Ids of the games the player starred in the new game wizard
     favourites = {},
     -- How the player last set the rules of each game in the wizard, by game id
@@ -63,6 +74,9 @@ function ForeverGames:OnEnable()
       local game = Games.Get(gameId)
       local text = L[reason == "offline" and "link_offline" or (reason == "version" and "link_version" or "link_closed")]
       self:Print(text:format(Transport.DisplayName(host), game and game.name or gameId))
+    end,
+    takes = function(sender)
+      return self.db.profile.challenges ~= "known" or Transport.IsFriendOrGuildmate(sender)
     end,
     send = Transport.Send,
     now = time,
@@ -108,6 +122,7 @@ function ForeverGames:OnEnable()
     self:OnLinkClicked(host, gameId)
   end)
 
+  Options.Init()
   self:RegisterMinimapIcon()
   self:UpdateAttention()
 
@@ -176,14 +191,10 @@ function ForeverGames:OnMatchEvent(event, match)
 
   local text = toastText(event, match)
   if text and not MainFrame.IsViewing(match.id) then
-    if self.db.profile.toasts then
-      Toast.Show(text, function()
-        MainFrame.Open(match.id)
-      end)
-    end
-    if self.db.profile.sound and not InCombatLockdown() then
-      PlaySound(SOUNDKIT.TELL_MESSAGE)
-    end
+    -- Shown, heard, both or neither, and when: that is the player's to say, see GUI/Options.lua
+    Toast.Show(text, function()
+      MainFrame.Open(match.id)
+    end)
   end
 
   MainFrame.Refresh()
@@ -222,8 +233,12 @@ function ForeverGames:RegisterMinimapIcon()
     label = L["title"],
     text = "0",
     icon = private.ICON,
-    OnClick = function()
-      MainFrame.Toggle()
+    OnClick = function(_, button)
+      if button == "RightButton" then
+        self:OpenOptions()
+      else
+        MainFrame.Toggle()
+      end
     end,
     OnTooltipShow = function(tooltip)
       local count = private.session:AttentionCount()
@@ -235,6 +250,7 @@ function ForeverGames:RegisterMinimapIcon()
       end
       tooltip:AddLine(" ")
       tooltip:AddLine(L["tooltip_left_click"], 1, 1, 1)
+      tooltip:AddLine(L["tooltip_right_click"], 1, 1, 1)
     end,
   })
   LibStub("LibDBIcon-1.0"):Register(private.ADDON_NAME, dataObject, self.db.profile.minimap)
@@ -262,6 +278,13 @@ function ForeverGames:PrintLog(argument)
   self:Print(L["log_shown"]:format(count, #entries))
 end
 
+function ForeverGames:OpenOptions()
+  local ok, err = Options.Open()
+  if not ok then
+    self:Print(L["err_" .. err])
+  end
+end
+
 --- @param input string
 function ForeverGames:HandleSlashCommand(input)
   local command, argument = (input or ""):match("^%s*(%S*)%s*(.-)%s*$")
@@ -271,6 +294,8 @@ function ForeverGames:HandleSlashCommand(input)
     MainFrame.Toggle()
   elseif command == "new" then
     MainFrame.NewGame()
+  elseif command == "options" or command == "config" or command == "settings" then
+    self:OpenOptions()
   elseif command == "log" then
     self:PrintLog(argument)
   elseif command == "play" then

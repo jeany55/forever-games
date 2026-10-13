@@ -31,6 +31,7 @@ local _, private = ...
 --- @field Links Links
 --- @field Toast Toast
 --- @field MainFrame MainFrame
+--- @field Options Options
 private.ADDON_NAME = "ForeverGames"
 private.ICON = "Interface\\Icons\\INV_Misc_Dice_01"
 private.L = LibStub("AceLocale-3.0"):GetLocale(private.ADDON_NAME)
