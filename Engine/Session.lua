@@ -23,6 +23,10 @@
 --
 -- A match that has been waiting on someone for a long time checks in with them now and then,
 -- which is how it comes out that they never got the move, or no longer have the match at all.
+--
+-- A game for one is a match like any other with nobody else in it: there is no challenge, it is
+-- never anyone's turn but the player's, and nothing about it is ever sent. It doesn't count as
+-- waiting on the player either, a game nobody else is in can wait for as long as it likes.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -212,7 +216,7 @@ end
 --- @param match Match
 --- @return boolean
 function Session:NeedsAttention(match)
-  if match.hidden then
+  if match.hidden or Match.IsSolo(match) then
     return false
   end
   return match.status == "incoming" or match.unread == true or Match.IsMyTurn(match)
@@ -274,7 +278,31 @@ function Session:openMatchesWith(peer)
   return count
 end
 
---- Challenges one player, or several to a game for more than two
+--- Starts a game for one. There is nobody to ask, so it is on at once
+--- @param game GameDefinition
+--- @return Match
+function Session:startSolo(game)
+  local now = self.env.now()
+  --- @type Match
+  local match = {
+    id = string.format("%x%06x", now, self.env.random(0xFFFFFF)),
+    game = game.id,
+    gameVersion = game.version,
+    players = { self.env.me },
+    me = 1,
+    log = {},
+    status = "active",
+    seen = {},
+    created = now,
+    updated = now,
+  }
+  self.env.matches[match.id] = match
+  self.env.notify("changed", match)
+  return match
+end
+
+--- Challenges one player, or several to a game for more than two. With nobody to challenge it
+--- starts a game for one, where the game is one
 --- @param targets string|string[] Full player names
 --- @param gameId string
 --- @return Match?, string? error
@@ -287,6 +315,9 @@ function Session:Invite(targets, gameId)
     targets = { targets }
   end
   if #targets == 0 then
+    if Games.CanSeat(game, 1) then
+      return self:startSolo(game)
+    end
     return nil, "no_target"
   end
   local invited = {}
@@ -456,13 +487,41 @@ function Session:AcceptDraw(id)
   return self:appendOwn(id, Match.DrawAcceptEntry(match.me))
 end
 
+--- Whether the local player can take their last move back: only in a game they play alone
+--- that allows it, and not once it is over
+--- @param match Match
+--- @return boolean
+function Session:CanUndo(match)
+  local game = Games.Get(match.game)
+  return game ~= nil and game.undo == true and Match.IsSolo(match) and match.status == "active" and #match.log > 0
+end
+
+--- Takes the local player's last move back
+--- @param id string
+--- @return boolean, string? error
+function Session:Undo(id)
+  local match = self.env.matches[id]
+  if not match then
+    return false, "no_match"
+  end
+  if not self:CanUndo(match) then
+    return false, "no_undo"
+  end
+  Match.Truncate(match, #match.log - 1)
+  self:touch(match, "changed")
+  return true
+end
+
 --- Whether the local player can walk away from a match without resigning it first: it is over,
---- for everyone or for them, or it never began
+--- for everyone or for them, it never began, or nobody else is playing it
 --- @param match Match
 --- @return boolean
 function Session:CanForget(match)
   if match.status == "incoming" then
     return false
+  end
+  if Match.IsSolo(match) then
+    return true
   end
   return match.status ~= "active" or not Match.Started(match) or Match.IsOut(match, match.me)
 end

@@ -18,6 +18,10 @@
 -- Games/Backgammon.lua. Games where a player holds something the others don't see say what each
 -- of them may know with `visible`, see Games/CrazyEights.lua, and Games/Battleship.lua for
 -- something a player chose themselves instead of being dealt.
+--
+-- A game can also be for one (`seats = 1`), see Games/Solitaire.lua. There is nobody to
+-- challenge and nothing to send: it begins as soon as it is picked, it is always the player's
+-- turn, and with `undo` a move can be taken back.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -48,7 +52,7 @@ local _, private = ...
 --- @field genre string? What kind of game it is, for narrowing down the list in the wizard. Shown as L["genre_" .. genre], use one that is there already where it fits
 --- @field icon string? Texture path, square
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
---- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }
+--- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }. 1 for a game the player plays alone
 --- @field newState fun(seats: number, random: Random): table Fresh game state for this many players. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
 --- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
@@ -60,6 +64,8 @@ local _, private = ...
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game
 --- @field seatLabel (fun(seat: number, seats: number): string)? Short label for a seat in a game of this many players, e.g. "X"
+--- @field undo boolean? For a game for one: the player may take moves back, as many as they like. The window has the button, and the view is shown the position before with `changed` set
+--- @field progress (fun(state: table): string?)? For a game for one: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
 
 --- @class Games
 local Games = {}
@@ -83,6 +89,14 @@ function Games.SeatCounts(game)
   return counts
 end
 
+--- Whether a game is only ever played alone
+--- @param game GameDefinition
+--- @return boolean
+function Games.IsSolo(game)
+  local counts = Games.SeatCounts(game)
+  return counts[#counts] == 1
+end
+
 --- @param game GameDefinition
 --- @param seats number
 --- @return boolean
@@ -103,9 +117,9 @@ function Games.Register(definition)
   assert(#counts > 0, "Game " .. definition.id .. " doesn't say how many play it")
   for _, count in ipairs(counts) do
     local whole = type(count) == "number" and count == math.floor(count)
-    assert(whole and count >= 2 and count <= MAX_SEATS, "Games are for 2 to " .. MAX_SEATS .. " players")
+    assert(whole and count >= 1 and count <= MAX_SEATS, "Games are for 1 to " .. MAX_SEATS .. " players")
   end
-  assert(counts[#counts] == 2 or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
+  assert(counts[#counts] <= 2 or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
   for _, key in ipairs(REQUIRED) do
     assert(type(definition[key]) == "function", "Game " .. definition.id .. " is missing " .. key)
   end

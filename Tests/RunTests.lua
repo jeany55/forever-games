@@ -25,11 +25,12 @@ local ENGINE_FILES = {
   "Lexicon/English.lua",
   "Lexicon/Warcraft.lua",
   "Games/Words.lua",
+  "Games/Solitaire.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -1770,7 +1771,7 @@ function tests.GamesAreFoundByWordAndGenre()
   local everything = idsOf(Games.List())
   equal(everything, idsOf(Games.Search()))
   equal(everything, idsOf(Games.Search("  ")))
-  equal("casual,strategy,dice,cards,words", table.concat(Games.Genres(), ","))
+  equal("casual,strategy,dice,cards,words,solo", table.concat(Games.Genres(), ","))
 
   -- The tests see the names of the strings rather than the strings, which is as good to search
   equal("chess", idsOf(Games.Search("chess")))
@@ -5683,6 +5684,1142 @@ function tests.DragMovesAboutWhateverTheGameGivesIt()
   drag.frame:Fire("OnUpdate", 0.02)
   equal("rack drop Q left", log[#log])
   equal(false, puppet:IsShown())
+end
+
+-----------------------------
+-- Games for one
+-----------------------------
+
+function tests.GameForOneBeginsAtOnceAndIsNeverSent()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  local Match = alice.private.Match
+
+  local match = assert(alice.session:Invite({}, "solitaire"))
+  equal("active", match.status)
+  equal(1, #match.players)
+  equal(1, match.me)
+  equal(true, Match.IsSolo(match))
+  equal(true, Match.Started(match))
+  equal(true, Match.IsMyTurn(match))
+  equal("changed:" .. match.id, alice.events[#alice.events])
+
+  -- Always the player's turn, which is no reason to keep reminding them
+  equal(false, alice.session:NeedsAttention(match))
+  equal(0, alice.session:AttentionCount())
+  equal(false, alice.session:IsPending(match))
+  equal(1, #alice.session:List())
+
+  assert(alice.session:Move(match.id, "d"))
+  alice.session:Hello()
+  world:Tick(100000)
+  equal(0, #world.sent, "nothing about it is anybody else's business")
+  equal(0, #world.queue)
+
+  -- It can't be played against anyone, and a game for two can't be played alone
+  equal("player_count", select(2, alice.session:Invite("Bob-Realm", "solitaire")))
+  equal("no_target", select(2, alice.session:Invite({}, "chess")))
+end
+
+function tests.GameForOneLetsMovesBeTakenBack()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Match = alice.private.Match
+  local match = assert(alice.session:Invite({}, "solitaire"))
+  local id = match.id
+  local top = Match.State(match).stock[24]
+
+  equal(false, alice.session:CanUndo(match), "nothing to take back yet")
+  equal("no_undo", select(2, alice.session:Undo(id)))
+  assert(alice.session:Move(id, "d"))
+  assert(alice.session:Move(id, "d"))
+  equal(2, #Match.State(match).waste)
+  equal(2, Match.State(match).moves)
+
+  equal(true, alice.session:CanUndo(match))
+  assert(alice.session:Undo(id))
+  equal("d", logOf(alice, id))
+  equal(1, #Match.State(match).waste)
+  equal(top, Match.State(match).waste[1])
+  equal(1, Match.State(match).moves, "a move taken back was never made")
+  assert(alice.session:Undo(id))
+  equal(0, #Match.State(match).waste)
+  equal(top, Match.State(match).stock[24], "the same card is on top again")
+  equal("no_undo", select(2, alice.session:Undo(id)))
+  equal("no_match", select(2, alice.session:Undo("nope")))
+
+  -- A game played alone can be walked away from at any time
+  assert(alice.session:Move(id, "d"))
+  equal(true, alice.session:CanForget(match))
+  assert(alice.session:Forget(id))
+  equal(nil, alice.matches[id])
+end
+
+function tests.GameForOneCanBeResigned()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "solitaire"))
+  assert(alice.session:Resign(match.id))
+  equal("finished", match.status)
+  local result = alice.private.Match.Result(match)
+  equal(0, result.winner, "nobody is left to have won")
+  equal("resign", result.reason)
+  equal(false, alice.session:CanUndo(match), "what is over is over")
+end
+
+function tests.MovesCanOnlyBeTakenBackInAGameForOne()
+  local _, alice, _, id, first = startedMatch()
+  assert(first.session:Move(id, "5"))
+  equal("no_undo", select(2, first.session:Undo(id)))
+  equal(false, alice.session:CanUndo(alice.matches[id]))
+end
+
+-----------------------------
+-- Solitaire
+-----------------------------
+
+--- A game of solitaire to try the rules on, dealt from a seed
+--- @param seed number?
+--- @return table game, table state, table private
+local function solitaire(seed)
+  local private = loadEngine()
+  local game = private.Games.Get("solitaire")
+  return game, game.newState(1, private.Random.New(seed or 1)), private
+end
+
+--- Every card of a game of solitaire, wherever it is
+--- @param state table
+--- @return string[]
+local function solitaireCards(state)
+  local cards = {}
+  local function add(pile)
+    for _, card in ipairs(pile) do
+      cards[#cards + 1] = card
+    end
+  end
+  add(state.stock)
+  add(state.waste)
+  for _, pile in pairs(state.homes) do
+    add(pile)
+  end
+  for _, column in ipairs(state.columns) do
+    add(column.cards)
+  end
+  table.sort(cards)
+  return cards
+end
+
+local SOLITAIRE_RANKS = "A23456789TJQK"
+
+--- Checks that a position is one the rules allow: all the cards, each once, the piles they go
+--- home on built up in suit and what is face up in the columns built down in turn about
+--- @param state table
+local function solitaireIsSound(state)
+  local cards = solitaireCards(state)
+  equal(52, #cards)
+  for index = 2, #cards do
+    assert(cards[index] ~= cards[index - 1], cards[index] .. " is there twice")
+  end
+  for suit, pile in pairs(state.homes) do
+    for rank, card in ipairs(pile) do
+      equal(SOLITAIRE_RANKS:sub(rank, rank) .. suit, card)
+    end
+  end
+  local red = { H = true, D = true }
+  for _, column in ipairs(state.columns) do
+    assert(column.down >= 0 and column.down <= math.max(0, #column.cards - 1), "a column always shows its top card")
+    for index = column.down + 2, #column.cards do
+      local under, over = column.cards[index - 1], column.cards[index]
+      equal(SOLITAIRE_RANKS:find(under:sub(1, 1), 1, true), SOLITAIRE_RANKS:find(over:sub(1, 1), 1, true) + 1, "one lower on " .. under)
+      assert(red[under:sub(2, 2)] ~= red[over:sub(2, 2)], over .. " on " .. under .. " isn't turn about")
+    end
+  end
+end
+
+--- The move a player who isn't thinking very hard would make, nil when they would give up
+--- @param game table
+--- @param state table
+--- @param idle number How many cards they have turned since they last did anything else
+--- @return string?
+local function solitaireMove(game, state, idle)
+  local function goes(move)
+    return game.validate(state, 1, move)
+  end
+  if goes("a") then
+    return "a"
+  end
+  for _, from in ipairs({ "1", "2", "3", "4", "5", "6", "7", "w" }) do
+    if goes(from .. "f") then
+      return from .. "f"
+    end
+  end
+  -- Whatever uncovers a card
+  for from, column in ipairs(state.columns) do
+    local up = #column.cards - column.down
+    if up > 0 and column.down > 0 then
+      for to = 1, 7 do
+        local move = from .. to .. (up > 1 and up or "")
+        if goes(move) then
+          return move
+        end
+      end
+    end
+  end
+  for to = 1, 7 do
+    if goes("w" .. to) then
+      return "w" .. to
+    end
+  end
+  if goes("d") and idle < #state.stock + #state.waste + 2 then
+    return "d"
+  end
+  return nil
+end
+
+--- A position with nothing in it, to lay out by hand
+--- @param game table
+--- @return table
+local function emptySolitaire(game)
+  local state = game.newState(1, loadEngine().Random.New(1))
+  state.stock, state.waste = {}, {}
+  for column = 1, 7 do
+    state.columns[column] = { cards = {}, down = 0 }
+  end
+  return state
+end
+
+function tests.SolitaireDealsSevenColumnsAndAStock()
+  local game, state, private = solitaire(5)
+  equal(1, game.turn(state))
+  equal(nil, game.result(state))
+  equal(24, #state.stock)
+  equal(0, #state.waste)
+  for column = 1, 7 do
+    equal(column, #state.columns[column].cards)
+    equal(column - 1, state.columns[column].down, "only the top card is face up")
+  end
+  for _, suit in ipairs({ "S", "H", "D", "C" }) do
+    equal(0, #state.homes[suit])
+  end
+  solitaireIsSound(state)
+
+  local same = game.newState(1, private.Random.New(5))
+  equal(table.concat(state.stock, ","), table.concat(same.stock, ","), "the same deal from the same seed")
+  local other = game.newState(1, private.Random.New(6))
+  assert(table.concat(state.stock, ",") ~= table.concat(other.stock, ","), "and another from another")
+  equal("not_your_turn", select(2, game.validate(state, 2, "d")))
+end
+
+function tests.SolitaireTurnsTheStockAndGoesThroughItAgain()
+  local game, state = solitaire(2)
+  local order = {}
+  for turned = 1, 24 do
+    equal(true, game.validate(state, 1, "d"))
+    local event = game.apply(state, 1, "d")
+    order[turned] = event.drew
+    equal(event.drew, state.waste[turned])
+  end
+  equal(0, #state.stock)
+  equal(24, #state.waste)
+
+  state.score = 130
+  local event = game.apply(state, 1, "d")
+  equal(true, event.again)
+  equal(24, #state.stock)
+  equal(0, #state.waste)
+  equal(30, state.score, "going through it again costs a hundred")
+  equal(order[1], game.apply(state, 1, "d").drew, "in the order it was gone through before")
+  equal(order[2], game.apply(state, 1, "d").drew)
+  solitaireIsSound(state)
+
+  state.stock, state.waste = {}, {}
+  equal("invalid_move", select(2, game.validate(state, 1, "d")), "nothing left to turn")
+end
+
+function tests.SolitaireBuildsColumnsDownInTurnAbout()
+  local game = solitaire()
+  local state = emptySolitaire(game)
+  state.columns[1] = { cards = { "9C", "KH", "QS" }, down = 1 }
+  state.columns[2] = { cards = { "KD" }, down = 0 }
+  state.columns[3] = { cards = { "4D", "JH" }, down = 1 }
+  state.columns[4] = { cards = { "JS" }, down = 0 }
+  state.waste = { "5C", "JD" }
+
+  local wrong = {
+    ["32"] = "a jack on a king",
+    ["42"] = "and the other jack",
+    ["41"] = "black on black",
+    ["13"] = "a queen on a jack",
+    ["35"] = "anything but a king into an empty column",
+    ["11"] = "a card onto its own column",
+    ["133"] = "a card that lies face down",
+    ["322"] = "and one that is turned over only afterwards",
+    ["w22"] = "more than one card of the waste",
+    ["121"] = "one card written as if it were several",
+    ["1202"] = "a number written another way",
+    ["w8"] = "a column there isn't",
+    ["s1"] = "a card of the stock",
+    ["5f"] = "a card that isn't there",
+    ["wf"] = "a jack home before its ace",
+    ["Sf"] = "a card that is home already",
+    ["S1"] = "a card from a pile that has none",
+    ["x"] = "nonsense",
+    [""] = "nothing",
+  }
+  for move, why in pairs(wrong) do
+    equal("invalid_move", select(2, game.validate(state, 1, move)), why)
+  end
+
+  -- The jack of hearts on the queen of spades, which turns over the card it lay on
+  equal(true, game.validate(state, 1, "31"))
+  local event = game.apply(state, 1, "31")
+  equal("JH", table.concat(event.cards, ","))
+  equal("4D", event.turned)
+  equal("9C,KH,QS,JH", table.concat(state.columns[1].cards, ","))
+  equal(0, state.columns[3].down)
+  equal(5, state.score, "five for the card turned over")
+
+  -- The cards built on each other move together, onto a king or into a column that is empty
+  equal(true, game.validate(state, 1, "122"), "from the queen up")
+  equal("invalid_move", select(2, game.validate(state, 1, "152")), "but only a king goes into an empty column")
+  equal(true, game.validate(state, 1, "153"))
+  event = game.apply(state, 1, "153")
+  equal("KH,QS,JH", table.concat(event.cards, ","))
+  equal("9C", event.turned)
+  equal("9C", table.concat(state.columns[1].cards, ","))
+  equal("KH,QS,JH", table.concat(state.columns[5].cards, ","))
+  equal(10, state.score)
+
+  -- The waste gives up its top card, for five
+  equal("invalid_move", select(2, game.validate(state, 1, "w5")), "a jack on a jack")
+  state.columns[6] = { cards = { "QC" }, down = 0 }
+  equal(true, game.validate(state, 1, "w6"))
+  game.apply(state, 1, "w6")
+  equal("5C", table.concat(state.waste, ","))
+  equal("QC,JD", table.concat(state.columns[6].cards, ","))
+  equal(15, state.score)
+  equal(3, state.moves)
+end
+
+function tests.SolitaireSendsCardsHomeAndBringsThemBack()
+  local game = solitaire()
+  local state = emptySolitaire(game)
+  state.columns[1] = { cards = { "7C", "AH" }, down = 1 }
+  state.columns[2] = { cards = { "3S" }, down = 0 }
+  state.columns[3] = { cards = { "2S", "AS" }, down = 0 }
+  state.waste = { "2H" }
+
+  equal("invalid_move", select(2, game.validate(state, 1, "wf")), "the two waits for its ace")
+  equal("invalid_move", select(2, game.validate(state, 1, "3f2")), "one card at a time")
+  game.apply(state, 1, "1f")
+  equal("AH", table.concat(state.homes.H, ","))
+  equal(15, state.score, "ten for the ace and five for the card under it")
+  equal(true, game.validate(state, 1, "wf"))
+  game.apply(state, 1, "wf")
+  equal("AH,2H", table.concat(state.homes.H, ","))
+  equal(25, state.score)
+
+  -- A card that is home can be brought back to a column, at a price
+  equal(true, game.validate(state, 1, "H2"), "the red two on the black three")
+  equal("invalid_move", select(2, game.validate(state, 1, "H3")), "but not on the ace")
+  game.apply(state, 1, "H2")
+  equal("3S,2H", table.concat(state.columns[2].cards, ","))
+  equal("AH", table.concat(state.homes.H, ","))
+  equal(10, state.score)
+  game.apply(state, 1, "H1")
+  equal("invalid_move", select(2, game.validate(state, 1, "H1")))
+  equal(0, state.score, "never to below nothing")
+  equal(nil, game.result(state))
+end
+
+function tests.SolitaireIsWonByTheLastCardHome()
+  local game = solitaire()
+  local state = emptySolitaire(game)
+  for _, suit in ipairs({ "S", "H", "D", "C" }) do
+    for rank = 1, 13 do
+      state.homes[suit][rank] = SOLITAIRE_RANKS:sub(rank, rank) .. suit
+    end
+  end
+  table.remove(state.homes.D)
+  state.columns[4] = { cards = { "KD" }, down = 0 }
+  solitaireIsSound(state)
+  equal(nil, game.result(state))
+  game.apply(state, 1, "4f")
+  equal(1, game.result(state).winner)
+end
+
+function tests.SolitaireOffersToPlayTheRestOut()
+  local game = solitaire()
+  local state = emptySolitaire(game)
+  -- Everything is home but the queens and kings of two suits
+  for _, suit in ipairs({ "S", "H", "D", "C" }) do
+    for rank = 1, (suit == "S" or suit == "H") and 11 or 13 do
+      state.homes[suit][rank] = SOLITAIRE_RANKS:sub(rank, rank) .. suit
+    end
+  end
+  state.columns[1] = { cards = { "KH", "KS", "QH" }, down = 1 }
+  state.stock = { "QS" }
+  state.score = 100
+  solitaireIsSound(state)
+  equal("invalid_move", select(2, game.validate(state, 1, "a")), "not while something lies face down")
+
+  state.columns[1].down = 0
+  equal(true, game.validate(state, 1, "a"), "what is left in the stock can be got at")
+  local event = game.apply(state, 1, "a")
+  equal("QS,QH,KS,KH", table.concat(event.finished, ","), "lowest first, so each has something to go on")
+  equal(1, game.result(state).winner)
+  equal(140, state.score, "ten for each of them")
+  equal(0, #state.stock + #state.waste + #state.columns[1].cards)
+  solitaireIsSound(state)
+  equal("invalid_move", select(2, game.validate(state, 1, "a")), "nothing left to send")
+end
+
+function tests.SolitaireIsPlayedThroughWithoutLosingACard()
+  local won, played = 0, 0
+  for seed = 1, 60 do
+    local game, state = solitaire(seed)
+    local idle = 0
+    while not game.result(state) do
+      local move = solitaireMove(game, state, idle)
+      if not move then
+        break
+      end
+      idle = move == "d" and idle + 1 or 0
+      local event = game.apply(state, 1, move)
+      played = played + 1
+      solitaireIsSound(state)
+      if event.turned then
+        local turned = false
+        for _, column in ipairs(state.columns) do
+          turned = turned or column.cards[#column.cards] == event.turned
+        end
+        equal(true, turned, "the card turned over is on top of its column")
+      end
+      assert(played < 100000, "the game should end")
+    end
+    if game.result(state) then
+      won = won + 1
+      equal(52, #state.homes.S + #state.homes.H + #state.homes.D + #state.homes.C)
+      assert(state.score > 0)
+    end
+  end
+  assert(won > 0, "some deals come out even for a player who isn't thinking")
+end
+
+-----------------------------
+-- Card table
+-----------------------------
+
+--- A card table on its own, with cards of 40 by 60 and three piles: a column that fans out
+--- downwards, a pile next to it and one further along
+--- @return table felt, table frame, string[] log What the player did, as the table told the game
+local function tableOnItsOwn()
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } } }
+  local private = {}
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Cards.lua", "GUI/CardTable.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local felt = private.CardTable.New(CreateFrame("Frame", nil, UIParent))
+  felt:SetSize(400, 300, 40, 60)
+  felt:Pile("column", { x = 10, y = 10, fan = { 0, 0.5 }, downFan = { 0, 0.25 } })
+  felt:Pile("pile", { x = 110, y = 10 })
+  felt:Pile("far", { x = 310, y = 10, press = true })
+
+  local log = {}
+  felt.onDrop = function(from, index, to)
+    log[#log + 1] = "drop " .. from .. " " .. index .. " " .. to
+  end
+  felt.onClick = function(pile, index)
+    log[#log + 1] = "click " .. pile .. " " .. tostring(index)
+  end
+  felt.onRightClick = function(pile, index)
+    log[#log + 1] = "right " .. pile .. " " .. tostring(index)
+  end
+  return felt, felt.frame, log
+end
+
+--- Moves the cursor to a point of a card table, measured from its top left corner
+--- @param frame table
+--- @param x number
+--- @param y number
+local function pointAtTable(frame, x, y)
+  Client.cursor = { x, frame.height - y }
+end
+
+--- Lets time pass on a card table
+--- @param frame table
+--- @param seconds number
+local function passTime(frame, seconds)
+  for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+    frame:Fire("OnUpdate", 0.02)
+  end
+end
+
+--- Presses the button on a card or an empty place, where it is
+--- @param frame table
+--- @param region table
+--- @param x number
+--- @param y number
+local function pressOnTable(frame, region, x, y)
+  pointAtTable(frame, x, y)
+  Client.mouseDown = true
+  region:Fire("OnMouseDown", "LeftButton")
+  frame:Fire("OnUpdate", 0.02)
+end
+
+--- Lets the button go again
+--- @param frame table
+local function letGoOnTable(frame)
+  Client.mouseDown = false
+  frame:Fire("OnUpdate", 0.02)
+end
+
+function tests.CardTableLaysCardsOutInPiles()
+  local felt, frame = tableOnItsOwn()
+  equal(400, frame.width)
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 }, pile = { cards = { "KD" } } })
+  equal(false, felt:Busy(), "what wasn't there before is simply there")
+
+  -- A card's place is its middle: the first of the column, then a quarter of a card further for
+  -- the one face down and half a card for the one face up
+  local ace, two, three, king = felt.sprites.AS, felt.sprites["2H"], felt.sprites["3C"], felt.sprites.KD
+  equal("30,40", ace.x .. "," .. ace.y)
+  equal("30,55", two.x .. "," .. two.y)
+  equal("30,85", three.x .. "," .. three.y)
+  equal("130,40", king.x .. "," .. king.y)
+  assert(ace.picture.texture:find("back$"), "face down is seen from the back")
+  assert(two.picture.texture:find("2H$"))
+  equal(40, two.width)
+  equal(60, two.height)
+  equal(true, ace:IsShown())
+
+  -- Saying it again changes nothing
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 }, pile = { cards = { "KD" } } })
+  equal(false, felt:Busy())
+
+  -- A card that is no longer on the table is taken off it, and can come back
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 } })
+  equal(nil, felt.sprites.KD)
+  equal(false, king:IsShown())
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 }, pile = { cards = { "KD" } } })
+  equal(true, felt.sprites.KD:IsShown())
+end
+
+function tests.CardTableKeepsALongPileWithinItsRoom()
+  local felt = tableOnItsOwn()
+  felt:Pile("column", { room = 90 })
+  local cards = {}
+  for index = 1, 4 do
+    cards[index] = index .. "S"
+  end
+  felt:Set({ column = { cards = cards } })
+  equal(130, felt.sprites["4S"].y, "three steps of half a card fit")
+
+  for index = 5, 10 do
+    cards[index] = index .. "S"
+  end
+  felt:Set({ column = { cards = cards } }, { instant = true })
+  equal(130, felt.sprites["10S"].y, "nine don't: the cards lie closer together")
+  equal(50, felt.sprites["2S"].y)
+
+  -- Only so many on top are spread out
+  felt:Pile("pile", { fan = { 0.5, 0 }, spread = 2 })
+  felt:Set({ pile = { cards = { "AD", "2D", "3D", "4D" } } }, { instant = true })
+  equal(130, felt.sprites.AD.x)
+  equal(130, felt.sprites["3D"].x, "all but the last two lie on each other")
+  equal(150, felt.sprites["4D"].x)
+end
+
+function tests.CardTableShowsWhatChanged()
+  local felt, frame = tableOnItsOwn()
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 2 } })
+  local ace, two, three = felt.sprites.AS, felt.sprites["2H"], felt.sprites["3C"]
+  local sounds = #Client.sounds
+
+  -- The three goes to the other pile, which turns the two over
+  local position = { column = { cards = { "AS", "2H" }, down = 1 }, pile = { cards = { "3C" } } }
+  felt:Set(position, { sound = "cardPlace" })
+  equal(true, felt:Busy())
+  equal(sounds + 1, #Client.sounds)
+  equal("cardPlace", Client.sounds[#Client.sounds])
+  assert(two.picture.texture:find("back$"), "not turned over yet")
+
+  frame:Fire("OnUpdate", 0.06)
+  assert(three.x > 30 and three.x < 130, "the three is on its way, at " .. three.x)
+  assert(three:GetAlpha() == 1)
+  -- Asked for again halfway, nothing starts over
+  local halfway = three.x
+  felt:Set(position, { sound = "cardPlace" })
+  equal(halfway, three.x)
+  equal(sounds + 1, #Client.sounds)
+
+  local narrowest = two.width
+  for _ = 1, 30 do
+    frame:Fire("OnUpdate", 0.02)
+    narrowest = math.min(narrowest, two.width)
+  end
+  equal(false, felt:Busy())
+  equal("130,40", three.x .. "," .. three.y)
+  assert(narrowest < 10, "the two was seen edge on as it turned, got as narrow as " .. narrowest)
+  equal(40, two.width)
+  assert(two.picture.texture:find("2H$"))
+  assert(ace.picture.texture:find("back$"))
+
+  -- A move taken back is the same thing the other way round
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 2 } })
+  equal(true, felt:Busy())
+  passTime(frame, 1)
+  equal("30,70", three.x .. "," .. three.y)
+  assert(two.picture.texture:find("back$"))
+
+  -- All at once when that is what is wanted
+  felt:Set(position, { instant = true })
+  equal(false, felt:Busy())
+  equal(130, three.x)
+  assert(two.picture.texture:find("2H$"))
+end
+
+function tests.CardTableSendsCardsOffOneAfterTheOther()
+  local felt, frame = tableOnItsOwn()
+  felt:Set({ pile = { cards = { "AS", "2S", "3S", "4S" }, down = 4 } })
+  local sounds = #Client.sounds
+  felt:Set({ pile = { cards = { "AS" }, down = 1 }, column = { cards = { "4S", "3S", "2S" }, down = 2 } }, { sequence = { "4S", "3S", "2S" }, gap = 0.1, sound = "cardSlide" })
+
+  --- @return number How many of them have left the pile
+  local function left()
+    local count = 0
+    for _, id in ipairs({ "2S", "3S", "4S" }) do
+      count = count + (felt.sprites[id].x < 130 and 1 or 0)
+    end
+    return count
+  end
+  frame:Fire("OnUpdate", 0.05)
+  equal(1, left())
+  equal(sounds + 1, #Client.sounds, "heard as it goes")
+  frame:Fire("OnUpdate", 0.1)
+  equal(2, left())
+  frame:Fire("OnUpdate", 0.1)
+  equal(3, left())
+  equal(sounds + 3, #Client.sounds)
+  passTime(frame, 1)
+  equal(false, felt:Busy())
+  assert(felt.sprites["2S"].picture.texture:find("2S$"), "the last one turned over on the way")
+  assert(felt.sprites["3S"].picture.texture:find("back$"))
+
+  -- Stopped, everything is where it belongs
+  felt:Set({ pile = { cards = { "AS", "2S", "3S", "4S" }, down = 4 } }, { sequence = { "2S", "3S", "4S" } })
+  equal(true, felt:Busy())
+  felt:Stop()
+  equal(false, felt:Busy())
+  equal(130, felt.sprites["4S"].x)
+end
+
+function tests.CardTableLetsThePlayerCarryCards()
+  local felt, frame, log = tableOnItsOwn()
+  local asked = {}
+  felt.canLift = function(pile, index)
+    return pile == "column" and index >= 2
+  end
+  felt.canDrop = function(from, index, to)
+    asked[#asked + 1] = from .. " " .. index .. " " .. to
+    return to == "pile"
+  end
+  felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 }, pile = { cards = { "KD" } } })
+  local ace, two, three, king = felt.sprites.AS, felt.sprites["2H"], felt.sprites["3C"], felt.sprites.KD
+
+  -- A click is a click
+  pressOnTable(frame, three, 30, 85)
+  letGoOnTable(frame)
+  equal("click column 3", log[#log])
+  equal(1, #log)
+
+  -- A card that may not be picked up stays where it is, however far the cursor goes
+  pressOnTable(frame, ace, 30, 40)
+  pointAtTable(frame, 130, 40)
+  frame:Fire("OnUpdate", 0.02)
+  equal(30, ace.x)
+  letGoOnTable(frame)
+  equal("click column 1", log[#log])
+
+  -- Taken hold of near its corner, the two is carried by that corner, and the three with it
+  pressOnTable(frame, two, 20, 45)
+  pointAtTable(frame, 60, 65)
+  frame:Fire("OnUpdate", 0.02)
+  equal("70,75", two.x .. "," .. two.y)
+  equal("70,105", three.x .. "," .. three.y)
+  equal(30, ace.x)
+  equal(false, king.target == true, "not over anything yet")
+
+  -- Over the pile it would land on, the pile lights up
+  pointAtTable(frame, 110, 30)
+  frame:Fire("OnUpdate", 0.02)
+  equal(true, king.target)
+  equal(true, king.light:IsShown())
+  equal("column 2 pile", asked[#asked])
+  letGoOnTable(frame)
+  equal("drop column 2 pile", log[#log])
+  equal(false, king.target)
+  -- The game made nothing of it, so back they go
+  equal(true, felt:Busy())
+  passTime(frame, 0.5)
+  equal("30,55", two.x .. "," .. two.y)
+  equal("30,85", three.x .. "," .. three.y)
+
+  -- Let go over a pile that won't have it, or over nothing, the game isn't even told
+  local drops = #log
+  for _, where in ipairs({ { 330, 40 }, { 220, 250 } }) do
+    pressOnTable(frame, three, 30, 85)
+    pointAtTable(frame, where[1], where[2])
+    frame:Fire("OnUpdate", 0.02)
+    equal(where[1], three.x)
+    letGoOnTable(frame)
+    passTime(frame, 0.5)
+    equal(30, three.x)
+  end
+  equal(drops, #log)
+  equal("column 3 far", asked[#asked])
+
+  -- When the game does make something of it, the cards go on from where they were let go
+  felt.onDrop = function()
+    felt:Set({ column = { cards = { "AS" } }, pile = { cards = { "KD", "2H", "3C" } } })
+  end
+  pressOnTable(frame, two, 30, 55)
+  pointAtTable(frame, 120, 50)
+  frame:Fire("OnUpdate", 0.02)
+  letGoOnTable(frame)
+  assert(two.x > 100 and two.x <= 130, "from where it was dropped, not from the column: " .. two.x)
+  passTime(frame, 0.5)
+  equal("130,40", two.x .. "," .. two.y)
+  equal("130,40", three.x .. "," .. three.y)
+  assert(ace.picture.texture:find("AS$"), "and the ace was turned over")
+
+  -- The other button puts back what is in hand, and is a click of its own otherwise
+  felt.canLift = function()
+    return true
+  end
+  pressOnTable(frame, three, 130, 40)
+  pointAtTable(frame, 200, 200)
+  frame:Fire("OnUpdate", 0.02)
+  equal(200, three.x)
+  three:Fire("OnMouseDown", "RightButton")
+  passTime(frame, 0.5)
+  equal(130, three.x)
+  Client.mouseDown = false
+  frame:Fire("OnUpdate", 0.02)
+  three:Fire("OnMouseDown", "RightButton")
+  equal("right pile 3", log[#log])
+
+  -- An empty place is clicked like a card, and a table that is put away lets go of everything
+  pressOnTable(frame, felt.piles.far.place, 330, 40)
+  letGoOnTable(frame)
+  equal("click far nil", log[#log])
+  pressOnTable(frame, three, 130, 40)
+  pointAtTable(frame, 200, 200)
+  frame:Fire("OnUpdate", 0.02)
+  frame:Hide()
+  equal(130, three.x)
+  frame:Show()
+  letGoOnTable(frame)
+  equal("click far nil", log[#log], "nothing is dropped when the table comes back")
+end
+
+function tests.CardTableLightsUpWhatCanBeTaken()
+  local felt = tableOnItsOwn()
+  felt.canLift = function(pile, index)
+    return pile == "column" and index == 2
+  end
+  felt:Set({ column = { cards = { "AS", "2H" } }, far = { cards = { "KD", "QD" } } })
+  local function lit(region)
+    region:Fire("OnEnter")
+    local shown = region.light:IsShown()
+    region:Fire("OnLeave")
+    equal(false, region.light:IsShown())
+    return shown
+  end
+  equal(false, lit(felt.sprites.AS))
+  equal(true, lit(felt.sprites["2H"]))
+  equal(true, lit(felt.sprites.QD), "the top of a pile that is there to be clicked")
+  equal(false, lit(felt.sprites.KD))
+  equal(false, lit(felt.piles.pile.place))
+  felt:Set({})
+  equal(true, lit(felt.piles.far.place), "and its place when it is empty")
+end
+
+function tests.CardTableShakesOffACardAndThrowsThemAllAbout()
+  local felt, frame = tableOnItsOwn()
+  felt:Set({ column = { cards = { "AS", "2H" } }, pile = { cards = { "KD" } } })
+  felt:Refuse("2H")
+  felt:Refuse("nope")
+  passTime(frame, 1)
+  equal("30,70", felt.sprites["2H"].x .. "," .. felt.sprites["2H"].y, "a shake of the head leaves it where it was")
+
+  felt:Fountain({ "KD", "2H", "AS", "nope" }, 0.2)
+  equal(true, felt:Busy())
+  frame:Fire("OnUpdate", 0.1)
+  equal(130, felt.sprites.KD.x, "not before it is time")
+  local moved, gone = false, false
+  for _ = 1, 3000 do
+    frame:Fire("OnUpdate", 0.02)
+    moved = moved or felt.sprites.KD.x ~= 130
+    gone = gone or felt.sprites.KD:GetAlpha() == 0
+    assert(felt.sprites.KD.y <= 300 - 30 + 0.001, "a card bounces off the bottom of the table")
+    if not felt:Busy() then
+      break
+    end
+  end
+  equal(true, moved)
+  equal(true, gone, "off the table and out of sight")
+  equal(false, felt:Busy(), "it comes to an end")
+  for _, id in ipairs({ "AS", "2H", "KD" }) do
+    equal(1, felt.sprites[id]:GetAlpha())
+  end
+  equal("130,40", felt.sprites.KD.x .. "," .. felt.sprites.KD.y, "and everything is back where it was")
+
+  -- A click on a card is enough of it
+  felt:Fountain({ "KD", "2H", "AS" })
+  passTime(frame, 0.5)
+  equal(true, felt:Busy())
+  felt.sprites.AS:Fire("OnMouseDown", "LeftButton")
+  equal(false, felt:Busy())
+  equal("30,40", felt.sprites.AS.x .. "," .. felt.sprites.AS.y)
+end
+
+-----------------------------
+-- Solitaire on screen
+-----------------------------
+
+--- Opens the window on a new game of solitaire
+--- @return table player, string id, table MainFrame
+local function solitaireOnScreen()
+  local world = World.New()
+  world.seed = 1
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  -- Whatever is asked is answered with a yes
+  function StaticPopup_Show(which, _, _, data)
+    StaticPopupDialogs[which].OnAccept(nil, data)
+  end
+  local match = assert(player.session:Invite({}, "solitaire"))
+  MainFrame.Open(match.id)
+  return player, match.id, MainFrame
+end
+
+--- Whether the game on screen offers to play itself out
+--- @return boolean
+local function finishOffered()
+  return #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "solitaire_finish" and widget:IsVisible()
+  end) == 1
+end
+
+--- The card table of the game on screen
+--- @return table felt, table frame
+local function shownTable()
+  local found = Client.Find(function(widget)
+    return widget.cardTable ~= nil and widget:IsVisible()
+  end)
+  equal(1, #found, "card tables on screen")
+  return found[1].cardTable, found[1]
+end
+
+--- Clicks a card of the table on screen, or the place of a pile that has none
+--- @param pile string
+local function clickPile(pile)
+  local felt, frame = shownTable()
+  passTime(frame, 2)
+  local held = felt.piles[pile].held
+  local region = #held > 0 and felt.sprites[held[#held]] or felt.piles[pile].place
+  local spot = felt.piles[pile].spots[math.max(1, #held)]
+  pressOnTable(frame, region, spot.x, spot.y)
+  letGoOnTable(frame)
+end
+
+--- Drags a card of the table on screen, and whatever lies on it, onto another pile
+--- @param card string
+--- @param pile string
+local function dragCard(card, pile)
+  local felt, frame = shownTable()
+  passTime(frame, 2)
+  local sprite = felt.sprites[card]
+  local spots = felt.piles[pile].spots
+  pressOnTable(frame, sprite, sprite.x, sprite.y)
+  pointAtTable(frame, spots[#spots].x, spots[#spots].y)
+  frame:Fire("OnUpdate", 0.02)
+  letGoOnTable(frame)
+end
+
+--- Makes a move of solitaire the way a player would: clicking the stock, dragging cards
+--- @param state table
+--- @param move string
+local function playOnScreen(state, move)
+  if move == "d" then
+    clickPile("s")
+  elseif move == "a" then
+    Client.Button("solitaire_finish"):Fire("OnClick")
+  else
+    local from, to, count = move:sub(1, 1), move:sub(2, 2), tonumber(move:sub(3)) or 1
+    local cards = from == "w" and state.waste or (state.homes[from] or state.columns[tonumber(from)].cards)
+    dragCard(cards[#cards - count + 1], to == "f" and cards[#cards]:sub(2, 2) or to)
+  end
+end
+
+function tests.WindowDealsSolitaireOut()
+  local player, id = solitaireOnScreen()
+  local state = player.private.Match.State(player.matches[id])
+  local felt, frame = shownTable()
+
+  equal(true, says("game_solitaire"), "nobody to play against, nobody named")
+  equal(false, says("status_your_turn"))
+  equal(true, says("solitaire_progress"))
+  equal(true, says("solitaire_tally"))
+  equal(false, Client.Button("undo").enabled, "nothing to take back yet")
+  equal(false, finishOffered())
+
+  -- Everything starts in the stock, and is dealt from there a card at a time
+  equal(true, felt:Busy())
+  local stockY = felt.piles.s.spots[1].y
+  local function dealt()
+    local count = 0
+    for column = 1, 7 do
+      for _, card in ipairs(state.columns[column].cards) do
+        count = count + (felt.sprites[card].y > stockY + felt.cardHeight / 2 and 1 or 0)
+      end
+    end
+    return count
+  end
+  equal(0, dealt())
+  local partly = false
+  for _ = 1, 200 do
+    frame:Fire("OnUpdate", 0.02)
+    local count = dealt()
+    partly = partly or (count > 0 and count < 28)
+  end
+  equal(true, partly, "it takes a while")
+  equal(28, dealt())
+  equal(false, felt:Busy())
+  equal("cardSlide", Client.sounds[#Client.sounds])
+
+  -- Seven columns side by side with their top cards face up, and the stock face down
+  for column = 1, 7 do
+    local cards = state.columns[column].cards
+    for index, card in ipairs(cards) do
+      local sprite = felt.sprites[card]
+      equal(felt.piles[tostring(column)].spots[index].x, sprite.x)
+      assert(sprite.x + sprite.width / 2 <= frame.width and sprite.y + sprite.height / 2 <= frame.height, "on the table")
+      assert(sprite.picture.texture:find((index == #cards and card or "back") .. "$"), card .. " lies the wrong way up")
+    end
+    if column > 1 then
+      assert(felt.sprites[cards[1]].x >= felt.sprites[state.columns[column - 1].cards[1]].x + felt.cardWidth, "columns don't overlap")
+    end
+  end
+  for _, card in ipairs(state.stock) do
+    assert(felt.sprites[card].picture.texture:find("back$"))
+  end
+
+  -- Once is enough: looking at the game again doesn't deal it again
+  ForeverGamesFrame:Hide()
+  ForeverGamesFrame:Show()
+  equal(false, select(1, shownTable()):Busy())
+end
+
+function tests.WindowPlaysSolitaire()
+  local player, id, MainFrame = solitaireOnScreen()
+  local Match, game = player.private.Match, player.private.Games.Get("solitaire")
+  local match = player.matches[id]
+  local felt, frame = shownTable()
+  passTime(frame, 4)
+
+  -- Clicking the stock turns a card
+  local top = Match.State(match).stock[24]
+  clickPile("s")
+  equal("d", logOf(player, id))
+  equal(true, felt:Busy())
+  passTime(frame, 1)
+  equal(felt.piles.w.spots[1].x, felt.sprites[top].x)
+  assert(felt.sprites[top].picture.texture:find(top .. "$"), "turned over on the way")
+  equal(true, Client.Button("undo").enabled)
+
+  -- And Undo turns it back
+  Client.Button("undo"):Fire("OnClick")
+  equal("", logOf(player, id))
+  passTime(frame, 1)
+  equal(felt.piles.s.spots[24].x, felt.sprites[top].x)
+  assert(felt.sprites[top].picture.texture:find("back$"))
+  equal(false, Client.Button("undo").enabled)
+
+  -- A card that has nowhere to go isn't moved by clicking it, and neither is one face down
+  local state = Match.State(match)
+  for column = 1, 7 do
+    local cards = state.columns[column].cards
+    local stuck = true
+    for _, to in ipairs({ "f", "1", "2", "3", "4", "5", "6", "7" }) do
+      stuck = stuck and not game.validate(state, 1, column .. to)
+    end
+    if stuck then
+      clickPile(tostring(column))
+    end
+    if column > 1 then
+      local sprite = felt.sprites[cards[1]]
+      pressOnTable(frame, sprite, sprite.x, sprite.y)
+      pointAtTable(frame, 5, 5)
+      frame:Fire("OnUpdate", 0.02)
+      letGoOnTable(frame)
+    end
+  end
+  equal("", logOf(player, id))
+
+  -- Play on, a deal after the other, until one comes out
+  local deals, dragged = 0, 0
+  while match.status ~= "finished" do
+    deals = deals + 1
+    assert(deals < 200, "some deal should come out")
+    local idle = 0
+    while match.status == "active" do
+      state = Match.State(match)
+      local move = solitaireMove(game, state, idle)
+      if not move then
+        break
+      end
+      idle = move == "d" and idle + 1 or 0
+      local before = #match.log
+      playOnScreen(state, move)
+      equal(move, match.log[before + 1], "what was done on screen is the move that was made")
+      dragged = dragged + (#move > 1 and 1 or 0)
+      equal(match.status == "active" and game.validate(Match.State(match), 1, "a") == true, finishOffered())
+    end
+    if match.status == "active" then
+      -- Stuck: another deal, in place of this one
+      local old = match.id
+      Client.Button("start_another"):Fire("OnClick")
+      equal(nil, player.matches[old], "the game given up for it is gone")
+      match = player.session:List()[1]
+      equal("active", match.status)
+      equal(0, #match.log)
+      equal(true, MainFrame.IsViewing(match.id))
+      equal(1, #player.session:List())
+    end
+  end
+  assert(dragged > 20, "cards were dragged about")
+
+  -- Won: the table puts on a show, and comes to rest with everything home
+  felt, frame = shownTable()
+  equal("a", match.log[#match.log])
+  equal(1, Match.Result(match).winner)
+  equal(true, says("status_won_with"))
+  equal("UI_EPICLOOT_TOAST", Client.sounds[#Client.sounds])
+  equal(true, felt:Busy())
+  local thrown = false
+  for _ = 1, 4000 do
+    frame:Fire("OnUpdate", 0.02)
+    thrown = thrown or felt.fountain ~= nil
+    if not felt:Busy() then
+      break
+    end
+  end
+  equal(true, thrown)
+  equal(false, felt:Busy())
+  for _, suit in ipairs({ "S", "H", "D", "C" }) do
+    equal(13, #felt.piles[suit].held)
+    equal(felt.piles[suit].spots[1].x, felt.sprites["K" .. suit].x)
+  end
+
+  -- Nothing moves any more, and what is offered is another game
+  local before = #match.log
+  clickPile("S")
+  dragCard("KH", "1")
+  equal(before, #match.log)
+  equal(false, finishOffered())
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "undo" and widget:IsVisible()
+  end))
+  Client.Button("play_again"):Fire("OnClick")
+  equal(2, #player.session:List(), "the game that was won stays in the list")
+  equal(false, MainFrame.IsViewing(match.id))
+  Client.Button("give_up"):Fire("OnClick")
+  equal(1, #player.session:List())
+  equal(true, MainFrame.IsViewing(match.id))
+  Client.Button("remove"):Fire("OnClick")
+  equal(0, #player.session:List())
+end
+
+function tests.WindowAsksBeforeGivingUpAGameThatIsUnderWay()
+  local player, id = solitaireOnScreen()
+  local asked = {}
+  function StaticPopup_Show(which, text)
+    asked[#asked + 1] = which .. " " .. text
+  end
+  clickPile("s")
+  equal("d", logOf(player, id))
+  Client.Button("give_up"):Fire("OnClick")
+  Client.Button("start_another"):Fire("OnClick")
+  equal("FOREVERGAMES_GIVE_UP give_up_confirm,FOREVERGAMES_GIVE_UP start_another_confirm", table.concat(asked, ","))
+  assert(player.matches[id], "and nothing happens until the answer is yes")
+  equal(1, #player.session:List())
+end
+
+function tests.WindowFitsSolitaireIntoTheRoomItHas()
+  local player, id = solitaireOnScreen()
+  local state = player.private.Match.State(player.matches[id])
+  local felt, frame = shownTable()
+  passTime(frame, 4)
+  local normal = felt.cardWidth
+
+  local function fits()
+    for card, sprite in pairs(felt.sprites) do
+      local inside = sprite.x - felt.cardWidth / 2 >= 0 and sprite.x + felt.cardWidth / 2 <= frame.width
+      assert(inside and sprite.y - felt.cardHeight / 2 >= 0 and sprite.y + felt.cardHeight / 2 <= frame.height, card .. " is off the table")
+    end
+    equal(52, #state.stock + 28)
+  end
+  fits()
+
+  ForeverGamesFrame:SetSize(1400, 1000)
+  assert(felt.cardWidth > normal, "a bigger window should mean bigger cards")
+  equal(false, felt:Busy(), "which are simply there, not on their way")
+  fits()
+  ForeverGamesFrame:SetSize(764, 560)
+  assert(felt.cardWidth >= 40, "the cards should stay usable in the smallest window, got " .. felt.cardWidth)
+  fits()
+end
+
+function tests.WindowListsAGameForOneByItsName()
+  local player, id, MainFrame = solitaireOnScreen()
+  local match = player.matches[id]
+  equal("solitaire_progress", MainFrame.Describe(match))
+  local rows = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.matchId == id and widget:IsVisible()
+  end)
+  equal(1, #rows)
+  equal("game_solitaire", rows[1].name.text)
+  equal("solitaire_progress", rows[1].status.text)
+  equal(false, rows[1].marker:IsShown(), "it isn't waiting on the player the way an opponent would be")
+
+  assert(player.session:Resign(id))
+  equal("status_gave_up", MainFrame.Describe(match))
+end
+
+function tests.WizardStartsAGameForOneAtOnce()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Wizard = openWizard(alice)
+  local cards = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "solitaire" and widget:IsVisible()
+  end)
+  equal(1, #cards)
+  equal("players_solo", cards[1].players.text)
+  equal("genre_solo", cards[1].genre.text)
+
+  cards[1]:Fire("OnClick")
+  equal(false, Wizard.IsOpen(), "nobody to pick")
+  local started
+  for _, match in pairs(alice.matches) do
+    started = match
+  end
+  equal("solitaire", started.game)
+  equal("active", started.status)
+  equal(0, #world.queue)
 end
 
 -----------------------------

@@ -22,6 +22,7 @@ Engine\Presence.lua
 GUI\Widgets.lua
 GUI\Board.lua
 GUI\Cards.lua
+GUI\CardTable.lua
 GUI\Viewport.lua
 GUI\Drag.lua
 GUI\Tiles.lua
@@ -37,6 +38,7 @@ Games\Backgammon.lua
 Games\CrazyEights.lua
 Games\Battleship.lua
 Games\Words.lua
+Games\Solitaire.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua

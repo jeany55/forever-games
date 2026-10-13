@@ -228,6 +228,21 @@ function ForeverGames:HandleSlashCommand(input)
     MainFrame.NewGame()
   elseif command == "log" then
     self:PrintLog(argument)
+  elseif command == "play" then
+    -- A game to play alone: the one that is named, or the first there is
+    local wanted, game = argument:lower(), nil
+    for _, candidate in ipairs(Games.List()) do
+      local named = wanted == "" or wanted == candidate.id or wanted == candidate.name:lower()
+      if not game and named and Games.CanSeat(candidate, 1) then
+        game = candidate
+      end
+    end
+    local match, err = private.session:Invite({}, game and game.id)
+    if match then
+      MainFrame.Open(match.id)
+    else
+      self:Print(L["err_" .. err])
+    end
   elseif command == "challenge" or command == "invite" then
     -- Names can be more than one word, so the game is whatever game name the argument ends with
     local target, game = argument, Games.List()[1]

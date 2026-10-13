@@ -9,6 +9,9 @@
 -- Nothing here knows any rules. A card is the two characters games write it as, rank and then
 -- suit ("QH", "TS"), and anything else is a card seen from the back. See Games/CrazyEights.lua.
 --
+-- This is for cards that are held and played. A game where they lie in piles on a table and are
+-- moved from one to the other has GUI/CardTable.lua, see Games/Solitaire.lua.
+--
 -- The pictures are Kenney's (Tools/convert_kenney.py), one size of them: a card isn't drawn
 -- much bigger or smaller than it is.
 
@@ -45,6 +48,10 @@ local TURN_FROM, TURN_TO, TURN_EDGE = 0.25, 0.8, 0.06
 function Cards.Texture(card)
   return IMAGES .. (card:match("^[A2-9TJQK][SHDC]$") or "back")
 end
+
+-- White shapes to tint (Tools/make_cards.py): a card with nothing on it, the outline of a place
+-- one can be put, and an arrow that goes round
+Cards.BLANK, Cards.SLOT, Cards.AGAIN = IMAGES .. "blank", IMAGES .. "slot", IMAGES .. "again"
 
 --- The pip of a suit on its own
 --- @param suit string S, H, D or C

@@ -4,6 +4,7 @@
 -- Two steps: pick a game, then pick who to play. Lives inside the main window and takes over its
 -- content while open. The games are a list that scrolls, narrowed down by typing or by genre.
 -- A game for more than two has its players picked one after the other, as many as it can seat.
+-- A game for one has nobody to pick, and begins as soon as it is chosen.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -93,7 +94,9 @@ end
 --- @return string
 local function playersText(game)
   local counts = Games.SeatCounts(game)
-  if #counts == 1 then
+  if Games.IsSolo(game) then
+    return L["players_solo"]
+  elseif #counts == 1 then
     return L["players_exactly"]:format(counts[1])
   end
   return L["players_choice"]:format(table.concat(counts, ", ", 1, #counts - 1), counts[#counts])
@@ -130,6 +133,20 @@ local function send()
   Wizard.Close(match.id)
 end
 
+--- The game was chosen. One that is played alone begins there and then, anything else goes on
+--- to who it is played with
+--- @param game GameDefinition
+local function pick(game)
+  if Games.IsSolo(game) then
+    local match = private.session:Invite({}, game.id)
+    Wizard.Close(match and match.id)
+    return
+  end
+  chosenGame = game
+  chosenPlayers = {}
+  refresh()
+end
+
 -----------------------------
 -- Step 1: game
 -----------------------------
@@ -164,9 +181,7 @@ local function createGameCard(parent)
   card.players:SetPoint("BOTTOMRIGHT", -10, 8)
 
   card:SetScript("OnClick", function(self)
-    chosenGame = self.game
-    chosenPlayers = {}
-    refresh()
+    pick(self.game)
   end)
   return card
 end
@@ -249,9 +264,7 @@ local function createGameStep(parent)
   panel.searchBox:SetScript("OnEnterPressed", function()
     local games = matchingGames()
     if #games == 1 then
-      chosenGame = games[1]
-      chosenPlayers = {}
-      refresh()
+      pick(games[1])
     end
   end)
 

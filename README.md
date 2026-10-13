@@ -4,7 +4,8 @@ A World of Warcraft Forever addon for playing classic games against your friends
 your own pace. Make a move, go pull a boss, come back later.
 
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
-Chinese Checkers, which is for up to six, and Crazy Eights, which is too.
+Chinese Checkers, which is for up to six, and Crazy Eights, which is too. And Solitaire, for when
+nobody is around.
 
 ## Usage
 
@@ -15,6 +16,9 @@ Chinese Checkers, which is for up to six, and Crazy Eights, which is too.
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
+- A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
+  It waits for as long as you like, **Undo** takes back a move, and as many more as you press
+  it for, **Start Another** swaps it for a new one and **Give Up** takes it off your list
 - Drag the corner of the window to make it any size, the board grows with it. **Focus** hides
   everything but the game you are looking at
 - In chess, drag a piece or click it and then where it goes. Click a move in the list, use the
@@ -42,6 +46,11 @@ Chinese Checkers, which is for up to six, and Crazy Eights, which is too.
   while you wait for the other fleet. After that click a square of the other sea to fire at it:
   you are told what the shot did right away, whether your opponent is around or not. The sea
   you aren't playing on is shown small, click it for a closer look
+- Solitaire is Klondike, dealt out in front of you. Drag a card where it should go, with
+  whatever lies on it, or just click it: it goes home if it can and to the first column that
+  will have it if not, and a right click only ever sends it home. Click the stock to turn a
+  card, and again when it is empty to go through it once more. When nothing is left face down,
+  **Finish** plays the rest out for you
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -92,6 +101,11 @@ nothing: that catches mistakes in what the window does, not in how it looks.
   - `Cards.lua` playing cards: a hand that fans out to fit and lets the player pick a card, a
     card for a deck or a pile, and cards that fly from one to the other, dealt round the table
     and turned over in the air
+  - `CardTable.lua` a table that cards lie on in piles and are moved about on: it is told which
+    cards are in which pile and shows whatever that changed by itself, cards flying to where
+    they are now and turning over on the way, one after the other when they are dealt. The
+    player drags cards from pile to pile, alone or with what lies on them, or clicks them, and
+    what can't stay where it was let go goes back
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`
@@ -118,13 +132,17 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
 - **Players**: `seats` says how many play, a number or a list where there is a choice
   (`{ 2, 3, 4, 6 }`). `newState` is told how many there are this time. A game for more than two
   also has `drop`, which takes a player who resigned out of the game for the others to play on
+- **Alone**: a game with `seats = 1` is played by the player on their own. It is the same two
+  halves and nothing else: there is no challenge, it is always seat 1's turn and no move is
+  ever sent. With `undo = true` the window lets moves be taken back, and `progress(state)` is
+  a few words on how it is going for where other games say whose turn it is
 - **View**: `createView(stage)` builds the game's widgets in the frame it is given and returns an
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
   played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
   when there is one worth showing
 
 Give the game a `genre` so it can be found in the new game wizard: one that is there already
-(`strategy`, `casual`, `dice`, `cards`) or a new one, with its name in the locale file as `genre_<name>`.
+(`strategy`, `casual`, `dice`, `cards`, `words`, `solo`) or a new one, with its name in the locale file as `genre_<name>`.
 
 Everything else is the engine's and the same for every game: challenges, gathering the players
 of a game for more than two, turn notifications, saving, delivery, resigning, and for games of two
@@ -137,12 +155,15 @@ where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`,
 than two players and a board that isn't a grid. `Games/Backgammon.lua` rolls dice and stacks
 its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
 hides what a player chose rather than what they were dealt, on two boards at once, with pieces
-several squares long.
+several squares long. `Games/Solitaire.lua` is for one, on a card table (`GUI/CardTable.lua`)
+that does all of its moving and animating.
 
 The round pieces, the star Chinese Checkers is played on and the icons of the games played with
 them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
 `Tools/make_tables.py`, the sea, ships and pegs of Battleship by `Tools/make_fleet.py`. The cards,
-dice and sounds are converted by `Tools/convert_kenney.py`.
+dice and sounds are converted by `Tools/convert_kenney.py`, and what a card table needs besides
+(a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
+`Tools/make_cards.py`.
 
 ## Credits
 

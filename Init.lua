@@ -18,6 +18,8 @@ local _, private = ...
 --- @field Board Board
 --- @field Viewport Viewport
 --- @field Drag Drag
+--- @field Cards Cards
+--- @field CardTable CardTable
 --- @field Tiles Tiles
 --- @field Lexicon Lexicon
 --- @field Wizard Wizard

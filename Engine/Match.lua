@@ -19,6 +19,9 @@
 --   !a<seat>   the seat accepts the opponent's draw offer, on their own turn
 -- Everything but a resignation is appended by the player whose turn it is (the start by whoever
 -- set the match up), so the clients can't all be adding to the log at the same moment.
+--
+-- A match of one is a game the player plays alone. Its log never leaves the client, which is
+-- what lets a move be taken back: the log is cut short by an entry (Match.Truncate).
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -196,9 +199,11 @@ local function step(game, replay, entry)
         end
         return true
       end
+      -- Alone, there is nobody left to have won
+      replay.result = { winner = 0, reason = "resign" }
       for last = 1, replay.seats do
         if not replay.out[last] then
-          replay.result = { winner = last, reason = "resign" }
+          replay.result.winner = last
         end
       end
       return true
@@ -268,7 +273,8 @@ local function newReplay(match, game)
     draws = game.draws == true and match.gameVersion == game.version and seats == 2,
     seats = seats,
     host = match.host,
-    started = seats == 2,
+    -- Only a crowd has to be gathered first
+    started = seats <= 2,
     out = {},
     left = seats,
   }
@@ -392,12 +398,19 @@ function Match.CanAcceptDraw(match)
   return offer ~= nil and offer ~= match.me and Match.IsMyTurn(match)
 end
 
+--- Whether the local player is the only one playing
+--- @param match Match
+--- @return boolean
+function Match.IsSolo(match)
+  return #match.players == 1
+end
+
 --- Whether the game has begun. A match of more than two is active for those who accepted it
 --- before everyone has, with nothing to play yet
 --- @param match Match
 --- @return boolean
 function Match.Started(match)
-  if #match.players == 2 then
+  if #match.players <= 2 then
     return true
   end
   local replay = replayOf(match)

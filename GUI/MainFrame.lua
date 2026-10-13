@@ -5,7 +5,9 @@
 -- left and the selected one on the right. The window knows nothing about any particular game:
 -- it gives the game's view a stage to draw on and tells it which position to show. What every
 -- game shares is built here around that stage: the status line, resigning and draw offers, the
--- list of moves and stepping back through them.
+-- list of moves and stepping back through them. A game the player plays alone has no opponent
+-- to name and nobody to wait for: it can be given up or started again at any time, and a move
+-- can be taken back where the game allows it.
 --
 -- The window can be resized, and "focus" hides everything but the selected game. Either way the
 -- stage is given whatever room is left and the game's view lays itself out in it.
@@ -91,8 +93,20 @@ end
 function MainFrame.Describe(match)
   local opponent = MainFrame.Names(match)
   local crowd = #match.players > 2
-  if not Games.Get(match.game) then
+  local game = Games.Get(match.game)
+  if not game then
     return L["status_missing_game"]
+  end
+  if Match.IsSolo(match) then
+    -- Nobody to wait for and nobody to lose to: how it is going, as the game puts it
+    local result = Match.Result(match)
+    local progress = game.progress and game.progress(Match.State(match))
+    if not result then
+      return progress or L["status_solo"]
+    elseif result.winner ~= match.me then
+      return L["status_gave_up"]
+    end
+    return progress and L["status_won_with"]:format(progress) or L["status_won"]
   end
 
   if match.status == "incoming" then
@@ -149,7 +163,8 @@ end
 --- @param match Match
 --- @return boolean
 local function waitingOnMe(match)
-  return match.status == "incoming" or Match.IsMyTurn(match)
+  -- A game played alone is always the player's to move in, and waits on nobody
+  return match.status == "incoming" or (Match.IsMyTurn(match) and not Match.IsSolo(match))
 end
 
 --- @param err string? Error code from the session
@@ -181,6 +196,19 @@ local function rematch(match)
   MainFrame.Select(newMatch.id)
 end
 
+-- For a game played alone: `data` is what giving it up is followed by
+StaticPopupDialogs["FOREVERGAMES_GIVE_UP"] = {
+  text = "%s",
+  button1 = YES,
+  button2 = NO,
+  OnAccept = function(_, proceed)
+    proceed()
+  end,
+  timeout = 0,
+  whileDead = true,
+  hideOnEscape = true,
+}
+
 StaticPopupDialogs["FOREVERGAMES_RESIGN"] = {
   text = L["resign_confirm"],
   button1 = YES,
@@ -193,11 +221,66 @@ StaticPopupDialogs["FOREVERGAMES_RESIGN"] = {
   hideOnEscape = true,
 }
 
+--- Buttons offered for a game the player plays alone, in display order
+--- @param match Match
+--- @return { text: string, onClick: fun(), disabled: boolean? }[]
+local function soloActionsFor(match)
+  local session, id = private.session, match.id
+  local game = Games.Get(match.game)
+  local name = game and game.name or match.game
+
+  local function forget()
+    session:Forget(id)
+  end
+  local function again()
+    rematch(match)
+  end
+  -- The game that is given up for another doesn't stay around
+  local function another()
+    session:Forget(id)
+    rematch(match)
+  end
+  --- Does it at once in a game nothing has happened in yet, and asks first in any other
+  --- @param question string
+  --- @param proceed fun()
+  --- @return fun()
+  local function afterAsking(question, proceed)
+    return function()
+      if #match.log == 0 then
+        proceed()
+      else
+        StaticPopup_Show("FOREVERGAMES_GIVE_UP", L[question]:format(name), nil, proceed)
+      end
+    end
+  end
+
+  if match.status ~= "active" then
+    return { { text = L["play_again"], onClick = again }, { text = L["remove"], onClick = forget } }
+  end
+  local actions = {
+    { text = L["give_up"], onClick = afterAsking("give_up_confirm", forget) },
+    { text = L["start_another"], onClick = afterAsking("start_another_confirm", another) },
+  }
+  if game and game.undo then
+    actions[3] = {
+      text = L["undo"],
+      disabled = not session:CanUndo(match),
+      onClick = function()
+        session:Undo(id)
+      end,
+    }
+  end
+  return actions
+end
+
 --- Buttons offered for a match, in display order
 --- @param match Match
---- @return { text: string, onClick: fun() }[]
+--- @return { text: string, onClick: fun(), disabled: boolean? }[]
 local function actionsFor(match)
   local session, id = private.session, match.id
+  if Match.IsSolo(match) then
+    return soloActionsFor(match)
+  end
 
   local function accept()
     session:Accept(id)
@@ -411,7 +494,11 @@ local function fillRow(row, match)
 
   row.matchId = match.id
   row.icon:SetTexture(iconFor(match))
-  row.name:SetText(MainFrame.Names(match) .. "  |cff808080" .. (game and game.name or match.game) .. "|r")
+  if Match.IsSolo(match) then
+    row.name:SetText(game and game.name or match.game)
+  else
+    row.name:SetText(MainFrame.Names(match) .. "  |cff808080" .. (game and game.name or match.game) .. "|r")
+  end
   row.selected:SetShown(match.id == selectedId)
 
   if waiting then
@@ -750,7 +837,7 @@ local function createDetailPanel(body)
   end
 
   detail.buttons = {}
-  for index = 1, 2 do
+  for index = 1, 3 do
     local button = Widgets.Button(detail, "", 110, 26)
     button:SetPoint("BOTTOMRIGHT", -12 - (index - 1) * 116, 12)
     detail.buttons[index] = button
@@ -762,8 +849,14 @@ end
 --- @param fresh boolean? The match has news the player is seeing for the first time
 local function refreshDetail(match, fresh)
   local detail = frame.detail
-  for _, entry in pairs(views) do
-    entry.stage:Hide()
+  local game = match and Games.Get(match.game)
+  local showBoard = game ~= nil and (match.status == "active" or match.status == "finished") and Match.Started(match)
+  -- The view that stays is left as it is: hiding it would take whatever is in the player's hand
+  -- out of it, and stop what is on the move
+  for id, entry in pairs(views) do
+    if not (showBoard and id == game.id) then
+      entry.stage:Hide()
+    end
   end
   for _, button in ipairs(detail.buttons) do
     button:Hide()
@@ -773,12 +866,15 @@ local function refreshDetail(match, fresh)
     return
   end
 
-  local game = Games.Get(match.game)
   local waiting = waitingOnMe(match)
 
   detail.icon:SetTexture(iconFor(match))
-  local title = L[#match.players > 2 and "with_players" or "versus"]
-  detail.header:SetText(title:format(game and game.name or match.game, MainFrame.Names(match)))
+  if Match.IsSolo(match) then
+    detail.header:SetText(game and game.name or match.game)
+  else
+    local title = L[#match.players > 2 and "with_players" or "versus"]
+    detail.header:SetText(title:format(game and game.name or match.game, MainFrame.Names(match)))
+  end
   detail.status:SetText(MainFrame.Describe(match))
   detail.focus:SetText(frame.focused and L["focus_off"] or L["focus_on"])
   if waiting then
@@ -790,7 +886,6 @@ local function refreshDetail(match, fresh)
     detail.status:SetAlpha(1)
   end
 
-  local showBoard = game ~= nil and (match.status == "active" or match.status == "finished") and Match.Started(match)
   local history = showBoard and game.history == true
   detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me, #match.players)) or "")
   detail.message:SetText(showBoard and "" or MainFrame.Describe(match))
@@ -868,6 +963,7 @@ local function refreshDetail(match, fresh)
     local button = detail.buttons[index]
     button:SetText(action.text)
     button:SetScript("OnClick", action.onClick)
+    button:SetEnabled(not action.disabled)
     button:Show()
   end
 end
