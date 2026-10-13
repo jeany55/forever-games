@@ -15,6 +15,11 @@ L["game_connectfour"] = "Connect Four"
 L["game_connectfour_description"] = "Drop your discs into the rack and line up four of them, across, up or diagonally, before your opponent does."
 L["connectfour_red"] = "Red"
 L["connectfour_yellow"] = "Yellow"
+L["game_reversi"] = "Reversi"
+L["game_reversi_description"] = "Trap your opponent's discs between yours to turn them over. Whoever has the most when the board fills up wins."
+L["reversi_black"] = "Black"
+L["reversi_white"] = "White"
+L["reversi_passed"] = "%s has nowhere to go, %s plays again"
 
 -- How a game ended
 L["result_checkmate"] = "checkmate"

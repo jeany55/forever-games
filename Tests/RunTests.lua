@@ -14,6 +14,7 @@ local ENGINE_FILES = {
   "Games/TicTacToe.lua",
   "Games/Chess.lua",
   "Games/ConnectFour.lua",
+  "Games/Reversi.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -824,6 +825,85 @@ function tests.ConnectFourFullRackIsADraw()
   equal(0, game.result(state).winner)
 end
 
+--- @param state table Reversi position
+--- @return string[]
+local function reversiMoves(state)
+  local moves = {}
+  for target in pairs(state.legal) do
+    moves[#moves + 1] = string.char(97 + target % 8) .. (math.floor(target / 8) + 1)
+  end
+  table.sort(moves)
+  return moves
+end
+
+function tests.ReversiCountsTheRightNumberOfPositions()
+  local reversi = loadEngine().Games.Get("reversi")
+  equal("c4,d3,e6,f5", table.concat(reversiMoves(reversi.newState()), ","))
+  -- Known values for the starting position
+  equal(244, countPositions(reversi, reversi.newState(), 4, reversiMoves))
+  equal(1396, countPositions(reversi, reversi.newState(), 5, reversiMoves))
+end
+
+function tests.ReversiTurnsTrappedDiscsOver()
+  local state, game, events = gameAfter("reversi", "d3")
+  equal(1, state.board[square("d4")], "the disc in between changes sides")
+  equal(4, state.counts[1])
+  equal(1, state.counts[2])
+  equal(square("d4"), events[1].flipped[1])
+  equal("d3", events[1].notation)
+  equal(2, game.turn(state))
+
+  equal(false, (game.validate(state, 2, "a1")), "a disc has to trap something")
+  equal(false, (game.validate(state, 2, "d3")), "not on a square that is taken")
+  equal(false, (game.validate(state, 1, "c3")), "not black's turn")
+  equal(false, (game.validate(state, 2, "i9")))
+end
+
+function tests.ReversiPlayerWithNoMoveSitsOut()
+  local state, game, events = gameAfter("reversi", "f5 f6 f7 g7 c4 f8 h8 h6")
+  equal(nil, game.result(state))
+  equal(2, game.turn(state), "black can't place anywhere, so white goes again")
+  equal(1, state.passed)
+  equal(true, events[#events].passed)
+  equal(false, (game.validate(state, 1, "a1")))
+
+  -- Once white has moved it is black's turn like any other
+  local move = reversiMoves(state)[1]
+  game.apply(state, 2, move)
+  if game.turn(state) == 1 then
+    equal(nil, state.passed)
+  end
+end
+
+function tests.ReversiEndsWhenNobodyCanMove()
+  local state, game = gameAfter("reversi", "f5 d6 c5 f4 e7 f6 g5 e6 e3")
+  equal(13, state.counts[1])
+  equal(0, state.counts[2])
+  equal(1, game.result(state).winner)
+end
+
+function tests.ReversiPassBetweenTwoPlayers()
+  local world = World.New()
+  world.seed = 1
+  local black, white = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(black.session:Invite("Bob-Realm", "reversi"))
+  equal(1, match.me)
+  world:Deliver()
+  assert(white.session:Accept(match.id))
+  world:Deliver()
+  play(world, match.id, black, white, { "f5", "f6", "f7", "g7", "c4", "f8", "h8", "h6" })
+
+  for _, player in ipairs({ black, white }) do
+    equal(2, player.private.Match.Turn(player.matches[match.id]))
+  end
+  equal(false, (black.session:Move(match.id, "a1")))
+  local again = reversiMoves(white.private.Match.State(white.matches[match.id]))[1]
+  assert(white.session:Move(match.id, again))
+  world:Deliver()
+  equal(logOf(white, match.id), logOf(black, match.id))
+  equal(9, #black.matches[match.id].log)
+end
+
 -----------------------------
 -- Draw offers and history
 -----------------------------
@@ -1338,6 +1418,67 @@ function tests.WindowPlaysConnectFourByPointingAtAColumn()
   clickSquare(board, 3, 0, 7)
   equal("4,4,4", logOf(red, id))
   equal(3, red.private.Match.State(red.matches[id]).heights[4])
+end
+
+function tests.WindowPlaysReversiByPlacingDiscs()
+  local world, black, white, id = gameOnScreen("reversi")
+  local board = shownBoard()
+
+  -- Only where a disc traps something
+  clickSquare(board, 0, 0, 8)
+  equal("", logOf(black, id))
+  clickSquare(board, 3, 2, 8)
+  equal("d3", logOf(black, id))
+  settle(board)
+  equal("d3", listedMoves()[1].text.text)
+
+  world:Deliver()
+  assert(white.session:Move(id, "c3"))
+  world:Deliver()
+  settle(board)
+  clickSquare(board, 1, 2, 8)
+  equal("d3,c3,b3", logOf(black, id))
+end
+
+function tests.WindowShowsAReversiPlayerSittingOut()
+  local world, black, white, id, MainFrame = gameOnScreen("reversi")
+  local board = shownBoard()
+  local function notes()
+    return Client.Find(function(widget)
+      return widget.text == "reversi_passed" and widget:IsVisible()
+    end)
+  end
+
+  play(world, id, black, white, { "f5", "f6", "f7", "g7", "c4", "f8", "h8" })
+  equal(0, #notes())
+  assert(white.session:Move(id, "h6"))
+  world:Deliver()
+  settle(board)
+  equal(1, #notes(), "the board says why it isn't black's turn")
+  equal("status_their_turn", MainFrame.Describe(black.matches[id]))
+
+  -- Black can't place anything meanwhile
+  for column = 0, 7 do
+    for row = 0, 7 do
+      clickSquare(board, column, row, 8)
+    end
+  end
+  equal(8, #black.matches[id].log)
+
+  local state = white.private.Match.State(white.matches[id])
+  local again = string.char(97 + next(state.legal) % 8) .. (math.floor(next(state.legal) / 8) + 1)
+  assert(white.session:Move(id, again))
+  world:Deliver()
+
+  -- White's two moves in a row are on a line each, with a gap where black's would have been
+  local moves = listedMoves()
+  equal(9, #moves)
+  equal(again, moves[9].text.text)
+  local row = moves[9].parent
+  assert(row.moves[2] == moves[9], "white's move belongs in white's column")
+  equal(false, row.moves[1]:IsShown())
+  assert(moves[8].parent ~= row and moves[8].parent.moves[2] == moves[8])
+  assert(moves[7].parent == moves[8].parent, "the line before has a move from each")
 end
 
 -----------------------------

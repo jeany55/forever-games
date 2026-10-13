@@ -22,6 +22,7 @@ GUI\Board.lua
 Games\TicTacToe.lua
 Games\Chess.lua
 Games\ConnectFour.lua
+Games\Reversi.lua
 Transport.lua
 GUI\Toast.lua
 GUI\Wizard.lua
