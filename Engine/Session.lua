@@ -288,6 +288,47 @@ function Session:Resign(id)
   return true
 end
 
+--- Adds one of the engine's own entries for the local player
+--- @param id string
+--- @param entry string
+--- @return boolean, string? error
+function Session:appendOwn(id, entry)
+  local match = self.env.matches[id]
+  if not match or match.status ~= "active" then
+    return false, "no_match"
+  end
+  local ok, err = Match.Append(match, entry)
+  if not ok then
+    return false, err
+  end
+  match.unread = nil
+  self:pushLog(match)
+  self:touch(match, "changed")
+  return true
+end
+
+--- Offers the opponent a draw. Only on the local player's turn, the offer travels with the move
+--- they make next and is turned down by the opponent playing on.
+--- @param id string
+--- @return boolean, string? error
+function Session:OfferDraw(id)
+  local match = self.env.matches[id]
+  if not match or not Match.CanOfferDraw(match) then
+    return false, "no_draw"
+  end
+  return self:appendOwn(id, Match.DrawOfferEntry(match.me))
+end
+
+--- @param id string
+--- @return boolean, string? error
+function Session:AcceptDraw(id)
+  local match = self.env.matches[id]
+  if not match or not Match.CanAcceptDraw(match) then
+    return false, "no_draw"
+  end
+  return self:appendOwn(id, Match.DrawAcceptEntry(match.me))
+end
+
 --- Removes a match from the list. Withdraws the challenge if it hasn't been answered, matches
 --- in progress have to be resigned first.
 --- @param id string
@@ -453,6 +494,17 @@ function Session:markAccepted(match)
   end
 end
 
+--- What to tell the player about an entry the opponent just added
+--- @param match Match
+--- @param entry string
+--- @return string
+local function eventFor(match, entry)
+  if match.status == "finished" then
+    return "finished"
+  end
+  return Match.IsDrawOffer(entry) and "draw" or "moved"
+end
+
 --- @param match Match
 --- @param message Message
 function Session:onMove(match, message)
@@ -473,7 +525,7 @@ function Session:onMove(match, message)
   if n == length + 1 then
     if Match.Append(match, entry) then
       match.peerSeen = n
-      self:touch(match, match.status == "finished" and "finished" or "moved", true)
+      self:touch(match, eventFor(match, entry), true)
     end
     self:send(match, "ACK", #match.log)
     return
@@ -498,7 +550,7 @@ function Session:onMove(match, message)
     self.offered[match.id] = nil
     if Match.Append(match, entry) then
       match.peerSeen = n
-      self:touch(match, match.status == "finished" and "finished" or "moved", true)
+      self:touch(match, eventFor(match, entry), true)
     else
       for _, old in ipairs(previous) do
         Match.Append(match, old)

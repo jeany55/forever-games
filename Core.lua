@@ -26,7 +26,7 @@ local LOG_LINES = 20
 local defaults = {
   -- Matches belong to the character that is playing them
   char = { matches = {}, log = {} },
-  profile = { minimap = { hide = false }, toasts = true, sound = true },
+  profile = { minimap = { hide = false }, toasts = true, sound = true, window = { width = 920, height = 680, focus = false } },
 }
 
 local dataObject
@@ -121,6 +121,8 @@ local function toastText(event, match)
     return L["toast_accepted"]:format(opponent, gameName(match))
   elseif event == "accepted" or event == "moved" then
     return L["toast_your_turn"]:format(gameName(match), opponent)
+  elseif event == "draw" then
+    return L["toast_draw"]:format(opponent, gameName(match))
   elseif event == "finished" or event == "declined" then
     return gameName(match) .. ": " .. MainFrame.Describe(match)
   end

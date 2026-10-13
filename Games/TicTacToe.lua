@@ -12,7 +12,8 @@ local LINES = { { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 }, { 1, 4, 7 }, { 2, 5, 8 },
 local MARKS = { "X", "O" }
 local MARK_COLORS = { { 0.35, 0.75, 1 }, { 1, 0.55, 0.25 } }
 
-local CELL_SIZE = 92
+-- Cells grow with the window up to this size
+local MAX_CELL_SIZE = 140
 local CELL_GAP = 6
 
 --- @class TicTacToeState
@@ -78,17 +79,21 @@ local function result(state)
   return nil
 end
 
---- @param parent Frame
---- @return Button[]
-local function createCells(parent)
-  local cells = {}
-  local offset = (parent:GetWidth() - (CELL_SIZE * 3 + CELL_GAP * 2)) / 2
+--- @class TicTacToeView: GameViewObject
+--- @field stage Frame
+--- @field cells Button[]
+--- @field submit (fun(move: string))? Set while the local player may move
+local View = {}
+View.__index = View
+
+--- @param stage Frame
+--- @return TicTacToeView
+local function createView(stage)
+  --- @type TicTacToeView
+  local self = setmetatable({ stage = stage, cells = {} }, View)
 
   for index = 1, 9 do
-    local column, row = (index - 1) % 3, math.floor((index - 1) / 3)
-    local cell = CreateFrame("Button", nil, parent)
-    cell:SetSize(CELL_SIZE, CELL_SIZE)
-    cell:SetPoint("TOPLEFT", offset + column * (CELL_SIZE + CELL_GAP), -(offset + row * (CELL_SIZE + CELL_GAP)))
+    local cell = CreateFrame("Button", nil, stage)
 
     cell.background = cell:CreateTexture(nil, "BACKGROUND")
     cell.background:SetAllPoints()
@@ -98,25 +103,37 @@ local function createCells(parent)
     cell.hover:SetColorTexture(1, 1, 1, 0.12)
 
     cell.mark = cell:CreateFontString(nil, "OVERLAY")
-    cell.mark:SetFont(STANDARD_TEXT_FONT, 60, "OUTLINE")
     cell.mark:SetPoint("CENTER")
 
-    cell:SetScript("OnClick", function(self)
-      if self.submit then
+    cell:SetScript("OnClick", function()
+      if cell.playable and self.submit then
         self.submit(tostring(index))
       end
     end)
 
-    cells[index] = cell
+    self.cells[index] = cell
   end
-  return cells
+  return self
 end
 
---- @param parent Frame
---- @param view GameView
-local function render(parent, view)
-  parent.cells = parent.cells or createCells(parent)
+--- @param width number
+--- @param height number
+function View:Layout(width, height)
+  local size = math.min(MAX_CELL_SIZE, math.floor((math.min(width, height) - CELL_GAP * 2) / 3))
+  local span = size * 3 + CELL_GAP * 2
+  local left, top = (width - span) / 2, (height - span) / 2
 
+  for index, cell in ipairs(self.cells) do
+    local column, row = (index - 1) % 3, math.floor((index - 1) / 3)
+    cell:SetSize(size, size)
+    cell:ClearAllPoints()
+    cell:SetPoint("TOPLEFT", self.stage, "TOPLEFT", left + column * (size + CELL_GAP), -(top + row * (size + CELL_GAP)))
+    cell.mark:SetFont(STANDARD_TEXT_FONT, math.floor(size * 0.65), "OUTLINE")
+  end
+end
+
+--- @param view GameView
+function View:Update(view)
   --- @type TicTacToeState
   local state = view.state
   local _, winningLine = findWinner(state)
@@ -125,9 +142,9 @@ local function render(parent, view)
     winning[cell] = true
   end
 
-  for index, cell in ipairs(parent.cells) do
+  self.submit = view.canMove and view.submit or nil
+  for index, cell in ipairs(self.cells) do
     local seat = state.board[index]
-    local playable = view.canMove and not seat
 
     cell.mark:SetText(seat and MARKS[seat] or "")
     if seat then
@@ -140,8 +157,8 @@ local function render(parent, view)
       cell.background:SetColorTexture(0.12, 0.12, 0.14, 0.9)
     end
 
-    cell.submit = playable and view.submit or nil
-    cell.hover:SetShown(playable)
+    cell.playable = view.canMove and not seat
+    cell.hover:SetShown(cell.playable)
   end
 end
 
@@ -159,7 +176,7 @@ private.Games.Register({
   validate = validate,
   apply = apply,
   result = result,
-  render = render,
+  createView = createView,
   seatLabel = function(seat)
     return MARKS[seat]
   end,

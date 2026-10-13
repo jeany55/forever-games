@@ -7,8 +7,10 @@
 local ADDON_NAME = "ForeverGames"
 local ENGINE_FILES = { "Engine/Codec.lua", "Engine/Games.lua", "Engine/Match.lua", "Engine/Session.lua", "Engine/Presence.lua", "Games/TicTacToe.lua", "Games/Chess.lua" }
 
--- Rendering is never exercised here
-STANDARD_TEXT_FONT = "font"
+-- What the window needs on top of the engine, in load order. Only the tests that click through
+-- the window load these, on top of the fake client in Tests/FakeClient.lua.
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/Board.lua", "GUI/MainFrame.lua" }
+local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
 --- @return table private
@@ -56,6 +58,9 @@ function World:AddPlayer(name, matches)
     end,
     notify = function(event, match)
       player.events[#player.events + 1] = event .. ":" .. match.id
+      if player.onEvent then
+        player.onEvent(event, match)
+      end
     end,
     send = function(target, text)
       if player.blocked then
@@ -726,6 +731,434 @@ function tests.ChessMatchBetweenTwoPlayers()
     equal(2, result.winner)
     equal("checkmate", result.detail)
   end
+end
+
+-----------------------------
+-- Draw offers and history
+-----------------------------
+
+--- Starts an accepted chess match
+--- @return World, table white, table black, string id
+local function startedChess()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", "chess"))
+  world:Deliver()
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  local white = match.me == 1 and alice or bob
+  return world, white, white == alice and bob or alice, match.id
+end
+
+function tests.DrawOfferedAndAccepted()
+  local world, white, black, id = startedChess()
+  equal(false, (black.session:OfferDraw(id)), "only on your own turn")
+  assert(white.session:OfferDraw(id))
+  equal(false, (white.session:OfferDraw(id)), "one offer at a time")
+  world:Deliver()
+  equal("draw:" .. id, black.events[#black.events])
+  equal(1, black.private.Match.DrawOffer(black.matches[id]))
+  equal(false, (black.session:AcceptDraw(id)), "not before the offerer has moved")
+  equal(false, (white.session:AcceptDraw(id)), "not your own offer")
+
+  play(world, id, white, black, { "e2e4" })
+  assert(black.session:AcceptDraw(id))
+  world:Deliver()
+  for _, player in ipairs({ white, black }) do
+    local result = player.private.Match.Result(player.matches[id])
+    equal("finished", player.matches[id].status)
+    equal(0, result.winner)
+    equal("agreement", result.detail)
+    equal("!d1,e2e4,!a2", logOf(player, id))
+  end
+end
+
+function tests.DrawOfferIsTurnedDownByPlayingOn()
+  local world, white, black, id = startedChess()
+  assert(white.session:OfferDraw(id))
+  play(world, id, white, black, { "e2e4", "e7e5" })
+  equal(nil, white.private.Match.DrawOffer(white.matches[id]))
+  equal(false, (white.session:AcceptDraw(id)))
+  -- And can be made again
+  assert(white.session:OfferDraw(id))
+  world:Deliver()
+  equal("active", black.matches[id].status)
+end
+
+function tests.NoDrawOffersWhereTheGameHasNone()
+  local world, _, _, id, first = startedMatch()
+  equal(false, (first.session:OfferDraw(id)))
+  -- Nor from an opponent who sends one anyway
+  local match = first.matches[id]
+  equal(false, (first.private.Match.Append(match, "!d" .. match.me)))
+  world:Deliver()
+end
+
+function tests.NoDrawOffersInMatchesFromBeforeTheGameHadThem()
+  local world, white, _, id = startedChess()
+  white.matches[id].gameVersion = 1
+  local fresh = world:Relog(white)
+  equal(false, (fresh.session:OfferDraw(id)))
+  assert(fresh.session:Move(id, "e2e4"))
+end
+
+function tests.EventsDescribeMoves()
+  local world, white, black, id = startedChess()
+  play(world, id, white, black, { "e2e4", "d7d5", "e4d5", "d8d5", "g1f3", "d5e5", "f1e2", "c8g4", "e1g1" })
+  local Match = black.private.Match
+  local events = Match.Events(black.matches[id])
+  local written = {}
+  for index, event in ipairs(events) do
+    equal("move", event.kind)
+    equal(index % 2 == 1 and 1 or 2, event.seat)
+    written[index] = event.notation
+  end
+  equal("e4 d5 exd5 Qxd5 Nf3 Qe5+ Be2 Bg4 O-O", table.concat(written, " "))
+  equal("p", events[3].captured)
+  equal(square("h1"), events[9].rook.from)
+  equal(square("f1"), events[9].rook.to)
+end
+
+function tests.NotationSaysWhichPieceWhenTwoCouldMove()
+  local state, chess = chessAfter("g1f3 a7a6 b1c3 a6a5 f3d4 a5a4")
+  equal("Ndb5", chess.apply(state, 1, "d4b5").notation)
+  state = chessAfter("a2a4 a7a6 h2h4 a6a5 a1a3 b7b6 h1h3 b6b5")
+  equal("Rab3", chess.apply(state, 1, "a3b3").notation)
+  state = chessAfter("f2f3 e7e5 g2g4")
+  equal("Qh4#", chess.apply(state, 2, "d8h4").notation)
+  -- En passant takes a pawn that isn't on the square moved to
+  state = chessAfter("e2e4 a7a6 e4e5 d7d5")
+  local event = chess.apply(state, 1, "e5d6")
+  equal("exd6", event.notation)
+  equal("p", event.captured)
+  equal(square("d5"), event.capturedAt)
+end
+
+function tests.EarlierPositionsCanBeLookedAt()
+  local world, white, black, id = startedChess()
+  play(world, id, white, black, { "e2e4", "e7e5", "g1f3" })
+  local Match, match = white.private.Match, white.matches[id]
+
+  equal("P", Match.StateAt(match, 0).board[square("e2")])
+  equal("P", Match.StateAt(match, 1).board[square("e4")])
+  equal(nil, Match.StateAt(match, 1).board[square("e5")])
+  equal("p", Match.StateAt(match, 2).board[square("e5")])
+  -- Going back again, and all the way forward
+  equal(nil, Match.StateAt(match, 1).board[square("e5")])
+  equal("N", Match.StateAt(match, 3).board[square("f3")])
+  -- Looking back doesn't disturb the game itself
+  equal("N", Match.State(match).board[square("f3")])
+  play(world, id, black, white, { "b8c6" })
+  equal("n", Match.State(match).board[square("c6")])
+end
+
+-----------------------------
+-- Window
+-----------------------------
+
+--- Gives a player the main window, the way Core.lua wires it up in the client
+--- @param player table
+--- @return table MainFrame
+local function openWindow(player)
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true, window = { width = 920, height = 680, focus = false } } }, printed = {} }
+  function ForeverGames:Print(text)
+    self.printed[#self.printed + 1] = text
+  end
+
+  local private = player.private
+  local nothing = function() end
+  private.ICON = "icon"
+  private.session = player.session
+  private.Transport = {
+    DisplayName = function(name)
+      return name
+    end,
+    IsLocked = function()
+      return false
+    end,
+  }
+  private.Wizard = { Init = nothing, Reset = nothing, Refresh = nothing, Open = nothing, Close = nothing }
+  function private.Wizard.IsOpen()
+    return false
+  end
+  private.presence = { Announce = nothing }
+  function private.presence:Counts()
+    return { total = 0, guild = 0, friend = 0, other = 0 }
+  end
+  function private.presence:CanAnnounce()
+    return false
+  end
+  function private.presence:SinceAnnounce()
+    return 100
+  end
+
+  for _, file in ipairs(GUI_FILES) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  player.onEvent = function()
+    private.MainFrame.Refresh()
+  end
+  return private.MainFrame
+end
+
+--- The board of the game on screen
+local function shownBoard()
+  local found = Client.Find(function(widget)
+    return widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget:IsVisible()
+  end)
+  assert(#found == 1, "Expected one board on screen, found " .. #found)
+  return found[1]
+end
+
+--- Moves the cursor onto a chess square
+--- @param board table
+--- @param name string
+--- @param flipped boolean Whether black is at the bottom
+local function pointAt(board, name, flipped)
+  local cell = board.width / 8
+  local column, row = name:byte(1) - 97, tonumber(name:sub(2)) - 1
+  if flipped then
+    column, row = 7 - column, 7 - row
+  end
+  Client.cursor = { (column + 0.5) * cell, (row + 0.5) * cell }
+end
+
+local function press(board)
+  Client.mouseDown = true
+  board:Fire("OnMouseDown", "LeftButton")
+end
+
+local function release(board)
+  Client.mouseDown = false
+  board:Fire("OnMouseUp", "LeftButton")
+end
+
+--- Lets time pass on the board, so glides finish
+local function settle(board)
+  for _ = 1, 30 do
+    board:Fire("OnUpdate", 0.02)
+  end
+end
+
+--- Starts a chess match where the player with the window has the white pieces
+--- @return World, table white, table black, string id, table MainFrame
+local function chessOnScreen()
+  local world = World.New()
+  world.seed = 1
+  local white, black = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(white.session:Invite("Bob-Realm", "chess"))
+  equal(1, match.me)
+  world:Deliver()
+  assert(black.session:Accept(match.id))
+  world:Deliver()
+  local MainFrame = openWindow(white)
+  MainFrame.Open(match.id)
+  return world, white, black, match.id, MainFrame
+end
+
+function tests.WindowPlaysChessByClickingAndDragging()
+  local world, white, black, id = chessOnScreen()
+  local board = shownBoard()
+  assert(board.width >= 8 * 40, "the board should make use of the window, got " .. board.width)
+
+  -- Click the pawn, then where it goes
+  pointAt(board, "e2")
+  press(board)
+  release(board)
+  equal("", logOf(white, id), "picking a piece up isn't a move")
+  pointAt(board, "e4")
+  press(board)
+  release(board)
+  equal("e2e4", logOf(white, id))
+  equal("IG_ABILITY_ICON_DROP", Client.sounds[#Client.sounds])
+  settle(board)
+
+  -- Not on the opponent's turn
+  pointAt(board, "d2")
+  press(board)
+  release(board)
+  pointAt(board, "d4")
+  press(board)
+  release(board)
+  equal("e2e4", logOf(white, id))
+
+  world:Deliver()
+  assert(black.session:Move(id, "e7e5"))
+  world:Deliver()
+  settle(board)
+
+  -- Drag the knight out
+  pointAt(board, "g1")
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  pointAt(board, "f3")
+  board:Fire("OnUpdate", 0.02)
+  release(board)
+  equal("e2e4,e7e5,g1f3", logOf(white, id))
+  world:Deliver()
+  assert(black.session:Move(id, "b8c6"))
+  world:Deliver()
+
+  -- Dropped somewhere it can't go, it comes back
+  pointAt(board, "f3")
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  pointAt(board, "f6")
+  board:Fire("OnUpdate", 0.02)
+  release(board)
+  settle(board)
+  equal("e2e4,e7e5,g1f3,b8c6", logOf(white, id))
+end
+
+function tests.WindowStepsBackThroughAGame()
+  local world, white, black, id, MainFrame = chessOnScreen()
+  local board = shownBoard()
+  play(world, id, white, black, { "e2e4", "e7e5" })
+
+  local moves = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.ply ~= nil and widget:IsVisible()
+  end)
+  equal(2, #moves)
+  equal("e4", moves[1].text.text)
+  equal("e5", moves[2].text.text)
+
+  Client.Button("<"):Fire("OnClick")
+  -- An earlier position is for looking at, not for playing from
+  pointAt(board, "d2")
+  press(board)
+  release(board)
+  pointAt(board, "d4")
+  press(board)
+  release(board)
+  equal("e2e4,e7e5", logOf(white, id))
+
+  Client.Button("<<"):Fire("OnClick")
+  Client.Button(">"):Fire("OnClick")
+  moves[2]:Fire("OnClick")
+  pointAt(board, "d2")
+  press(board)
+  release(board)
+  pointAt(board, "d4")
+  press(board)
+  release(board)
+  equal("e2e4,e7e5,d2d4", logOf(white, id), "back at the end the game goes on")
+
+  -- News brings the window back to the game as it stands
+  world:Deliver()
+  Client.Button("<<"):Fire("OnClick")
+  assert(black.session:Move(id, "e5d4"))
+  world:Deliver()
+  settle(board)
+  pointAt(board, "d1")
+  press(board)
+  release(board)
+  pointAt(board, "d4")
+  press(board)
+  release(board)
+  equal("e2e4,e7e5,d2d4,e5d4,d1d4", logOf(white, id))
+  MainFrame.Refresh()
+end
+
+function tests.WindowAsksWhatAPawnPromotesTo()
+  local world, white, black, id = chessOnScreen()
+  local board = shownBoard()
+  play(world, id, white, black, { "a2a4", "b7b5", "a4b5", "a7a6", "b5a6", "c8b7", "a6b7", "b8c6" })
+  local before = logOf(white, id)
+
+  local function choices()
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.piece ~= nil and widget:IsVisible()
+    end)
+  end
+  equal(0, #choices())
+
+  pointAt(board, "b7")
+  press(board)
+  release(board)
+  pointAt(board, "a8")
+  press(board)
+  release(board)
+  equal(before, logOf(white, id), "nothing is played until a piece is chosen")
+  equal(4, #choices())
+
+  -- Clicking away takes it back
+  choices()[1].parent.parent:Fire("OnClick")
+  equal(0, #choices())
+  equal(before, logOf(white, id))
+
+  pointAt(board, "b7")
+  press(board)
+  board:Fire("OnUpdate", 0.02)
+  pointAt(board, "a8")
+  board:Fire("OnUpdate", 0.02)
+  release(board)
+  choices()[4]:Fire("OnClick")
+  equal(before .. ",b7a8n", logOf(white, id))
+  equal(0, #choices())
+end
+
+function tests.WindowOffersAndAcceptsDraws()
+  local world, white, black, id, MainFrame = chessOnScreen()
+  Client.Button("offer_draw"):Fire("OnClick")
+  equal("!d1", logOf(white, id))
+  equal("status_draw_offering", MainFrame.Describe(white.matches[id]))
+  play(world, id, white, black, { "e2e4" })
+  equal("status_their_turn_draw", MainFrame.Describe(white.matches[id]))
+
+  -- The other side of it
+  play(world, id, black, white, { "e7e5" })
+  assert(white.session:Move(id, "g1f3"))
+  world:Deliver()
+  assert(black.session:OfferDraw(id))
+  assert(black.session:Move(id, "b8c6"))
+  world:Deliver()
+  equal("status_draw_offered", MainFrame.Describe(white.matches[id]))
+  Client.Button("accept_draw"):Fire("OnClick")
+  world:Deliver()
+  equal("finished", black.matches[id].status)
+  equal("status_draw (result_agreement)", MainFrame.Describe(white.matches[id]))
+end
+
+function tests.WindowGivesTheBoardTheRoomItHas()
+  local _, _, _, _, MainFrame = chessOnScreen()
+  local board = shownBoard()
+  local normal = board.width
+
+  ForeverGamesFrame:SetSize(1400, 1000)
+  assert(board.width > normal, "a bigger window should mean a bigger board")
+  local big = board.width
+
+  Client.Button("focus_on"):Fire("OnClick")
+  assert(board.width > big, "focus should give the board the room the list had")
+  Client.Button("focus_off"):Fire("OnClick")
+  equal(big, board.width)
+
+  ForeverGamesFrame:SetSize(764, 560)
+  assert(board.width >= 8 * 30, "the board should stay usable in the smallest window, got " .. board.width)
+  MainFrame.Refresh()
+end
+
+function tests.WindowPlaysTicTacToe()
+  local world = World.New()
+  world.seed = 1
+  local first, second = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(first.session:Invite("Bob-Realm", "tictactoe"))
+  world:Deliver()
+  assert(second.session:Accept(match.id))
+  world:Deliver()
+  openWindow(first).Open(match.id)
+
+  local cells = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.mark ~= nil and widget:IsVisible()
+  end)
+  equal(9, #cells)
+  assert(cells[1].width > 0, "cells should have been laid out")
+  cells[5]:Fire("OnClick")
+  equal("5", logOf(first, match.id))
+  equal("X", cells[5].mark.text)
+  cells[1]:Fire("OnClick")
+  equal("5", logOf(first, match.id), "not on the opponent's turn")
 end
 
 function tests.ListPutsMatchesNeedingAttentionFirst()

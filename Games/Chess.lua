@@ -2,8 +2,8 @@
 --  Chess
 --------------------------
 -- Full rules: castling, en passant, promotion, checkmate, stalemate, and draws by threefold
--- repetition, the fifty move rule and insufficient material. Draws by agreement are not possible,
--- the engine has no way for players to offer anything yet.
+-- repetition, the fifty move rule and insufficient material. Draws by agreement are the engine's
+-- business, the game only says it allows them.
 --
 -- A move is the origin and destination square, plus the piece letter when promoting: "e2e4",
 -- "e1g1" (castling moves the king two squares), "e7e8q". Seat 1 plays white.
@@ -391,14 +391,83 @@ local function validate(state, seat, move)
   return true
 end
 
+--- What a move did, for drawing it and writing it down
+--- @class ChessEvent: MatchEvent
+--- @field from number
+--- @field to number
+--- @field piece string The piece that moved, a pawn that promotes is still the pawn
+--- @field captured string? The piece taken
+--- @field capturedAt number? Where it stood, which en passant makes a different square from `to`
+--- @field promotion string?
+--- @field rook { from: number, to: number }? The rook's half of castling
+--- @field check boolean
+
+--- Writes a move the way players do: "e4", "Nxf3", "O-O", "exd8=Q". Check is added afterwards.
+--- @param state ChessState The position before the move
+--- @param move ChessMove
+--- @param isCapture boolean
+--- @return string
+local function notationOf(state, move, isCapture)
+  local piece = state.board[move.from]
+  local kind = piece:lower()
+  local to = squareName(move.to)
+  local fromName = squareName(move.from)
+
+  if kind == "k" and math.abs(move.to - move.from) == 2 then
+    return move.to > move.from and "O-O" or "O-O-O"
+  end
+  if kind == "p" then
+    local text = isCapture and (fromName:sub(1, 1) .. "x" .. to) or to
+    return move.promotion and (text .. "=" .. move.promotion:upper()) or text
+  end
+
+  -- Say which one when another piece of the same kind could have gone there too: by file if
+  -- that settles it, else by rank, else both
+  local rivals, sameFile, sameRank = false, false, false
+  for _, rival in pairs(state.legal) do
+    if rival.to == move.to and rival.from ~= move.from and state.board[rival.from] == piece then
+      rivals = true
+      sameFile = sameFile or rival.from % 8 == move.from % 8
+      sameRank = sameRank or math.floor(rival.from / 8) == math.floor(move.from / 8)
+    end
+  end
+  local which = ""
+  if rivals then
+    which = not sameFile and fromName:sub(1, 1) or (not sameRank and fromName:sub(2, 2) or fromName)
+  end
+  return kind:upper() .. which .. (isCapture and "x" or "") .. to
+end
+
 --- @param state ChessState
 --- @param seat number
 --- @param moveString string
+--- @return ChessEvent
 local function apply(state, seat, moveString)
   local move = state.legal[moveString]
   local board = state.board
-  local isPawn = board[move.from]:lower() == "p"
-  local isCapture = board[move.to] ~= nil or (isPawn and move.to == state.enPassant)
+  local piece = board[move.from]
+  local isPawn = piece:lower() == "p"
+  local capturedAt = move.to
+  if isPawn and move.to == state.enPassant then
+    capturedAt = offset(move.to, 0, seat == WHITE and -1 or 1)
+  end
+  local captured = board[capturedAt]
+  local isCapture = captured ~= nil
+
+  --- @type ChessEvent
+  local event = {
+    from = move.from,
+    to = move.to,
+    piece = piece,
+    captured = captured,
+    capturedAt = isCapture and capturedAt or nil,
+    promotion = move.promotion,
+    notation = notationOf(state, move, isCapture),
+  }
+  if piece:lower() == "k" and math.abs(move.to - move.from) == 2 then
+    local kingside = move.to > move.from
+    event.rook = { from = kingside and move.from + 3 or move.from - 4, to = kingside and move.from + 1 or move.from - 1 }
+  end
 
   movePieces(board, move, state.enPassant)
 
@@ -417,23 +486,48 @@ local function apply(state, seat, moveString)
   state.last = move
   state.turn = other(seat)
   evaluate(state)
+
+  event.check = state.check
+  if state.check then
+    event.notation = event.notation .. (state.outcome and "#" or "+")
+  end
+  return event
 end
 
 -----------------------------
--- Board
+-- View
 -----------------------------
+-- The board itself is the shared toolkit's (GUI/Board.lua). What is chess about it is in here:
+-- the pieces, which squares to point out, asking what a pawn promotes to, and the trays of
+-- captured pieces above and below the board.
 
-local CELL_SIZE = 36
 local TEXTURES = "Interface\\AddOns\\ForeverGames\\Images\\Chess\\"
-local LIGHT = { 0.86, 0.80, 0.66 }
-local DARK = { 0.45, 0.32, 0.23 }
-
-local render
+-- Each piece comes in these sizes, see Tools/convert_pieces.py
+local TEXTURE_SIZES = { 64, 128, 256 }
+local LAST_MOVE = { 0.95, 0.85, 0.25, 0.4 }
+local CHECK = { 0.9, 0.15, 0.15, 0.6 }
+local TRAY_HEIGHT = 22
+local TRAY_GAP = 4
+local VALUES = { p = 1, n = 3, b = 3, r = 5, q = 9, k = 0 }
+-- Captured pieces are lined up most valuable first
+local TRAY_ORDER = { q = 1, r = 2, b = 3, n = 4, p = 5 }
+-- Sound kit names, played through Widgets.PlaySound
+local SOUNDS = { move = "IG_ABILITY_ICON_DROP", capture = "IG_BACKPACK_CLOSE", check = "MAP_PING" }
 
 --- @param piece string
+--- @param pixels number? Screen pixels it will be drawn at
 --- @return string
-local function textureFor(piece)
-  return TEXTURES .. (ownerOf(piece) == WHITE and "w" or "b") .. piece:upper()
+local function textureFor(piece, pixels)
+  -- The smallest one that doesn't have to be stretched much: the client doesn't smooth a
+  -- texture it shrinks a lot, and a small one blown up is blurry
+  local size = TEXTURE_SIZES[#TEXTURE_SIZES]
+  for _, candidate in ipairs(TEXTURE_SIZES) do
+    if candidate >= (pixels or 0) * 0.85 then
+      size = candidate
+      break
+    end
+  end
+  return TEXTURES .. size .. "\\" .. (ownerOf(piece) == WHITE and "w" or "b") .. piece:upper()
 end
 
 --- Legal destinations of the piece on a square
@@ -452,159 +546,271 @@ local function targetsFrom(state, from)
   return targets
 end
 
---- @param parent Frame
---- @param square number
-local function onCellClicked(parent, square)
-  local view = parent.view
-  if not view.canMove then
-    return
-  end
+--- @class ChessView: GameViewObject
+--- @field stage Frame
+--- @field board Board
+--- @field view GameView? What was last asked for
+--- @field shown { id: string, ply: number }? The position that is on the board
+--- @field pending { from: number, to: number }? A promotion waiting for the player to pick a piece
+--- @field dropped boolean? The move being played was dragged, so the piece is already there
+local View = {}
+View.__index = View
 
-  parent.promoting = nil
-  local move = targetsFrom(view.state, parent.selected)[square]
-  if move and move.promotion then
-    -- Ask which piece before sending anything
-    parent.promoting = { from = move.from, to = move.to }
-  elseif move then
-    parent.selected = nil
-    return view.submit(moveName(move))
-  elseif ownerOf(view.state.board[square]) == view.seat and parent.selected ~= square then
-    parent.selected = square
-  else
-    parent.selected = nil
-  end
-  render(parent, view)
+--- A strip showing the pieces one player has taken, and how far ahead they are
+--- @param stage Frame
+--- @return Frame
+local function createTray(stage)
+  local tray = CreateFrame("Frame", nil, stage)
+  tray.icons = {}
+  tray.lead = tray:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  tray.lead:SetTextColor(0.65, 0.65, 0.65)
+  return tray
 end
 
---- @param parent Frame
-local function createWidgets(parent)
-  local margin = (parent:GetWidth() - CELL_SIZE * 8) / 2
-
-  parent.cells = {}
-  for index = 0, 63 do
-    local cell = CreateFrame("Button", nil, parent)
-    cell:SetSize(CELL_SIZE, CELL_SIZE)
-    cell:SetPoint("TOPLEFT", margin + (index % 8) * CELL_SIZE, -(margin + math.floor(index / 8) * CELL_SIZE))
-
-    cell.background = cell:CreateTexture(nil, "BACKGROUND")
-    cell.background:SetAllPoints()
-
-    -- Tints the square: selection, last move or check
-    cell.tint = cell:CreateTexture(nil, "BORDER")
-    cell.tint:SetAllPoints()
-
-    cell.piece = cell:CreateTexture(nil, "ARTWORK")
-    cell.piece:SetPoint("TOPLEFT", 1, -1)
-    cell.piece:SetPoint("BOTTOMRIGHT", -1, 1)
-
-    -- Marks a square the selected piece can move to
-    cell.target = cell:CreateTexture(nil, "OVERLAY")
-    cell.target:SetSize(12, 12)
-    cell.target:SetPoint("CENTER")
-    cell.target:SetColorTexture(0.2, 0.75, 0.25, 0.85)
-
-    local hover = cell:CreateTexture(nil, "HIGHLIGHT")
-    hover:SetAllPoints()
-    hover:SetColorTexture(1, 1, 1, 0.15)
-
-    cell:SetScript("OnClick", function(self)
-      onCellClicked(parent, self.square)
-    end)
-    parent.cells[index] = cell
+--- @param tray Frame
+--- @param pieces string[] Pieces taken, in display order
+--- @param lead number Points of material ahead, 0 or less shows nothing
+local function fillTray(tray, pieces, lead)
+  local size = TRAY_HEIGHT
+  local x, previous = 0, nil
+  for index, piece in ipairs(pieces) do
+    local icon = tray.icons[index]
+    if not icon then
+      icon = tray:CreateTexture(nil, "ARTWORK")
+      tray.icons[index] = icon
+    end
+    -- Pieces of a kind overlap, with a gap before the next kind
+    if previous then
+      x = x + size * (previous == piece and 0.5 or 0.85)
+    end
+    icon:SetTexture(textureFor(piece, size))
+    icon:SetSize(size, size)
+    icon:ClearAllPoints()
+    icon:SetPoint("LEFT", x, 0)
+    icon:Show()
+    previous = piece
+  end
+  for index = #pieces + 1, #tray.icons do
+    tray.icons[index]:Hide()
   end
 
-  -- Promotion choice, shown over the board
-  local picker = CreateFrame("Frame", nil, parent)
-  picker:SetSize(#PROMOTIONS * 48 + 12, 60)
-  picker:SetPoint("CENTER")
-  picker:SetFrameLevel(parent:GetFrameLevel() + 10)
-  picker:EnableMouse(true)
+  tray.lead:ClearAllPoints()
+  tray.lead:SetPoint("LEFT", previous and (x + size + 4) or 2, 0)
+  tray.lead:SetText(lead > 0 and ("+" .. lead) or "")
+end
+
+--- Asks what a pawn becomes: the four choices in a column down from the square it reached, over
+--- a dimmed board. Clicking anywhere else takes the move back.
+--- @param self ChessView
+local function createPicker(self)
+  local boardFrame = self.board.frame
+
+  local dim = CreateFrame("Button", nil, boardFrame)
+  dim:SetAllPoints()
+  dim:SetFrameLevel(boardFrame:GetFrameLevel() + 5)
+  local shade = dim:CreateTexture(nil, "BACKGROUND")
+  shade:SetAllPoints()
+  shade:SetColorTexture(0, 0, 0, 0.45)
+  dim:SetScript("OnClick", function()
+    self.pending = nil
+    self:draw()
+  end)
+  dim:Hide()
+
+  local picker = CreateFrame("Frame", nil, dim)
+  picker:SetFrameLevel(boardFrame:GetFrameLevel() + 10)
   local background = picker:CreateTexture(nil, "BACKGROUND")
   background:SetAllPoints()
-  background:SetColorTexture(0.08, 0.08, 0.1, 0.95)
+  background:SetColorTexture(0.93, 0.93, 0.9, 1)
 
   picker.buttons = {}
   for index, promotion in ipairs(PROMOTIONS) do
     local button = CreateFrame("Button", nil, picker)
-    button:SetSize(48, 48)
-    button:SetPoint("LEFT", 6 + (index - 1) * 48, 0)
     button.piece = button:CreateTexture(nil, "ARTWORK")
     button.piece:SetAllPoints()
     local hover = button:CreateTexture(nil, "HIGHLIGHT")
     hover:SetAllPoints()
-    hover:SetColorTexture(1, 1, 1, 0.2)
+    hover:SetColorTexture(0.25, 0.7, 0.3, 0.45)
     button:SetScript("OnClick", function()
-      local pending = parent.promoting
-      parent.promoting, parent.selected = nil, nil
-      parent.view.submit(squareName(pending.from) .. squareName(pending.to) .. promotion)
+      local pending = self.pending
+      -- The pawn is already drawn where it is going
+      self.dropped = true
+      self.view.submit(squareName(pending.from) .. squareName(pending.to) .. promotion)
+      self.dropped = nil
     end)
     picker.buttons[index] = button
   end
-  parent.picker = picker
+
+  self.dim, self.picker = dim, picker
 end
 
---- @param parent Frame
---- @param view GameView
-render = function(parent, view)
-  if not parent.cells then
-    createWidgets(parent)
-  end
+--- @param stage Frame
+--- @return ChessView
+local function createView(stage)
+  --- @type ChessView
+  local self = setmetatable({ stage = stage }, View)
 
+  self.board = private.Board.New(stage, { columns = 8, rows = 8, files = "abcdefgh", ranks = "12345678" })
+  self.board.frame:SetPoint("CENTER")
+  self.board:SetInput({
+    pickable = function(square)
+      return ownerOf(self.view.state.board[square]) == self.view.seat
+    end,
+    targets = function(square)
+      return targetsFrom(self.view.state, square)
+    end,
+    onMove = function(from, to, dropped)
+      self:play(from, to, dropped)
+    end,
+  })
+
+  -- The opponent's captures above the board, the player's own below
+  self.trays = { createTray(stage), createTray(stage) }
+  self.trays[1]:SetPoint("BOTTOMLEFT", self.board.frame, "TOPLEFT", 0, TRAY_GAP)
+  self.trays[2]:SetPoint("TOPLEFT", self.board.frame, "BOTTOMLEFT", 0, -TRAY_GAP)
+
+  createPicker(self)
+  return self
+end
+
+--- A piece was put on a square it can go to
+--- @param from number
+--- @param to number
+--- @param dropped boolean
+function View:play(from, to, dropped)
+  local move = targetsFrom(self.view.state, from)[to]
+  if not move then
+    return
+  end
+  if move.promotion then
+    -- Ask which piece before sending anything
+    self.pending = { from = from, to = to }
+    self:draw()
+    return
+  end
+  self.dropped = dropped
+  self.view.submit(moveName(move))
+  self.dropped = nil
+end
+
+--- @param width number
+--- @param height number
+function View:Layout(width, height)
+  local board = self.board
+  board:SetSize(math.min(width, height - 2 * (TRAY_HEIGHT + TRAY_GAP)))
+  for _, tray in ipairs(self.trays) do
+    tray:SetSize(board.cell * 8, TRAY_HEIGHT)
+  end
+  self.picker:SetSize(board.cell, board.cell * #PROMOTIONS)
+  for index, button in ipairs(self.picker.buttons) do
+    button:SetSize(board.cell, board.cell)
+    button:ClearAllPoints()
+    button:SetPoint("TOPLEFT", 0, -(index - 1) * board.cell)
+  end
+  if self.view then
+    self:draw()
+  end
+end
+
+--- Puts the current position on the board
+function View:draw()
+  local view = self.view
   --- @type ChessState
   local state = view.state
-  -- A selection only makes sense for the position it was made in
-  local position = view.match.id .. ":" .. #view.match.log
-  if parent.position ~= position or not view.canMove then
-    parent.selected, parent.promoting = nil, nil
-  end
-  parent.position = position
-  parent.view = view
+  local board, pending = self.board, self.pending
 
-  local targets = targetsFrom(state, parent.selected)
-  local checked
+  local pieces = {}
+  for square, piece in pairs(state.board) do
+    pieces[square] = piece
+  end
+  if pending then
+    -- While the player chooses, the pawn stands where it is going
+    pieces[pending.to], pieces[pending.from] = pieces[pending.from], nil
+  end
+  board:SetPieces(pieces, textureFor)
+
+  local tints = {}
+  if state.last then
+    tints[state.last.from], tints[state.last.to] = LAST_MOVE, LAST_MOVE
+  end
   if state.check then
     local king = state.turn == WHITE and "K" or "k"
-    for square = 0, 63 do
-      if state.board[square] == king then
-        checked = square
+    for square, piece in pairs(state.board) do
+      if piece == king then
+        tints[square] = CHECK
       end
     end
   end
+  board:SetTints(tints)
 
-  for index = 0, 63 do
-    -- Each player sees their own pieces at the bottom
-    local file, rank = index % 8, 7 - math.floor(index / 8)
-    if view.seat == BLACK then
-      file, rank = 7 - file, 7 - rank
+  self.dim:SetShown(pending ~= nil)
+  if pending then
+    local x, y = board:OffsetOf(pending.to)
+    self.picker:ClearAllPoints()
+    self.picker:SetPoint("TOPLEFT", board.frame, "TOPLEFT", x, -y)
+    for index, promotion in ipairs(PROMOTIONS) do
+      local piece = view.seat == WHITE and promotion:upper() or promotion
+      self.picker.buttons[index].piece:SetTexture(textureFor(piece, board:pixels()))
     end
-    local square = rank * 8 + file
-    local cell = parent.cells[index]
-    local piece = state.board[square]
-
-    cell.square = square
-    cell.background:SetColorTexture(unpack((file + rank) % 2 == 0 and DARK or LIGHT))
-
-    if piece then
-      cell.piece:SetTexture(textureFor(piece))
-    end
-    cell.piece:SetShown(piece ~= nil)
-
-    if square == parent.selected then
-      cell.tint:SetColorTexture(0.25, 0.7, 0.3, 0.55)
-    elseif square == checked then
-      cell.tint:SetColorTexture(0.9, 0.15, 0.15, 0.6)
-    elseif state.last and (square == state.last.from or square == state.last.to) then
-      cell.tint:SetColorTexture(0.95, 0.85, 0.25, 0.4)
-    else
-      cell.tint:SetColorTexture(0, 0, 0, 0)
-    end
-
-    cell.target:SetShown(targets[square] ~= nil)
   end
 
-  parent.picker:SetShown(parent.promoting ~= nil)
-  for index, promotion in ipairs(PROMOTIONS) do
-    parent.picker.buttons[index].piece:SetTexture(textureFor(view.seat == WHITE and promotion:upper() or promotion))
+  -- What each side has taken so far, and who is ahead on what is left
+  local taken, material = { {}, {} }, { 0, 0 }
+  for index = 1, view.ply do
+    local event = view.events[index]
+    if event and event.captured then
+      table.insert(taken[event.seat], event.captured)
+    end
+  end
+  for _, piece in pairs(state.board) do
+    material[ownerOf(piece)] = material[ownerOf(piece)] + VALUES[piece:lower()]
+  end
+  local seats = { other(view.seat), view.seat }
+  for index, seat in ipairs(seats) do
+    table.sort(taken[seat], function(a, b)
+      return TRAY_ORDER[a:lower()] < TRAY_ORDER[b:lower()]
+    end)
+    fillTray(self.trays[index], taken[seat], material[seat] - material[other(seat)])
+  end
+end
+
+--- @param view GameView
+function View:Update(view)
+  local before = self.shown
+  local sameMatch = before ~= nil and before.id == view.match.id
+  local changed = not sameMatch or before.ply ~= view.ply
+  local stepped = sameMatch and view.ply == before.ply + 1
+  self.view = view
+  self.shown = { id = view.match.id, ply = view.ply }
+
+  local board = self.board
+  if changed then
+    -- What was picked up or being chosen belonged to the position that was showing
+    self.pending = nil
+    board:Select(nil)
+    board:StopGlides()
+  end
+  if not view.canMove then
+    self.pending = nil
+  end
+  -- Each player sees their own pieces at the bottom
+  board:SetFlipped(view.seat == BLACK)
+  board:SetEnabled(view.canMove)
+  self:draw()
+
+  -- Show how the position came about when it follows from the one before, or when the
+  -- opponent moved while the player wasn't looking
+  --- @type ChessEvent?
+  local event = view.events[view.ply]
+  local arrived = view.fresh and view.live and event ~= nil and event.seat ~= view.seat
+  if changed and event and event.kind == "move" and (stepped or arrived) then
+    if not self.dropped then
+      board:Glide(event.to, event.from)
+    end
+    if event.rook then
+      board:Glide(event.rook.to, event.rook.from)
+    end
+    private.Widgets.PlaySound(SOUNDS[event.check and "check" or (event.captured and "capture" or "move")])
   end
 end
 
@@ -613,8 +819,11 @@ private.Games.Register({
   name = L["game_chess"],
   description = L["game_chess_description"],
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\chess",
-  version = 1,
+  -- 2: draws by agreement
+  version = 2,
   seats = 2,
+  draws = true,
+  history = true,
   newState = newState,
   turn = function(state)
     return state.turn
@@ -624,7 +833,7 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
-  render = render,
+  createView = createView,
   seatLabel = function(seat)
     return seat == WHITE and L["chess_white"] or L["chess_black"]
   end,
