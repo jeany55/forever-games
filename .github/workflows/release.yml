@@ -1,0 +1,91 @@
+name: 🚀 Release
+run-name: 🚀 Release new ${{ inputs.versionType }} version
+on:
+  # Run manually only
+  workflow_dispatch:
+    inputs:
+      versionType:
+        description: "Type of change"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none (release the current version)
+      changeNotes:
+        description: Change notes to attach to release
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checks-out repository
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          sudo apt-get install -y lua5.1
+          ./Tests/RunTests.sh
+
+      # Increment version and replace in the toc file
+      - name: Update version
+        run: |
+          VERSION=$(grep '^## Version:' ForeverGames.toc | grep -o '[0-9]*\.[0-9]*\.[0-9]*')
+
+          arrIN=(${VERSION//./ })
+
+          MAJOR_VERSION=${arrIN[0]}
+          MINOR_VERSION=${arrIN[1]}
+          PATCH_VERSION=${arrIN[2]}
+          VERSION_TYPE="${{ inputs.versionType }}"
+
+          if [[ $VERSION_TYPE == "patch" ]]; then
+            PATCH_VERSION=$(( PATCH_VERSION + 1 ))
+          elif [[ $VERSION_TYPE == "minor" ]]; then
+            PATCH_VERSION=0
+            MINOR_VERSION=$(( MINOR_VERSION + 1 ))
+          elif [[ $VERSION_TYPE == "major" ]]; then
+            PATCH_VERSION=0
+            MINOR_VERSION=0
+            MAJOR_VERSION=$(( MAJOR_VERSION + 1 ))
+          fi
+
+          newVersion="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
+
+          sed -i -e "s/^## Version: $VERSION/## Version: $newVersion/" ForeverGames.toc
+
+          echo "VERSION=$newVersion" >> $GITHUB_ENV
+
+      # Commit the version change if there is one, and tag the version
+      - name: Commit and tag
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          if ! git diff --quiet ForeverGames.toc; then
+            git add ForeverGames.toc
+            git commit -m "Update to version $VERSION"
+            git push
+          fi
+
+          git tag -a "v$VERSION" -m "Release version ${VERSION}"
+          git push origin tag "v$VERSION"
+
+      # Put the addon into a ForeverGames folder and zip it
+      - name: Generate zip
+        run: ./build.sh
+
+      # Upload zip made in previous step as a github release and attach to version tag
+      - name: Create release
+        uses: ncipollo/release-action@v1.12.0
+        with:
+          artifacts: .release/ForeverGames-${{ env.VERSION }}.zip
+          tag: "v${{ env.VERSION }}"
+          body: ${{ inputs.changeNotes }}
