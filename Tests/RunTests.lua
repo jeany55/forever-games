@@ -1784,6 +1784,12 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("chess", "casual")))
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
+  -- By how many are playing
+  equal("solitaire", idsOf(Games.Search(nil, nil, 1)))
+  equal("chinesecheckers,crazyeights,words", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("chinesecheckers", idsOf(Games.Search(nil, "strategy", 3)))
+  equal("", idsOf(Games.Search(nil, "solo", 2)))
+
   for _, game in ipairs(Games.List()) do
     assert(game.genre, game.id .. " should say what kind of game it is")
   end
@@ -1798,6 +1804,7 @@ local function openWizard(player)
   local private = player.private
   private.ICON = "icon"
   private.session = player.session
+  ForeverGames = { db = { profile = { sound = true, favourites = {} } } }
   private.Transport = {
     Normalize = function(name)
       return name ~= "" and name or nil
@@ -1834,7 +1841,7 @@ local function offeredGames()
   return games
 end
 
---- Clicks one of the buttons that narrow the games down to a genre
+--- Clicks one of the buttons that narrow the games down
 --- @param text string What it says
 local function clickGenre(text)
   local found = Client.Find(function(widget)
@@ -1877,7 +1884,7 @@ function tests.WizardNarrowsTheGamesDown()
 
   -- By genre, on top of whatever is typed
   clickGenre("genre_casual")
-  equal("tictactoe,connectfour", idsOf(offeredGames()))
+  equal("connectfour,tictactoe", idsOf(offeredGames()), "by name")
   type("chess")
   equal(0, #offeredGames())
   clickGenre("wizard_all_games")
@@ -1897,6 +1904,69 @@ function tests.WizardNarrowsTheGamesDown()
   end
   equal("chess", started.game)
   equal("outgoing", started.status)
+end
+
+function tests.WizardKeepsFavouritesFirst()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local wizard = openWizard(alice)
+  local favourites = ForeverGames.db.profile.favourites
+  local byName = {}
+  for _, game in ipairs(alice.private.Games.List()) do
+    byName[#byName + 1] = game.id
+  end
+  table.sort(byName)
+  equal(table.concat(byName, ","), idsOf(offeredGames()), "by name until something is starred")
+
+  --- Clicks the star on a game's card
+  local function star(id)
+    local found = Client.Find(function(widget)
+      return widget.kind == "Button" and widget.parent.game ~= nil and widget.parent.game.id == id and widget:IsVisible()
+    end)
+    equal(1, #found, "stars on " .. id)
+    found[1]:Fire("OnClick")
+  end
+
+  clickGenre("wizard_favourites")
+  equal(0, #offeredGames())
+  equal(1, #Client.Find(function(widget)
+    return widget.text == "wizard_no_favourites" and widget:IsVisible()
+  end))
+  clickGenre("wizard_favourites")
+
+  star("words")
+  star("chess")
+  equal(true, favourites.words)
+  equal("chess,words,backgammon", idsOf({ unpack(offeredGames(), 1, 3) }), "the starred ones lead")
+  clickGenre("wizard_favourites")
+  equal("chess,words", idsOf(offeredGames()))
+  clickGenre("wizard_more_players")
+  equal("words", idsOf(offeredGames()), "on top of each other")
+  clickGenre("wizard_more_players")
+  star("words")
+  equal(nil, favourites.words, "nothing is kept of a star taken back")
+  equal("chess", idsOf(offeredGames()))
+
+  -- All is every game again, and so is opening the wizard another time
+  clickGenre("wizard_all_games")
+  equal(#byName, #offeredGames())
+  clickGenre("wizard_two_players")
+  equal(#byName - 1, #offeredGames(), "all but the one played alone")
+  wizard.Open()
+  equal(#byName, #offeredGames())
+  equal("chess", offeredGames()[1].id, "a favourite stays one")
+end
+
+function tests.WizardFitsItsCardsToTheWindow()
+  local world = World.New()
+  local wizard = openWizard(world:AddPlayer("Alice-Realm"))
+  -- The room the games get in a window of 920, the size it comes in, and of 764, the smallest
+  local columns, width = wizard.FitCards(920 - 36 - 8)
+  equal(3, columns)
+  equal(true, 3 * width + 2 * 12 <= 920 - 36 - 8, "nothing sticks out")
+  equal(2, (wizard.FitCards(764 - 36 - 8)))
+  equal(1, (wizard.FitCards(100)), "never none")
+  equal(6, (wizard.FitCards(1920 - 36 - 8)))
 end
 
 function tests.ListsSayWhenThereIsMoreToScrollTo()

@@ -179,7 +179,7 @@ end
 --- @param width number
 --- @param rowHeight number
 --- @param createRow fun(content: Frame): Frame
---- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)), ScrollTo: fun(self: table, index: number) }
+--- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)), ScrollTo: fun(self: table, index: number), SetWidth: fun(self: table, width: number) }
 function Widgets.List(parent, width, rowHeight, createRow)
   local scroll = CreateFrame("ScrollFrame", nil, parent)
   local content = CreateFrame("Frame", nil, scroll)
@@ -232,6 +232,19 @@ function Widgets.List(parent, width, rowHeight, createRow)
     content:SetHeight(math.max(1, #items * rowHeight))
     scroll:SetVerticalScroll(math.min(scroll:GetVerticalScroll(), math.max(0, #items * rowHeight - scroll:GetHeight())))
     placeThumb()
+  end
+
+  --- Makes the rows this wide from now on, for a list that follows the window
+  --- @param newWidth number
+  function list:SetWidth(newWidth)
+    if newWidth == width then
+      return
+    end
+    width = newWidth
+    content:SetWidth(width)
+    for _, row in ipairs(self.rows) do
+      row:SetWidth(width)
+    end
   end
 
   --- Scrolls just far enough to bring a row into view

@@ -155,8 +155,9 @@ end
 --- The games to offer someone looking for one
 --- @param text string? What they typed. Every word has to turn up in the name, the description or the genre, in any case
 --- @param genre string? Only games of this genre
+--- @param players number? Only games this many can play. Three stands for three or more
 --- @return GameDefinition[]
-function Games.Search(text, genre)
+function Games.Search(text, genre, players)
   local words = {}
   for word in (text or ""):lower():gmatch("%S+") do
     words[#words + 1] = word
@@ -165,6 +166,10 @@ function Games.Search(text, genre)
   local found = {}
   for _, game in ipairs(ordered) do
     local matches = genre == nil or game.genre == genre
+    if players then
+      local counts = Games.SeatCounts(game)
+      matches = matches and (Games.CanSeat(game, players) or (players >= 3 and counts[#counts] >= 3))
+    end
     local about = table.concat({ game.name, game.description or "", game.genre and private.L["genre_" .. game.genre] or "" }, " ")
     for _, word in ipairs(words) do
       matches = matches and about:lower():find(word, 1, true) ~= nil

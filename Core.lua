@@ -26,7 +26,14 @@ local LOG_LINES = 20
 local defaults = {
   -- Matches belong to the character that is playing them
   char = { matches = {}, log = {} },
-  profile = { minimap = { hide = false }, toasts = true, sound = true, window = { width = 920, height = 680, focus = false } },
+  profile = {
+    minimap = { hide = false },
+    toasts = true,
+    sound = true,
+    window = { width = 920, height = 680, focus = false },
+    -- Ids of the games the player starred in the new game wizard
+    favourites = {},
+  },
 }
 
 local dataObject

@@ -11,8 +11,10 @@ nobody is around.
 
 - `/fg` (or the minimap button) opens the window. The top shows how many guildies and friends are
   online with the addon, checked at login, when the window opens and when you press Refresh
-- **New Game** walks you through picking a game and an opponent. Type in the search box or pick
-  a kind of game to narrow the list down, it scrolls with the mouse wheel
+- **New Game** walks you through picking a game and an opponent. Type in the search box, or pick
+  a kind of game or how many are playing, to narrow the list down. Click the star on a game to
+  keep it at the top, the rest are listed by name. The list scrolls with the mouse wheel and
+  fits as many games next to each other as the window has room for
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
