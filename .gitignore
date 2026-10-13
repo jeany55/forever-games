@@ -1,3 +1,5 @@
 .vscode/
 .release/
 __pycache__/
+CLAUDE.md
+install.sh
