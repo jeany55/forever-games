@@ -14,6 +14,13 @@ local _, private = ...
 --- @field session Session
 --- @field Presence Presence Presence class, the running instance is private.presence
 --- @field presence Presence
+--- @field Rooms Rooms Rooms class, the running instance is private.rooms
+--- @field rooms Rooms
+--- @field Sketch Sketch
+--- @field SketchView SketchView
+--- @field SketchWords table<string, string[]> What Sketch gives to draw, see Lexicon/Sketch.lua
+--- @field Canvas Canvas
+--- @field Party Party
 --- @field Widgets Widgets
 --- @field Effects Effects
 --- @field SlideGrid SlideGrid

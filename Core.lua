@@ -12,6 +12,8 @@ local Transport = private.Transport
 local Links = private.Links
 local Toast = private.Toast
 local MainFrame = private.MainFrame
+local Party = private.Party
+local Rooms = private.Rooms
 local Options = private.Options
 
 --- @class ForeverGames: AceAddon-3.0, AceConsole-3.0, AceEvent-3.0
@@ -20,6 +22,8 @@ ForeverGames = LibStub("AceAddon-3.0"):NewAddon(private.ADDON_NAME, "AceConsole-
 
 -- How often undelivered moves are retried. The session spaces out retries per opponent on top of this.
 local FLUSH_INTERVAL = 15
+-- How often a room sends what is waiting and its game looks at the clock
+local ROOM_BEAT = 0.25
 -- Wait for the client to settle after login before announcing ourselves
 local HELLO_DELAY = 5
 -- Lines shown by /fg log
@@ -41,7 +45,8 @@ local defaults = {
     sound = true,
     -- Who the player takes challenges from: "anyone", or only "known" friends and guildmates
     challenges = "anyone",
-    -- Whether a wisp drifts around the logo on the window's front page
+    -- Whether a wisp drifts around the logo on the window's front page, its letters shine and the
+    -- light behind it drifts
     wisp = true,
     -- The scale is in hundredths of the window's usual size
     window = { width = 920, height = 680, scale = 100 },
@@ -51,6 +56,8 @@ local defaults = {
     rules = {},
     -- The best the player ever did at the games played alone, by game id
     records = {},
+    -- Whether the window of the games for a room is small, and where each size of it was left
+    party = { mini = false },
   },
 }
 
@@ -100,9 +107,26 @@ function ForeverGames:OnEnable()
     end,
   })
 
+  private.rooms = Rooms.New({
+    me = Transport.PlayerName(),
+    now = GetTime,
+    random = math.random,
+    broadcast = Transport.BroadcastTo,
+    send = Transport.Send,
+    onChannel = Transport.OnChannel,
+    reaches = Transport.Reaches,
+    notify = function(event, subject)
+      self:OnRoomEvent(event, subject)
+    end,
+  })
+
   Transport.Init({
-    onMessage = function(sender, text, viaGuild)
-      if private.presence:Handle(sender, text, viaGuild) then
+    onMessage = function(sender, text, viaGuild, channel)
+      if private.rooms:Handle(sender, text, channel) then
+        return
+      end
+      -- Nothing but a room is ever talked about in a group
+      if channel == "GROUP" or private.presence:Handle(sender, text, viaGuild) then
         return
       end
       -- Games are only ever played over whispers
@@ -117,6 +141,7 @@ function ForeverGames:OnEnable()
     onOffline = function(peer)
       private.presence:Remove(peer)
       private.session:PeerOffline(peer)
+      private.rooms:PeerOffline(peer)
     end,
   })
 
@@ -135,6 +160,9 @@ function ForeverGames:OnEnable()
   C_Timer.NewTicker(FLUSH_INTERVAL, function()
     private.presence:Tick()
     private.session:Flush()
+  end)
+  C_Timer.NewTicker(ROOM_BEAT, function()
+    private.rooms:Tick()
   end)
 end
 
@@ -201,6 +229,44 @@ function ForeverGames:OnMatchEvent(event, match)
 
   MainFrame.Refresh()
   self:UpdateAttention()
+end
+
+--- Called by the rooms whenever something happens to one
+--- @param event string
+--- @param subject any The room, or what is known of somebody else's, or why the player wasn't let in
+function ForeverGames:OnRoomEvent(event, subject)
+  if event == "open" then
+    --- @type RoomInfo
+    local info = subject
+    local game = Rooms.Game(info.game)
+    private.Log("room heard of", info.id, info.game, info.host, tostring(info.channel), "invited:", tostring(info.invited))
+    -- Strangers get to ask the player in only if the player takes challenges from them
+    local welcome = info.onChannel or self.db.profile.challenges ~= "known" or Transport.IsFriendOrGuildmate(info.host)
+    if game and welcome and not private.rooms.room and not Party.IsOpen() then
+      local text = L[info.invited and "toast_room_invited" or "toast_room"]:format(Transport.DisplayName(info.host), game.name)
+      Toast.Show(text, function()
+        local ok, err = private.rooms:Join(info.id)
+        if not ok then
+          self:Print(L["err_" .. err])
+        end
+        Party.Open()
+      end)
+    end
+  elseif event == "refused" then
+    self:Print(L["room_refused_" .. subject])
+  elseif event == "joined" then
+    private.Log("room joined", subject.id, subject.game, subject.host, tostring(subject.channel))
+    Party.Open()
+  elseif event == "closed" then
+    private.Log("room left", subject.id, subject.closed)
+    if subject.closed ~= "left" then
+      self:Print(L["room_" .. subject.closed]:format(Transport.DisplayName(subject.host)))
+    end
+  end
+  -- What only changes what the game shows is seen at the window's next beat
+  if event ~= "changed" then
+    Party.Refresh()
+  end
 end
 
 --- A link to a game someone left open was clicked
@@ -296,6 +362,8 @@ function ForeverGames:HandleSlashCommand(input)
     MainFrame.Toggle()
   elseif command == "new" then
     MainFrame.NewGame()
+  elseif command == "party" or command == "room" then
+    Party.Toggle()
   elseif command == "options" or command == "config" or command == "settings" then
     self:OpenOptions()
   elseif command == "log" then

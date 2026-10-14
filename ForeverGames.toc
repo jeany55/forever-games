@@ -19,6 +19,7 @@ Engine\Lexicon.lua
 Engine\Match.lua
 Engine\Session.lua
 Engine\Presence.lua
+Engine\Rooms.lua
 GUI\Widgets.lua
 GUI\Effects.lua
 GUI\SlideGrid.lua
@@ -29,8 +30,11 @@ GUI\CardTable.lua
 GUI\Viewport.lua
 GUI\Drag.lua
 GUI\Tiles.lua
+GUI\Canvas.lua
 Lexicon\English.lua
 Lexicon\Warcraft.lua
+Lexicon\Fourtiles.lua
+Lexicon\Sketch.lua
 Games\TicTacToe.lua
 Games\Chess.lua
 Games\ConnectFour.lua
@@ -45,10 +49,14 @@ Games\Solitaire.lua
 Games\Minesweeper.lua
 Games\2048.lua
 Games\Sudoku.lua
+Games\Fourtiles.lua
+Games\Warcraftstein.lua
+Games\Sketch.lua
 Transport.lua
 Links.lua
 GUI\Toast.lua
 GUI\Wizard.lua
 GUI\MainFrame.lua
+GUI\Party.lua
 GUI\Options.lua
 Core.lua

@@ -34,7 +34,8 @@ local LIST_WIDTH, ROW_BUTTON_WIDTH = 620, 84
 -- Space between the window's edge and what is in it, and between the panels
 local INSET, GAP = 14, 8
 -- The logo is wider than it is high, and stretched into a square texture: see Tools/make_logo.py,
--- which also makes the light and the line the page it is on is dressed with
+-- which also makes the light and the line the page it is on is dressed with, and what the shine
+-- on its letters is made of
 local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\"
 local LOGO_HEIGHT, LOGO_ASPECT = 200, 1.591
 -- With games to list under it the logo makes room: the share of the page's height it gets, and
@@ -46,6 +47,14 @@ local LOGO_TOP = 6
 local HOME_BUTTON_WIDTH, HOME_BUTTON_GAP = 200, 24
 -- The blue the logo glows with
 local LOGO_BLUE = { 0.16, 0.55, 1 }
+-- The thin cloud of light that drifts behind it, in two layers that turn one each way: the
+-- seconds each takes to go around, what colour it is and how bright, as alpha
+local NEBULA = {
+  { lap = 95, color = LOGO_BLUE, alpha = 0.3 },
+  { lap = -65, color = { 0.45, 0.8, 1 }, alpha = 0.22 },
+}
+-- And how far each layer wanders from the middle of the logo as it turns
+local NEBULA_WANDER = 14
 -- Where the middle line of the logo's infinity sign runs, measured on the picture: how far under
 -- the middle of the logo its crossing is, and how far its loops reach sideways and up and down,
 -- as fractions of the logo's width and height
@@ -67,6 +76,22 @@ local WISP_CORE, WISP_HALO, WISP_TRAIL = { 0.75, 0.9, 1 }, { 0.2, 0.5, 1 }, { 0.
 -- What the game's own wisp looks like, the one a night elf is when dead, and how big a frame it
 -- is shown in. Where the client doesn't have it the wisp is made of lights instead
 local WISP_DISPLAY, WISP_MODEL_SIZE = 10045, 52
+-- The shine that runs over the logo's gold letters: how many seconds apart, how long it takes to
+-- cross them, and how soon after the page is shown the first one comes
+local SHINE_EVERY, SHINE_SWEEP, SHINE_FIRST = 6.5, 1.5, 0.8
+local SHINE_GOLD = { 1, 0.93, 0.7 }
+-- The streak of light it is: how wide and high, and how far over the middle of the logo, as
+-- fractions of the logo's width and height. It leans, its top being this much of its width
+-- further right than its middle, see Tools/make_logo.py
+local SHINE_WIDTH, SHINE_HEIGHT, SHINE_RISE, SHINE_LEAN = 0.3, 0.46, 0.045, 0.17
+-- Where its middle starts and ends up, from the middle of the logo: just clear of the letters
+local SHINE_FROM, SHINE_TO = -0.58, 0.6
+-- The corners of letters that glint as it goes by, measured on the picture: of the F, the G, the
+-- V, the S and the last R
+local GLINTS = { { -0.393, 0.242 }, { -0.152, -0.004 }, { 0.16, 0.203 }, { 0.246, -0.004 }, { 0.426, -0.053 } }
+-- How big a glint gets, and how far on the shine is when it has gone out, as fractions of the
+-- logo's width
+local GLINT_SIZE, GLINT_REACH = 0.15, 0.2
 local AUTHOR, THANKS = "Jeany Beany", "Quetz"
 -- The space between the words of the disclaimer where one text ends and the next begins
 local DISCLAIMER_GAP = 3
@@ -173,7 +198,13 @@ function MainFrame.Describe(match)
   elseif match.status == "finished" then
     local result = Match.Result(match)
     local text
-    if not result or result.winner == 0 then
+    if result and Match.IsTogether(match) and result.reason == "resign" then
+      -- Everyone left it
+      return L["status_gave_up"]
+    elseif result and result.all then
+      local progress = game.progress and game.progress(Match.State(match))
+      return progress and L["status_won_with"]:format(progress) or L["status_won"]
+    elseif not result or result.winner == 0 then
       text = L["status_draw"]
     elseif result.winner ~= match.me and crowd then
       text = L["status_they_won"]:format(MainFrame.Names(match, { result.winner }))
@@ -193,6 +224,11 @@ function MainFrame.Describe(match)
     return L["status_gathering"]
   elseif Match.IsOut(match, match.me) then
     return L["status_you_left"]
+  end
+
+  if Match.IsTogether(match) then
+    -- Nobody is waited on: how it is going, as the game puts it
+    return game.progress and game.progress(Match.State(match)) or L["status_together"]:format(opponent)
   end
 
   local offer = Match.DrawOffer(match)
@@ -347,6 +383,13 @@ local function actionsFor(match)
     session:Forget(id)
   end
   local function resign()
+    if Match.IsTogether(match) then
+      -- Nobody is beaten by it: the others play on
+      StaticPopup_Show("FOREVERGAMES_GIVE_UP", L["leave_confirm"]:format(MainFrame.Names(match)), nil, function()
+        session:Resign(id)
+      end)
+      return
+    end
     StaticPopup_Show("FOREVERGAMES_RESIGN", MainFrame.Names(match), nil, id)
   end
   local function again()
@@ -360,7 +403,7 @@ local function actionsFor(match)
   elseif match.status == "active" and not Match.Started(match) then
     return { { text = L["leave"], onClick = forget } }
   elseif match.status == "active" and not Match.IsOut(match, match.me) then
-    local actions = { { text = L["resign"], onClick = resign } }
+    local actions = { { text = L[Match.IsTogether(match) and "leave" or "resign"], onClick = resign } }
     if Match.CanAcceptDraw(match) then
       actions[2] = {
         text = L["accept_draw"],
@@ -1112,7 +1155,7 @@ local function refreshDetail(match, fresh)
       state = Match.Visible(match, ply),
       seat = match.me,
       names = names,
-      canMove = live and Match.IsMyTurn(match),
+      canMove = live and Match.CanMove(match),
       submit = function(move)
         local ok, err = private.session:Move(match.id, move)
         if not ok then
@@ -1173,6 +1216,47 @@ local function createGlow(parent, color, from, to, seconds)
   fade:SetSmoothing("IN_OUT")
   group:Play()
   return glow
+end
+
+--- A thin cloud of light behind something, which drifts for as long as it is shown: two layers
+--- that turn slowly, one each way, and wander a little, so that its wisps pass over each other
+--- and no moment looks like another
+--- @param parent Frame Whose it is, and behind what else of it it is drawn
+--- @param within Region It ends where this does, however far it would reach
+--- @return Frame nebula Hidden, the cloud keeps still
+local function createNebula(parent, within)
+  local edge = parent:CreateMaskTexture()
+  edge:SetTexture("Interface\\Buttons\\WHITE8X8", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  edge:SetAllPoints(within)
+
+  local layers = {}
+  for index, kind in ipairs(NEBULA) do
+    local texture = parent:CreateTexture(nil, "BACKGROUND")
+    texture:SetTexture(IMAGES .. "nebula")
+    texture:SetBlendMode("ADD")
+    texture:SetVertexColor(unpack(kind.color))
+    texture:SetAlpha(kind.alpha)
+    -- As far as the light it is in reaches, which is as far again as the logo to every side
+    texture:SetPoint("CENTER", parent, "CENTER")
+    texture:SetSize(parent:GetWidth() * 2, parent:GetHeight() * 2)
+    texture:AddMaskTexture(edge)
+    layers[index] = texture
+  end
+
+  local nebula = CreateFrame("Frame", nil, parent)
+  local clock = 0
+  nebula:SetScript("OnUpdate", function(_, elapsed)
+    clock = clock + math.min(elapsed, 0.1)
+    for index, texture in ipairs(layers) do
+      -- What is turned is the picture, inside the shape it is stretched to
+      texture:SetRotation(clock / NEBULA[index].lap * 2 * math.pi)
+      -- Each layer goes its own way around the middle, and swells and dims in its own time
+      local pace = 0.11 + 0.04 * index
+      texture:SetPoint("CENTER", parent, "CENTER", NEBULA_WANDER * math.sin(clock * pace + 2 * index), 0.6 * NEBULA_WANDER * math.sin(clock * pace * 1.6 + index))
+      texture:SetAlpha(NEBULA[index].alpha * (0.8 + 0.2 * math.sin(clock * (0.5 + 0.2 * index) + 2 * index)))
+    end
+  end)
+  return nebula
 end
 
 --- One of the round lights a wisp is made of
@@ -1314,6 +1398,76 @@ local function createWisp(parent, logo)
   return wisp
 end
 
+--- A shine that runs over the gold letters of the logo every so often, for as long as it is
+--- shown: a leaning streak of light that falls on the letters alone, and a glint off a corner
+--- of one here and there as it goes by
+--- @param parent Frame
+--- @param logo Region
+--- @return Frame shimmer Hidden, it is gone and costs nothing
+local function createShimmer(parent, logo)
+  local shimmer = CreateFrame("Frame", nil, parent)
+  shimmer:SetAllPoints(logo)
+
+  -- The streak is only drawn where the letters are
+  local letters = shimmer:CreateMaskTexture()
+  letters:SetTexture(IMAGES .. "lettering", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  letters:SetAllPoints(logo)
+  local streak = shimmer:CreateTexture(nil, "ARTWORK")
+  streak:SetTexture(IMAGES .. "sheen")
+  streak:SetBlendMode("ADD")
+  streak:SetVertexColor(unpack(SHINE_GOLD))
+  streak:AddMaskTexture(letters)
+
+  local glints = {}
+  for index in ipairs(GLINTS) do
+    glints[index] = shimmer:CreateTexture(nil, "OVERLAY")
+    glints[index]:SetTexture(IMAGES .. "spark")
+    glints[index]:SetBlendMode("ADD")
+    glints[index]:SetVertexColor(unpack(SHINE_GOLD))
+  end
+
+  local clock = 0
+  -- The first one comes soon after the page is shown, rather than whenever it is next due
+  shimmer:SetScript("OnShow", function()
+    clock = SHINE_EVERY - SHINE_FIRST
+  end)
+  shimmer:SetScript("OnUpdate", function(_, elapsed)
+    clock = (clock + math.min(elapsed, 0.1)) % SHINE_EVERY
+    local part = clock / SHINE_SWEEP
+    streak:SetShown(part < 1)
+    if part >= 1 then
+      for _, glint in ipairs(glints) do
+        glint:Hide()
+      end
+      return
+    end
+
+    -- It sets off gently and slows down at the end, without ever quite stopping
+    local width, height = logo:GetWidth(), logo:GetHeight()
+    local at = SHINE_FROM + (SHINE_TO - SHINE_FROM) * (0.5 * part + 0.5 * part * part * (3 - 2 * part))
+    streak:SetSize(SHINE_WIDTH * width, SHINE_HEIGHT * height)
+    streak:SetPoint("CENTER", logo, "CENTER", at * width, SHINE_RISE * height)
+    streak:SetAlpha(0.9 * math.min(1, 5 * part, 5 * (1 - part)))
+
+    -- A corner glints from when the middle of the streak reaches it: it swells, turning, and
+    -- is gone again by the time the streak is a little further on
+    for index, glint in ipairs(glints) do
+      local x, y = GLINTS[index][1], GLINTS[index][2]
+      local past = (at + SHINE_LEAN * SHINE_WIDTH * 2 * (y - SHINE_RISE) / SHINE_HEIGHT - x) / GLINT_REACH
+      glint:SetShown(past > 0 and past < 1)
+      if past > 0 and past < 1 then
+        local swell = math.sin(math.pi * past)
+        local size = GLINT_SIZE * width * (0.45 + 0.55 * swell)
+        glint:SetPoint("CENTER", logo, "CENTER", x * width, y * height)
+        glint:SetSize(size, size)
+        glint:SetAlpha(swell)
+        glint:SetRotation(0.5 * past)
+      end
+    end
+  end)
+  return shimmer
+end
+
 --- A line across that fades out at both ends
 --- @param parent Frame
 --- @param width number
@@ -1370,8 +1524,12 @@ local function createHomePanel(body)
   home.halo = createGlow(crest, LOGO_BLUE, 0.22, 0.42, 3.5)
   home.halo:SetWidth(LOGO_HEIGHT * LOGO_ASPECT * 2)
   home.halo:SetPoint("BOTTOM", crest, "CENTER", 0, -LOGO_HEIGHT)
+  home.nebula = createNebula(crest, home.halo)
 
+  -- The wisp is in front of the shine on the letters
+  home.shimmer = createShimmer(crest, crest)
   home.wisp = createWisp(crest, crest)
+  home.wisp:SetFrameLevel(home.shimmer:GetFrameLevel() + 1)
 
   local rule = createRule(home, 340, Widgets.GOLD, 0.7)
   rule:SetPoint("TOP", crest, "BOTTOM", 0, -4)
@@ -1418,6 +1576,13 @@ local function createHomePanel(body)
     button:SetNormalFontObject("GameFontNormalLarge")
     button:SetHighlightFontObject("GameFontHighlightLarge")
   end
+
+  -- The games for a room have a window of their own, see GUI/Party.lua
+  home.party = Widgets.Button(home, L["party_open"], 130, 26)
+  home.party:SetPoint("TOPRIGHT", -12, -12)
+  home.party:SetScript("OnClick", function()
+    private.Party.Open()
+  end)
 
   -- Which game that is
   home.continuing = Widgets.Label(home.actions, "GameFontHighlightSmall")
@@ -1490,8 +1655,11 @@ local function refreshHome(list)
   local width, height = frame:GetWidth() - INSET * 2, frame:GetHeight() - HEADER_TOP - INSET
   local any = #list > 0
   refreshPresence()
-  -- The wisp is there unless the player would rather the logo kept still, see GUI/Options.lua
+  -- The wisp is there, the letters shine and the cloud behind it drifts, unless the player would
+  -- rather the logo kept still, see GUI/Options.lua
   home.wisp:SetShown(ForeverGames.db.profile.wisp ~= false)
+  home.shimmer:SetShown(ForeverGames.db.profile.wisp ~= false)
+  home.nebula:SetShown(ForeverGames.db.profile.wisp ~= false)
 
   -- With no games the logo is the page, a little above the middle of it. With games it moves up
   -- and makes room for them, the more the less room there is

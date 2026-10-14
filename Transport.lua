@@ -12,7 +12,7 @@
 local _, private = ...
 
 --- @class TransportHandlers
---- @field onMessage fun(sender: string, text: string, viaGuild: boolean)
+--- @field onMessage fun(sender: string, text: string, viaGuild: boolean, channel: RoomChannel?) `channel` is where it was said if that was to more than the player: the guild, or the group the player is in
 --- @field onReachable fun(peer: string?) Messages may get through again, to this player or to everyone
 --- @field onOffline fun(peer: string)
 
@@ -195,6 +195,37 @@ function Transport.Broadcast(text)
   end
 end
 
+--- The channel of the client's that reaches the player's guild or the group they are in
+--- @param channel RoomChannel
+--- @return string? chatType nil if the player has no such channel right now
+local function chatType(channel)
+  if channel == "GUILD" then
+    return IsInGuild() and "GUILD" or nil
+  end
+  return (IsInRaid() and "RAID") or (IsInGroup() and "PARTY") or nil
+end
+
+--- Whether the player is in a guild, or in a group
+--- @param channel RoomChannel
+--- @return boolean
+function Transport.OnChannel(channel)
+  return chatType(channel) ~= nil
+end
+
+--- Sends to everyone in the player's guild or group
+--- @param channel RoomChannel
+--- @param text string
+--- @return boolean sent
+function Transport.BroadcastTo(channel, text)
+  local type = chatType(channel)
+  if not type or Transport.IsLocked() then
+    return false
+  end
+  local result = C_ChatInfo.SendAddonMessage(PREFIX, text, type)
+  private.Log("send", type, text, "->", resultName(result))
+  return succeeded(result)
+end
+
 --- Whispers that can wait, sent one a second. Greeting a long friends list all at once would
 --- run into the addon message throttle and hold up moves.
 local slowQueue = {}
@@ -334,6 +365,18 @@ local function isGuildmate(name)
   return false
 end
 
+--- Whether what is said to the player's guild or group gets to a player
+--- @param channel RoomChannel
+--- @param name string Full player name
+--- @return boolean
+function Transport.Reaches(channel, name)
+  if channel == "GUILD" then
+    return isGuildmate(name)
+  end
+  local unit = Transport.DisplayName(name)
+  return UnitInParty(unit) == true or UnitInRaid(unit) ~= nil
+end
+
 --- Whether a player is on the friends list, a Battle.net friend or in the player's guild
 --- @param name string Full player name
 --- @return boolean
@@ -437,13 +480,14 @@ function Transport.Init(newHandlers)
       if prefix == PREFIX and issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then
         -- Under lockdown the client may hand over a payload that can't be read
         private.Log("recv unreadable payload, lockdown")
-      elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD") then
+      elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD" or channel == "PARTY" or channel == "RAID") then
         private.Log("recv", channel, sender, text)
         local name = Transport.Normalize(sender)
         if channel == "GUILD" and name then
           guildSenders[name] = true
         end
-        handlers.onMessage(name, text, channel == "GUILD")
+        local heardOn = channel ~= "WHISPER" and (channel == "GUILD" and "GUILD" or "GROUP") or nil
+        handlers.onMessage(name, text, channel == "GUILD", heardOn)
       end
     elseif event == "BN_CHAT_MSG_ADDON" then
       local prefix, text, _, account = ...

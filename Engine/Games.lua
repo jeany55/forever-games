@@ -28,6 +28,11 @@
 -- whether taking is compulsory. What they chose travels with the challenge and is kept with the
 -- match, and the game is handed all of it when the state is made: see Games/Words.lua. Only what
 -- isn't the default is ever sent or kept, so a game without any is a game by the usual rules.
+--
+-- A game needn't have turns at all (`together`): everyone moves whenever they like, as when a
+-- puzzle is solved between them. It has no `turn`, and it has to take its moves in whatever order
+-- they happen to arrive: what two players did at the same moment is put one after the other, and
+-- a move that is no longer legal by then (the other one found that word first) is dropped.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -38,7 +43,7 @@ local _, private = ...
 --- @field state table The position to draw, as the local player may see it. Belongs to the engine: don't change it or keep it
 --- @field seat number The local player's seat
 --- @field names string[] Who is playing, by seat, as their names are shown
---- @field canMove boolean Whether the local player may move right now
+--- @field canMove boolean Whether the local player may move right now. In a game played together that is for as long as it lasts
 --- @field submit fun(move: string) Plays a move for the local player
 --- @field ply number How many log entries led to this position
 --- @field live boolean False while the player is looking back at an earlier position
@@ -79,18 +84,19 @@ local _, private = ...
 --- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }. 1 for a game the player plays alone
 --- @field options GameOption[]? What whoever sets a game up may change about its rules, in the order they are offered
 --- @field newState fun(seats: number, random: Random, rules: table<string, any>): table Fresh game state for this many players. `rules` has what every option is set to for this match, by id: keep in the state whatever the rules need of it later. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
---- @field turn fun(state: table): number Seat that moves next. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
+--- @field together boolean? There are no turns: every player moves whenever they like, see above. Whatever the game does with a move has to come out right with the moves of the others before or after it
+--- @field turn (fun(state: table): number)? Seat that moves next. Left out by a game played together. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
 --- @field validate fun(state: table, seat: number, move: string): boolean, string? Whether a move is legal, with an error code if not
 --- @field apply fun(state: table, seat: number, move: string, random: Random): table? Applies a legal move to the state. May return a table saying what happened, for the view to animate from: the engine hands it back as a MatchEvent. Set `notation` in it for the move list. Whatever the move leaves to chance (the next roll, a card drawn from a pile that had to be shuffled) comes from `random`. Every player gets to see the table, so it mustn't say what only some of them may know
 --- @field visible (fun(state: table, seat: number): table)? For games where players don't all know the same: what a seat may see of a position. Returns a copy with the rest blanked out, shaped like the state itself so the view has only one thing to draw. Views are never shown anything else while the game is on. This is good manners rather than a secret kept: the log every player holds has all of it
---- @field result fun(state: table): { winner: number, detail: string? }? nil while in progress, winner 0 for a draw. detail names how it ended and is shown as L["result_" .. detail]
---- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two. The engine ends the game itself once only one player is left
+--- @field result fun(state: table): { winner: number, detail: string?, all: boolean? }? nil while in progress, winner 0 for a draw. Winner 0 and `all` where the players were on the same side and made it together. detail names how it ended and is shown as L["result_" .. detail]
+--- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two, unless they are played together. The engine ends the game itself once only one player is left
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game
 --- @field seatLabel (fun(seat: number, seats: number): string)? Short label for a seat in a game of this many players, e.g. "X"
 --- @field undo boolean? For a game for one: the player may take moves back, as many as they like. The window has the button, and the view is shown the position before with `changed` set
---- @field progress (fun(state: table): string?)? For a game for one: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
+--- @field progress (fun(state: table): string?)? For a game for one or one played together: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
 --- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
 --- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
 
@@ -103,7 +109,7 @@ local registry = {}
 --- @type GameDefinition[]
 local ordered = {}
 
-local REQUIRED = { "newState", "turn", "validate", "apply", "result", "createView" }
+local REQUIRED = { "newState", "validate", "apply", "result", "createView" }
 -- Seats are a single digit in the log
 local MAX_SEATS = 9
 
@@ -293,10 +299,11 @@ function Games.Register(definition)
     local whole = type(count) == "number" and count == math.floor(count)
     assert(whole and count >= 1 and count <= MAX_SEATS, "Games are for 1 to " .. MAX_SEATS .. " players")
   end
-  assert(counts[#counts] <= 2 or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
+  assert(counts[#counts] <= 2 or definition.together or type(definition.drop) == "function", "Game " .. definition.id .. " is missing drop")
   for _, key in ipairs(REQUIRED) do
     assert(type(definition[key]) == "function", "Game " .. definition.id .. " is missing " .. key)
   end
+  assert(definition.together or type(definition.turn) == "function", "Game " .. definition.id .. " is missing turn")
   local seen = {}
   for _, option in ipairs(definition.options or {}) do
     local named = type(option.id) == "string" and option.id:match("^%w+$") ~= nil and not seen[option.id]

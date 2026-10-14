@@ -12,6 +12,9 @@ local ENGINE_FILES = {
   "Engine/Match.lua",
   "Engine/Session.lua",
   "Engine/Presence.lua",
+  "Engine/Rooms.lua",
+  "Lexicon/Sketch.lua",
+  "Games/Sketch.lua",
   "Games/TicTacToe.lua",
   "Games/Chess.lua",
   "Games/ConnectFour.lua",
@@ -29,6 +32,9 @@ local ENGINE_FILES = {
   "Games/Minesweeper.lua",
   "Games/2048.lua",
   "Games/Sudoku.lua",
+  "Lexicon/Fourtiles.lua",
+  "Games/Fourtiles.lua",
+  "Games/Warcraftstein.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -58,6 +64,7 @@ end
 --- @field clock number
 --- @field players table<string, table>
 --- @field sent string[] Every message that was delivered, as "from>to text"
+--- @field prepare (fun(private: table))? Called with the engine of every player who joins, to register a game only a test has
 local World = {}
 World.__index = World
 
@@ -70,6 +77,9 @@ end
 function World:AddPlayer(name, matches)
   local player = { name = name, online = true, blocked = false, events = {}, refused = {}, private = loadEngine() }
   player.matches = matches or {}
+  if self.prepare then
+    self.prepare(player.private)
+  end
   player.session = player.private.Session.New({
     me = name,
     matches = player.matches,
@@ -1286,7 +1296,8 @@ function tests.WindowWithNoGamesSaysWhatItIsAndWhoMadeIt()
     equal(1, #shown, key)
   end
 
-  -- The wisp on the logo goes around, shedding motes, without tripping over anything
+  -- The wisp on the logo goes around, shedding motes, a shine runs over its letters and the cloud
+  -- of light behind it drifts, without tripping over anything
   local moving = Client.Find(function(widget)
     return widget:GetScript("OnUpdate") ~= nil and widget:IsVisible()
   end)
@@ -1298,11 +1309,15 @@ function tests.WindowWithNoGamesSaysWhatItIsAndWhoMadeIt()
   end
 
   -- A player who would rather the logo kept still can say so in the options
-  local wisp = ForeverGamesFrame.home.wisp
-  equal(true, wisp:IsVisible())
+  local home = ForeverGamesFrame.home
+  for _, moved in ipairs({ home.wisp, home.shimmer, home.nebula }) do
+    equal(true, moved:IsVisible())
+  end
   ForeverGames.db.profile.wisp = false
   alone.private.MainFrame.Refresh()
-  equal(false, wisp:IsVisible())
+  for _, moved in ipairs({ home.wisp, home.shimmer, home.nebula }) do
+    equal(false, moved:IsVisible())
+  end
 end
 
 function tests.WindowOpensOnItsFrontPageWhateverGamesThereAre()
@@ -1912,7 +1927,8 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  equal("solitaire,minesweeper,2048,sudoku", idsOf(Games.Search(nil, nil, 1)))
+  equal("solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein", idsOf(Games.Search(nil, nil, 1)))
+  equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,crazyeights,words", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
   equal("chinesecheckers", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
@@ -2078,7 +2094,7 @@ function tests.WizardKeepsFavouritesFirst()
   clickGenre("wizard_all_games")
   equal(#byName, #offeredGames())
   clickGenre("wizard_two_players")
-  equal(#byName - #alice.private.Games.Search(nil, nil, 1), #offeredGames(), "all but the ones played alone")
+  equal(#alice.private.Games.Search(nil, nil, 2), #offeredGames(), "all but the ones only played alone, or only by more")
   wizard.Open()
   equal(#byName, #offeredGames())
   equal("chess", offeredGames()[1].id, "a favourite stays one")
@@ -11976,6 +11992,1979 @@ function tests.StrangerCanStillBeChallengedAndAskedForALinkedGame()
   world:Deliver()
   equal(nil, bob.session:Offered("reversi"))
   equal(0, #alice.refused)
+end
+
+-----------------------------
+-- Games played together
+-----------------------------
+-- No game that ships is played without turns yet, so the tests bring one: a pool of letters that
+-- whoever gets to one first takes. Taking "z" ends it.
+
+--- @param private table
+local function registerPool(private)
+  private.Games.Register({
+    id = "pool",
+    name = "Pool",
+    version = 1,
+    seats = { 1, 2, 3 },
+    together = true,
+    undo = true,
+    newState = function()
+      return { taken = {}, count = 0 }
+    end,
+    validate = function(state, _, move)
+      if not move:match("^%l$") then
+        return false, "invalid_move"
+      end
+      return not state.taken[move], "taken"
+    end,
+    apply = function(state, seat, move)
+      state.taken[move] = seat
+      state.count = state.count + 1
+      return { notation = move }
+    end,
+    result = function(state)
+      return state.taken.z and { winner = 0, all = true } or nil
+    end,
+    progress = function(state)
+      return state.count .. " taken"
+    end,
+    createView = function() end,
+  })
+end
+
+--- Starts an accepted match of the pool
+--- @param guests number? How many are asked to join, one if left out
+--- @return World, string id, table ... The players, by seat
+local function startedPool(guests)
+  local world = World.New()
+  world.prepare = registerPool
+  local host, others, targets = world:AddPlayer("Alice-Realm"), {}, {}
+  for index = 1, guests or 1 do
+    others[index] = world:AddPlayer(({ "Bob-Realm", "Cleo-Realm" })[index])
+    targets[index] = others[index].name
+  end
+  local match = assert(host.session:Invite(targets, "pool"))
+  world:Deliver()
+  for _, other in ipairs(others) do
+    assert(other.session:Accept(match.id))
+    world:Deliver()
+  end
+  local seated = {}
+  for _, player in ipairs({ host, unpack(others) }) do
+    seated[player.matches[match.id].me] = player
+  end
+  return world, match.id, unpack(seated)
+end
+
+--- The letters a log has taken, in alphabetical order
+local function takenIn(player, id)
+  local letters = {}
+  for _, entry in ipairs(player.matches[id].log) do
+    letters[#letters + 1] = entry:match("^%d(%l)$")
+  end
+  table.sort(letters)
+  return table.concat(letters)
+end
+
+function tests.TogetherNeedsNoTurn()
+  local private = loadEngine()
+  registerPool(private)
+  equal(true, private.Games.Get("pool").together)
+  local ok = pcall(private.Games.Register, {
+    id = "turnless",
+    name = "Turnless",
+    version = 1,
+    seats = 2,
+    newState = function() end,
+    validate = function() end,
+    apply = function() end,
+    result = function() end,
+    createView = function() end,
+  })
+  equal(false, ok, "a game with turns has to say whose it is")
+end
+
+function tests.TogetherAnyoneMovesAtAnyTime()
+  local world, id, first, second = startedPool()
+  local Match = first.private.Match
+  equal(true, Match.CanMove(first.matches[id]))
+  equal(true, Match.CanMove(second.matches[id]))
+  equal(nil, Match.Turn(first.matches[id]), "it is nobody's turn in particular")
+
+  assert(second.session:Move(id, "a"))
+  world:Deliver()
+  assert(second.session:Move(id, "b"))
+  world:Deliver()
+  assert(first.session:Move(id, "c"))
+  world:Deliver()
+  equal("2a,2b,1c", logOf(first, id))
+  equal("2a,2b,1c", logOf(second, id))
+
+  local events = Match.Events(first.matches[id])
+  equal(2, events[1].seat)
+  equal(1, events[3].seat)
+  equal("c", events[3].notation)
+
+  local ok, err = first.session:Move(id, "a")
+  equal(false, ok)
+  equal("taken", err)
+  equal(false, (first.session:Move(id, "!r2")))
+  equal(false, first.session:IsPending(first.matches[id]))
+end
+
+function tests.TogetherEntriesSayWhoseTheyAre()
+  local _, id, first = startedPool()
+  local Match = first.private.Match
+  local match = first.matches[id]
+  equal(false, (Match.Append(match, "a")), "no seat")
+  equal(false, (Match.Append(match, "3a")), "nobody sits there")
+  equal(false, (Match.Append(match, "0a")))
+  equal(false, (Match.Append(match, "1")), "no move")
+  equal(true, (Match.Append(match, "2a")))
+  equal(2, Match.State(match).taken.a)
+  equal(false, Match.CanOfferDraw(match))
+end
+
+function tests.TogetherWaitsOnNobody()
+  local world, id, first, second = startedPool()
+  second.session:MarkRead(id)
+  first.session:MarkRead(id)
+  equal(false, first.session:NeedsAttention(first.matches[id]))
+  equal(false, second.session:NeedsAttention(second.matches[id]))
+
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+  equal(false, first.session:NeedsAttention(first.matches[id]))
+  equal(true, second.session:NeedsAttention(second.matches[id]), "there is something new to look at")
+  second.session:MarkRead(id)
+  equal(false, second.session:NeedsAttention(second.matches[id]))
+end
+
+function tests.TogetherMovesMadeAtTheSameMomentAllCount()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+  -- Both act before either message arrives
+  assert(first.session:Move(id, "b"))
+  assert(second.session:Move(id, "c"))
+  world:Deliver()
+  equal("1a,1b,2c", logOf(first, id))
+  equal("1a,1b,2c", logOf(second, id))
+  equal(false, first.session:IsPending(first.matches[id]))
+  equal(false, second.session:IsPending(second.matches[id]))
+end
+
+function tests.TogetherTheSameMoveAtTheSameMomentCountsOnce()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  assert(second.session:Move(id, "a"))
+  assert(second.session:Move(id, "b"))
+  world:Deliver()
+  world:Tick(30)
+  equal(logOf(first, id), logOf(second, id))
+  equal("ab", takenIn(first, id))
+  equal(first.private.Match.State(first.matches[id]).taken.a, second.private.Match.State(second.matches[id]).taken.a)
+end
+
+function tests.TogetherPlayedApartComesTogether()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+
+  second.online = false
+  for letter in ("bcd"):gmatch(".") do
+    assert(first.session:Move(id, letter))
+  end
+  world:Deliver()
+  second.online = true
+  first.online = false
+  for letter in ("efghij"):gmatch(".") do
+    assert(second.session:Move(id, letter))
+  end
+  -- And one they both found
+  assert(second.session:Move(id, "b"))
+  world:Deliver()
+
+  first.online = true
+  for _ = 1, 6 do
+    world:Tick(600)
+  end
+  equal(logOf(first, id), logOf(second, id))
+  equal("abcdefghij", takenIn(first, id))
+  equal(false, first.session:IsPending(first.matches[id]))
+  equal(false, second.session:IsPending(second.matches[id]))
+end
+
+function tests.TogetherSurvivesACrash()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+  local snapshot = copy(second.matches)
+  assert(second.session:Move(id, "b"))
+  assert(first.session:Move(id, "c"))
+  world:Deliver()
+
+  -- The second player comes back with data from before, and finds something else
+  first.online = false
+  second = world:Relog(second, snapshot)
+  assert(second.session:Move(id, "d"))
+  world:Deliver()
+  first.online = true
+  for _ = 1, 4 do
+    world:Tick(600)
+  end
+  equal(logOf(first, id), logOf(second, id))
+  equal("abcd", takenIn(first, id), "what was lost in the crash comes back, and what was played after it stays")
+end
+
+function tests.TogetherNoticesLogsThatPartedWaysUnseen()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+  -- The second player loses what they had, and the first never hears of what they do next
+  second = world:Relog(second, copy(second.matches))
+  local Match = second.private.Match
+  Match.Truncate(second.matches[id], 0)
+  assert(Match.Append(second.matches[id], "2b"))
+  equal("1a", logOf(first, id))
+  equal("2b", logOf(second, id))
+  equal(false, first.session:IsPending(first.matches[id]), "as far as the first player knows they have it all")
+
+  -- One entry each, and neither would learn anything from being told so. What gives it away is
+  -- that an entry arrives on top of a log that isn't the one it was played on
+  assert(first.session:Move(id, "c"))
+  world:Deliver()
+  world:Tick(30)
+  equal("1a,1c,2b", logOf(first, id))
+  equal("1a,1c,2b", logOf(second, id))
+end
+
+function tests.TogetherCountsComeWithWhatTheLogIs()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "a"))
+  world:Deliver()
+  local Codec, Match = first.private.Codec, first.private.Match
+  local move = Codec.Decode(world.sent[#world.sent - 1]:match(" (.+)$"))
+  equal("MOV", move.type)
+  equal(Match.Digest(first.matches[id], 0), move.digest)
+  local answer = Codec.Decode(world.sent[#world.sent]:match(" (.+)$"))
+  equal("ACK", answer.type)
+  equal(1, answer.n)
+  equal(Match.Digest(first.matches[id], 1), answer.digest)
+  assert(Match.Digest(first.matches[id], 0) ~= Match.Digest(first.matches[id], 1))
+
+  -- A game with turns says no more than it used to
+  local _, _, _, other, mover = startedMatch()
+  assert(mover.session:Move(other, "5"))
+  equal(nil, Codec.Decode("1:MOV:" .. other .. ":1:1:5").digest)
+end
+
+function tests.TogetherMoveAfterTheEndIsDropped()
+  local world, id, first, second = startedPool()
+  assert(first.session:Move(id, "z"))
+  assert(second.session:Move(id, "a"))
+  world:Deliver()
+  world:Tick(30)
+  equal("1z", logOf(first, id))
+  equal("1z", logOf(second, id))
+  equal("finished", second.matches[id].status)
+  equal(false, second.private.Match.CanMove(second.matches[id]))
+end
+
+function tests.TogetherResignationStandsWhateverElseHappened()
+  local world, id, first, second, third = startedPool(2)
+  assert(third.session:Resign(id))
+  assert(first.session:Move(id, "a"))
+  assert(second.session:Move(id, "b"))
+  world:Deliver()
+  for _ = 1, 4 do
+    world:Tick(600)
+  end
+  equal(logOf(first, id), logOf(second, id))
+  equal(logOf(first, id), logOf(third, id))
+  equal("ab", takenIn(first, id))
+  equal(true, first.private.Match.IsOut(first.matches[id], 3))
+  equal(false, third.private.Match.CanMove(third.matches[id]))
+  equal(true, first.private.Match.CanMove(first.matches[id]))
+end
+
+function tests.TogetherIsPlayedOnByWhoeverIsLeft()
+  local world, id, first, second = startedPool()
+  assert(first.session:Resign(id))
+  world:Deliver()
+  equal("active", second.matches[id].status)
+  equal(true, second.private.Match.CanMove(second.matches[id]))
+  equal(false, first.private.Match.CanMove(first.matches[id]))
+  assert(second.session:Move(id, "z"))
+  world:Deliver()
+  equal("finished", first.matches[id].status)
+  equal(true, first.private.Match.Result(first.matches[id]).all)
+
+  -- And once nobody is, it is over without anyone having made it
+  local other, again, one, two = startedPool()
+  assert(one.session:Resign(again))
+  other:Deliver()
+  assert(two.session:Resign(again))
+  other:Deliver()
+  equal("finished", one.matches[again].status)
+  equal("resign", one.private.Match.Result(one.matches[again]).reason)
+  equal(nil, one.private.Match.Result(one.matches[again]).all)
+end
+
+function tests.TogetherAloneCanBeTakenBack()
+  local world = World.New()
+  world.prepare = registerPool
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "pool"))
+  assert(alice.session:Move(match.id, "a"))
+  assert(alice.session:Move(match.id, "b"))
+  equal("1a,1b", logOf(alice, match.id))
+  assert(alice.session:Undo(match.id))
+  equal("1a", logOf(alice, match.id))
+  equal(0, #world.queue, "nothing is sent to anyone")
+end
+
+--- Has players take letters at random while the network loses messages and they come and go,
+--- and checks that they end up with the same log and everything any of them took
+--- @param guests number
+--- @param seed number
+local function poolStorm(guests, seed)
+  local world, id, one, two, three = startedPool(guests)
+  local players = { one, two, three }
+  local state = seed
+  local function roll(max)
+    state = (state * 1103515245 + 12345) % 2147483648
+    return math.floor(state / 65536) % max + 1
+  end
+  local function lossy()
+    return roll(4) == 1
+  end
+
+  local wanted = {}
+  for _ = 1, 60 do
+    local player = players[roll(#players)]
+    local action = roll(10)
+    if action <= 6 then
+      local letter = string.char(96 + roll(25))
+      if player.session:Move(id, letter) then
+        wanted[letter] = true
+      end
+    elseif action == 7 then
+      player.online = not player.online
+    elseif action == 8 then
+      world:Deliver(lossy)
+    else
+      world:Tick(roll(600))
+    end
+  end
+
+  for _, player in ipairs(players) do
+    player.online = true
+  end
+  for _ = 1, 40 do
+    world:Tick(600)
+  end
+
+  local letters = {}
+  for letter in pairs(wanted) do
+    letters[#letters + 1] = letter
+  end
+  table.sort(letters)
+  local label = string.format("%d players, seed %d", #players, seed)
+  for _, player in ipairs(players) do
+    equal(logOf(players[1], id), logOf(player, id), label)
+    equal(table.concat(letters), takenIn(player, id), label)
+    equal(false, player.session:IsPending(player.matches[id]), label)
+  end
+end
+
+function tests.TogetherConvergesWhateverTheNetworkDoes()
+  for seed = 1, 60 do
+    poolStorm(1, seed)
+  end
+end
+
+function tests.TogetherConvergesAmongThreeAsWell()
+  for seed = 1, 60 do
+    poolStorm(2, seed)
+  end
+end
+
+-----------------------------
+-- Warcraftstein 3D
+-----------------------------
+
+--- The squares next to one, as indexes into the cells of a maze
+--- @param state table
+--- @param square number
+--- @return number[]
+local function mazeNeighbours(state, square)
+  return { square - 1, square + 1, square - state.side, square + state.side }
+end
+
+--- The way through a maze from where the player starts to the portal: the squares to cross,
+--- the portal last, and how many squares can be reached at all
+--- @param state table
+--- @return number[] way, number reached
+local function mazeWay(state)
+  local start = math.floor(state.start.y) * state.side + math.floor(state.start.x) + 1
+  local from, queue, reached, portal = { [start] = 0 }, { start }, 0, nil
+  while #queue > 0 do
+    local square = table.remove(queue, 1)
+    reached = reached + 1
+    for _, next in ipairs(mazeNeighbours(state, square)) do
+      if state.cells[next] == 4 then
+        portal = portal or next
+        from[next] = from[next] or square
+      elseif state.cells[next] == 0 and not from[next] then
+        from[next] = square
+        queue[#queue + 1] = next
+      end
+    end
+  end
+  local way = {}
+  local square = assert(portal, "the portal can be reached")
+  while square ~= start do
+    table.insert(way, 1, square)
+    square = from[square]
+  end
+  return way, reached
+end
+
+function tests.WarcraftsteinMazesHaveAWayOut()
+  local private = loadEngine()
+  local game = private.Games.Get("warcraftstein")
+  for _, size in ipairs({ 6, 9, 12 }) do
+    for seed = 1, 40 do
+      local state = game.newState(1, private.Random.New(seed), { size = size })
+      local side = size * 2 + 1
+      equal(side, state.side)
+      equal(side * side, #state.cells)
+
+      local portals, rooms = 0, 0
+      for square, kind in ipairs(state.cells) do
+        local column, row = (square - 1) % side + 1, math.floor((square - 1) / side) + 1
+        assert(kind >= 0 and kind <= 4, "something that can be drawn on every square")
+        if column == 1 or row == 1 or column == side or row == side then
+          assert(kind >= 1 and kind <= 3, "a wall all round")
+        end
+        if column % 2 == 0 and row % 2 == 0 then
+          rooms = rooms + (kind == 0 and 1 or 0)
+        end
+        if kind == 4 then
+          portals = portals + 1
+          local ways = 0
+          for _, next in ipairs(mazeNeighbours(state, square)) do
+            ways = ways + (state.cells[next] == 0 and 1 or 0)
+          end
+          equal(1, ways, "the portal is at the end of a dead end")
+        end
+      end
+      equal(1, portals)
+      equal(size * size - 1, rooms, "every room but the one the portal is in")
+
+      local way, reached = mazeWay(state)
+      assert(#way >= size * 4 - 4, "the way out is at least as far as the far corner: " .. #way)
+      local open = 0
+      for _, kind in ipairs(state.cells) do
+        open = open + (kind == 0 and 1 or 0)
+      end
+      equal(open, reached, "nowhere that can't be got to")
+      equal(0, state.cells[math.floor(state.start.y) * side + math.floor(state.start.x) + 1], "the player starts in a room")
+      -- And looks down a way that is open
+      local aheadX, aheadY = math.floor(state.start.x + math.cos(state.start.facing) + 0.5), math.floor(state.start.y + math.sin(state.start.facing) + 0.5)
+      equal(0, state.cells[math.floor(aheadY - 0.5) * side + math.floor(aheadX - 0.5) + 1], "the player looks down a way that is open")
+
+      -- Kobolds: one to every five rooms, each in a room of its own and none near the start
+      equal(math.floor(size * size / 5), #state.mobs)
+      local start = math.floor(state.start.y) * side + math.floor(state.start.x) + 1
+      local walk, queue = { [start] = 0 }, { start }
+      while #queue > 0 do
+        local square = table.remove(queue, 1)
+        for _, next in ipairs(mazeNeighbours(state, square)) do
+          if state.cells[next] == 0 and not walk[next] then
+            walk[next] = walk[square] + 1
+            queue[#queue + 1] = next
+          end
+        end
+      end
+      local dens = {}
+      for _, mob in ipairs(state.mobs) do
+        local square = math.floor(mob.y) * side + math.floor(mob.x) + 1
+        equal(0, state.cells[square], "a kobold sleeps in a room")
+        equal(0.5, mob.x % 1)
+        equal(nil, dens[square], "and has it to itself")
+        dens[square] = true
+        assert(walk[square] >= 8, "well away from the start")
+      end
+      -- And potions in rooms nobody sleeps in
+      local potions = { health = 0, power = 0 }
+      for _, potion in ipairs(state.loot) do
+        local square = math.floor(potion.y) * side + math.floor(potion.x) + 1
+        equal(0, state.cells[square], "a potion lies in a room")
+        equal(nil, dens[square], "with nothing else in it")
+        assert(square ~= start, "and not where the player begins")
+        dens[square] = true
+        potions[potion.kind] = potions[potion.kind] + 1
+      end
+      equal(math.floor(size * size / 9), potions.health)
+      equal(math.floor(size * size / 12), potions.power)
+      equal(nil, state.class, "nobody yet")
+    end
+  end
+
+  local one, other = game.newState(1, private.Random.New(7), { size = 9 }), game.newState(1, private.Random.New(7), { size = 9 })
+  equal(table.concat(one.cells), table.concat(other.cells), "the same maze from the same seed")
+  for index, mob in ipairs(one.mobs) do
+    equal(mob.x .. "," .. mob.y, other.mobs[index].x .. "," .. other.mobs[index].y, "and the same kobolds in it")
+  end
+  for index, potion in ipairs(one.loot) do
+    equal(potion.x .. "," .. potion.y .. potion.kind, other.loot[index].x .. "," .. other.loot[index].y .. other.loot[index].kind)
+  end
+end
+
+function tests.WarcraftsteinEndsAtThePortal()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Match, game = alice.private.Match, alice.private.Games.Get("warcraftstein")
+  equal(true, alice.private.Games.IsSolo(game))
+  local match = assert(alice.session:Invite({}, "warcraftstein", { options = { size = 6 } }))
+  local state = Match.State(match)
+  equal(6, state.size)
+  equal(nil, game.result(state))
+  equal(nil, game.record(state, 12))
+  equal("warcraftstein_progress", game.progress(state))
+  equal(false, (game.validate(state, 1, "y")))
+  equal(false, (game.validate(state, 2, "x")))
+  -- First of all the player says who they are, once
+  equal(false, (game.validate(state, 1, "x")), "nobody gets out who was never in")
+  equal(false, (game.validate(state, 1, "cGNOME")))
+  equal(false, (game.validate(state, 1, "c")))
+  assert(alice.session:Move(match.id, "cMAGE"))
+  state = Match.State(match)
+  equal("MAGE", state.class)
+  equal(false, (game.validate(state, 1, "cROGUE")))
+  equal(nil, game.result(state))
+
+  world.clock = world.clock + 30
+  assert(alice.session:Move(match.id, "x"))
+  state = Match.State(match)
+  equal(true, state.found)
+  equal(1, game.result(state).winner)
+  equal(false, (game.validate(state, 1, "x")), "only once")
+  equal("finished", match.status)
+  local record = game.record(state, 12)[1]
+  equal("time6", record.key)
+  equal(12, record.value)
+  equal(true, record.lower)
+
+  -- Or with the kobolds getting the player first, which is no time worth keeping
+  match = assert(alice.session:Invite({}, "warcraftstein", { options = { size = 6 } }))
+  assert(alice.session:Move(match.id, "cDRUID"))
+  assert(alice.session:Move(match.id, "d"))
+  state = Match.State(match)
+  equal(true, state.dead)
+  equal(false, state.found)
+  equal(0, game.result(state).winner)
+  equal(nil, game.record(state, 12))
+  equal(false, (game.validate(state, 1, "x")), "nobody gets out after that")
+  equal("finished", match.status)
+end
+
+--- Opens the window on a new game of Warcraftstein
+--- @param size number?
+--- @param class string|boolean|nil Who goes in: a warrior if left out, nobody yet if false
+--- @return table player, table match, table walker The view of the game on screen
+local function mazeOnScreen(size, class)
+  local world = World.New()
+  world.seed = 3
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  function StaticPopup_Show(which, _, _, data)
+    StaticPopupDialogs[which].OnAccept(nil, data)
+  end
+  local match = assert(player.session:Invite({}, "warcraftstein", { options = { size = size } }))
+  if class ~= false then
+    assert(player.session:Move(match.id, "c" .. (class or "WARRIOR")))
+  end
+  MainFrame.Open(match.id)
+  local found = Client.Find(function(widget)
+    return widget.walker ~= nil and widget:IsVisible()
+  end)
+  equal(1, #found, "mazes on screen")
+  return player, match, found[1].walker
+end
+
+--- Holds keys down for a while in the maze on screen, and lets go of them again
+--- @param walker table
+--- @param keys string[]
+--- @param frames number
+local function mazeHold(walker, keys, frames)
+  for _, key in ipairs(keys) do
+    walker.ticker:Fire("OnKeyDown", key)
+  end
+  for _ = 1, frames do
+    walker.ticker:Fire("OnUpdate", 0.02)
+  end
+  for _, key in ipairs(keys) do
+    walker.ticker:Fire("OnKeyUp", key)
+  end
+end
+
+--- How tall every column of the maze on screen is, to tell one look from another
+--- @param walker table
+--- @return string
+local function mazeSeen(walker)
+  local heights = {}
+  for index = 1, walker.count do
+    heights[index] = string.format("%.1f", walker.columns[index].height)
+  end
+  return table.concat(heights, " ")
+end
+
+function tests.WarcraftsteinDrawsWhatIsSeen()
+  local player, match, walker = mazeOnScreen(6)
+  local state = player.private.Match.State(match)
+  assert(walker.count >= 60, "columns to draw with")
+  equal(state.start.x, walker.pose.x)
+
+  local frame = walker.frame
+  for index = 1, walker.count do
+    local column = walker.columns[index]
+    assert(column:IsVisible(), "every column in use is shown")
+    assert(column.height > 0 and column.height <= frame.height, "a column is never taller than what is seen: " .. column.height)
+    assert(column.texture and column.texture:find("Warcraftstein"), "every column shows a wall")
+    assert(column.color[1] > 0 and column.color[1] <= 1, "and has some light on it")
+  end
+  -- Looking down a corridor: what is straight ahead is further away than what is at the edges
+  local middle = walker.columns[math.floor(walker.count / 2)]
+  assert(middle.height < walker.columns[1].height, "the wall ahead is smaller than the one beside")
+  assert(middle.height < walker.columns[walker.count].height)
+
+  -- Standing still nothing is drawn again, turning shows something else, and so does walking
+  local before = mazeSeen(walker)
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal(before, mazeSeen(walker))
+  mazeHold(walker, { "D" }, 10)
+  local turned = mazeSeen(walker)
+  assert(turned ~= before, "turning changes what is seen")
+  assert(walker.pose.facing ~= state.start.facing)
+  equal(state.start.x, walker.pose.x, "turning goes nowhere")
+  mazeHold(walker, { "A" }, 10)
+  mazeHold(walker, { "W" }, 10)
+  assert(walker.pose.x ~= state.start.x or walker.pose.y ~= state.start.y, "walking does")
+
+  -- A key that is let go of stops, and so does one held when the cursor leaves
+  local x, y = walker.pose.x, walker.pose.y
+  mazeHold(walker, {}, 10)
+  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
+  walker.ticker:Fire("OnKeyDown", "W")
+  Client.over = false
+  walker.ticker:Fire("OnUpdate", 0.02)
+  Client.over = true
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
+  walker.ticker:Fire("OnKeyUp", "W")
+  equal(false, walker.ticker.propagates, "a key the game takes goes no further")
+  walker.ticker:Fire("OnKeyDown", "X")
+  equal(true, walker.ticker.propagates, "one that means nothing here is left to the client")
+
+  -- Fewer columns in a smaller window, and none of the others left showing
+  local count = walker.count
+  walker:Layout(300, 260)
+  assert(walker.count < count, "fewer columns in less room")
+  equal(false, walker.columns[count]:IsShown())
+  assert(walker.columns[walker.count].height > 0)
+end
+
+function tests.WarcraftsteinNeverWalksThroughAWall()
+  local player, match, walker = mazeOnScreen(6)
+  local state = player.private.Match.State(match)
+  -- Leaning on every key in turn for a good while, wherever that leads
+  local leans = { { "W" }, { "W", "D" }, { "S", "E" }, { "Q" }, { "W", "A" }, { "E", "W" }, { "S" }, { "W", "Q", "D" } }
+  for round = 1, 40 do
+    mazeHold(walker, leans[(round - 1) % #leans + 1], 45)
+    if match.status == "finished" then
+      break
+    end
+    local pose = walker.pose
+    for _, corner in ipairs({ { -0.2, -0.2 }, { 0.2, -0.2 }, { -0.2, 0.2 }, { 0.2, 0.2 } }) do
+      local square = math.floor(pose.y + corner[2]) * state.side + math.floor(pose.x + corner[1]) + 1
+      equal(0, state.cells[square], "the player stands clear of every wall")
+    end
+  end
+end
+
+function tests.WarcraftsteinIsWalkedToTheWayOut()
+  local player, match, walker = mazeOnScreen(6)
+  local Match = player.private.Match
+  local state = Match.State(match)
+  local way = mazeWay(state)
+
+  -- From the middle of one square to the middle of the next: turned to face it first, then walked
+  local frames = 0
+  for step, square in ipairs(way) do
+    local x, y = (square - 1) % state.side + 0.5, math.floor((square - 1) / state.side) + 0.5
+    while not Match.State(match).found do
+      local pose = walker.pose
+      local away = math.sqrt((x - pose.x) ^ 2 + (y - pose.y) ^ 2)
+      if away < 0.1 and step < #way then
+        break
+      end
+      -- A kobold that is up comes first: faced where the player stands, and struck when it is there
+      local toX, toY, key, nearest = x, y, "W", math.huge
+      for _, mob in ipairs(walker.run.mobs) do
+        local far = (mob.x - pose.x) ^ 2 + (mob.y - pose.y) ^ 2
+        if mob.awake and far < nearest then
+          toX, toY, key, nearest = mob.x, mob.y, "SPACE", far
+        end
+      end
+      local off = (math.atan2(toY - pose.y, toX - pose.x) - pose.facing + math.pi) % (math.pi * 2) - math.pi
+      if math.abs(off) > 0.05 then
+        key = off > 0 and "D" or "A"
+      end
+      mazeHold(walker, { key }, 1)
+      frames = frames + 1
+      assert(frames < 20000, "the way out is found some time")
+    end
+  end
+
+  equal(true, Match.State(match).found)
+  equal("finished", match.status)
+  equal(true, walker.effects:HasBanner(), "it says so across what was seen")
+  local fallen = 0
+  for _, mob in ipairs(walker.run.mobs) do
+    fallen = fallen + (mob.dead and 1 or 0)
+  end
+  assert(fallen > 0, "past a kobold or two")
+  assert(walker.run.health > 0)
+  assert(player.session:Best("warcraftstein", "time6"), "and the time it took is kept")
+  local x = walker.pose.x
+  mazeHold(walker, { "S" }, 10)
+  equal(x, walker.pose.x, "nobody walks about in a game that is over")
+  equal(true, walker.ticker.propagates)
+end
+
+--- Stands the player a square away from a kobold that sleeps, looking at it
+--- @param state table
+--- @param walker table
+--- @param alone boolean? With no other kobold left in the maze to come and help it
+--- @return table mob
+local function mazeMeet(state, walker, alone)
+  local mob = walker.run.mobs[1]
+  for index = 2, alone and #walker.run.mobs or 1 do
+    walker.run.mobs[index].dead = true
+  end
+  for _, step in ipairs({ { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } }) do
+    if state.cells[math.floor(mob.y + step[2]) * state.side + math.floor(mob.x + step[1]) + 1] == 0 then
+      walker.pose.x, walker.pose.y = mob.x + step[1], mob.y + step[2]
+      walker.pose.facing = math.atan2(-step[2], -step[1]) % (math.pi * 2)
+      walker:render()
+      return mob
+    end
+  end
+  error("a room with no way into it")
+end
+
+--- The strips of what is seen that show something that stands in the maze
+--- @param walker table
+--- @param thing table? Only the ones that show this
+--- @return number
+local function mazeStrips(walker, thing)
+  local strips, all = 0, 0
+  for _, layer in pairs(walker.strips) do
+    for index, strip in pairs(layer) do
+      if strip:IsShown() then
+        all = all + 1
+        strips = strips + ((not thing or strip.shows == thing) and 1 or 0)
+        assert(index <= walker.count)
+        assert(strip.texture:find("sprites"))
+        assert(strip.height > 0 and strip.height <= walker.frame.height, "never taller than what is seen")
+      end
+    end
+  end
+  equal(all, #walker.lit)
+  return strips
+end
+
+function tests.WarcraftsteinShowsTheKobolds()
+  local player, match, walker = mazeOnScreen(6)
+  local state = player.private.Match.State(match)
+  equal(#state.mobs, #walker.run.mobs)
+  equal(#state.loot, #walker.run.loot)
+  for _, mob in ipairs(walker.run.mobs) do
+    equal(0, mazeStrips(walker, mob), "none to be seen from the start")
+  end
+  equal(120, walker.health.value)
+  equal(0, walker.power.value, "no rage yet")
+
+  local mob = mazeMeet(state, walker)
+  local near = mazeStrips(walker, mob)
+  assert(near > walker.count / 2, "one that is a square away fills most of what is seen: " .. near)
+  -- Not through a wall: only the columns where the wall is further away than it is
+  for index, strip in pairs(walker.strips[6]) do
+    if strip:IsShown() then
+      assert(walker.depths[index] > strip.shows.depth)
+    end
+  end
+  -- Further away it is smaller, and behind the player it isn't there
+  local x, y = walker.pose.x, walker.pose.y
+  walker.pose.x, walker.pose.y = x + (x - mob.x) * 0.4, y + (y - mob.y) * 0.4
+  walker:render()
+  local far = mazeStrips(walker, mob)
+  assert(far > 0 and far < near, "smaller from further away")
+  walker.pose.facing = (walker.pose.facing + math.pi) % (math.pi * 2)
+  walker:render()
+  equal(0, mazeStrips(walker, mob), "nothing of what is behind")
+
+  -- And in a smaller window there are fewer columns to show it in
+  walker.pose.facing = (walker.pose.facing + math.pi) % (math.pi * 2)
+  walker:Layout(300, 260)
+  local fewer = mazeStrips(walker, mob)
+  assert(fewer > 0 and fewer < far)
+
+  -- A potion is drawn the same way
+  local potion = walker.run.loot[1]
+  potion.x, potion.y = (walker.pose.x + mob.x) / 2, (walker.pose.y + mob.y) / 2
+  walker:render()
+  assert(mazeStrips(walker, potion) > 0)
+  assert(mazeStrips(walker, mob) > 0, "and the kobold behind it still is")
+end
+
+function tests.WarcraftsteinKoboldsComeForThePlayer()
+  local player, match, walker = mazeOnScreen(6)
+  local state = player.private.Match.State(match)
+  local mob = mazeMeet(state, walker, true)
+  local run = walker.run
+  equal(false, mob.awake)
+
+  -- With the cursor somewhere else nothing happens at all
+  Client.over = false
+  mazeHold(walker, {}, 50)
+  Client.over = true
+  equal(false, mob.awake)
+  equal(120, run.health)
+
+  -- It wakes, comes up to the player and hits them, again and again. A warrior's armour takes
+  -- some of every blow, and every blow makes them angrier
+  mazeHold(walker, {}, 5)
+  equal(true, mob.awake)
+  mazeHold(walker, {}, 40)
+  local away = math.sqrt((mob.x - walker.pose.x) ^ 2 + (mob.y - walker.pose.y) ^ 2)
+  assert(away <= 0.95 and away > 0.7, "as near as it comes: " .. away)
+  equal("111.6", string.format("%.1f", run.health))
+  equal(112, walker.health.value)
+  equal(8, run.power)
+  mazeHold(walker, {}, 60)
+  equal("103.2", string.format("%.1f", run.health))
+
+  -- Three blows are the end of it: it lies where it fell and does nothing more
+  mazeHold(walker, { "SPACE" }, 2)
+  equal(25, mob.health)
+  equal(false, mob.dead)
+  mazeHold(walker, { "SPACE" }, 10)
+  equal(25, mob.health, "a blow takes its time")
+  mazeHold(walker, { "SPACE" }, 45)
+  equal(true, mob.dead)
+  assert(run.power >= 36, "rage for every one of them")
+  local health = run.health
+  mazeHold(walker, {}, 200)
+  equal(health, run.health)
+  assert(mazeStrips(walker, mob) > 0, "still to be seen")
+  equal("active", match.status)
+
+  -- Backing away is slower than going at them
+  local x, y = walker.pose.x, walker.pose.y
+  mazeHold(walker, { "S" }, 5)
+  local back = math.sqrt((walker.pose.x - x) ^ 2 + (walker.pose.y - y) ^ 2)
+  mazeHold(walker, { "W" }, 5)
+  assert(math.abs(walker.pose.x - x) + math.abs(walker.pose.y - y) < back * 0.75, "further forward than back")
+end
+
+function tests.WarcraftsteinKoboldsHuntThePlayer()
+  local player, match, walker = mazeOnScreen(6)
+  local state = player.private.Match.State(match)
+  local mob = mazeMeet(state, walker, true)
+  local run = walker.run
+  -- One that wakes tells the ones around it
+  local other = run.mobs[2]
+  other.dead, other.x, other.y = false, mob.x + 2, mob.y + 2
+  mazeHold(walker, {}, 2)
+  equal(true, mob.awake)
+  equal(true, other.awake)
+  other.dead = true
+
+  -- The player gone to where it can't see them: it comes after them through the maze
+  walker.pose.x, walker.pose.y = state.start.x, state.start.y
+  mazeHold(walker, {}, 1)
+  local function walk()
+    return walker:trail()[math.floor(mob.y) * state.side + math.floor(mob.x) + 1]
+  end
+  local far = walk()
+  assert(far >= 8)
+  mazeHold(walker, {}, 100)
+  equal(true, mob.awake)
+  assert(walk() <= far - 3, "nearer by the way there is: " .. walk() .. " from " .. far)
+  -- Until it has them, or hasn't seen them for too long
+  mazeHold(walker, {}, 700)
+  assert(run.health < 120 or not mob.awake)
+  if far <= 16 then
+    assert(run.health < 120, "which it has from this near")
+  end
+end
+
+function tests.WarcraftsteinEndsWithThePlayerDead()
+  local player, match, walker = mazeOnScreen(6)
+  local Match = player.private.Match
+  mazeMeet(Match.State(match), walker, true)
+  walker.run.health = 10
+  mazeHold(walker, {}, 200)
+  equal(0, walker.run.health)
+  equal(true, Match.State(match).dead)
+  equal("finished", match.status)
+  equal(0, Match.Result(match).winner)
+  equal(true, walker.effects:HasBanner(), "it says so across what was seen")
+  equal(nil, player.session:Best("warcraftstein", "time6"), "which is nothing to be proud of")
+  equal(0, walker.health.value)
+end
+
+function tests.WarcraftsteinAsksWhoGoesIn()
+  local player, match, walker = mazeOnScreen(6, false)
+  local Match = player.private.Match
+  equal(true, walker.picker:IsShown())
+  equal(nil, walker.run)
+  equal(false, walker.health:IsShown())
+  mazeHold(walker, { "W" }, 5)
+  equal(nil, Match.State(match).class, "walking isn't an answer")
+  -- Space is: the class of the character, a warrior for one of a class the maze doesn't know
+  function UnitClass()
+    return "Mage", "MAGE"
+  end
+  walker.ticker:Fire("OnKeyDown", "SPACE")
+  UnitClass = nil
+  equal("MAGE", Match.State(match).class)
+  equal(false, walker.picker:IsShown())
+  equal(80, walker.run.health)
+  equal(100, walker.run.power)
+  equal(true, walker.health:IsShown())
+  assert(walker.ability.icon.texture:find("FrostNova"))
+
+  -- Or a click on any of them
+  player, match, walker = mazeOnScreen(6, false)
+  local picks = 0
+  for _ in pairs(walker.picks) do
+    picks = picks + 1
+  end
+  equal(9, picks)
+  walker.picks.ROGUE:Fire("OnClick")
+  equal("ROGUE", player.private.Match.State(match).class)
+  equal(90, walker.run.health)
+  walker.picks.MAGE:Fire("OnClick")
+  equal("ROGUE", player.private.Match.State(match).class, "once")
+
+  function UnitClass()
+    return "Monk", "MONK"
+  end
+  player, match, walker = mazeOnScreen(6, false)
+  walker.ticker:Fire("OnKeyDown", "SPACE")
+  UnitClass = nil
+  equal("WARRIOR", player.private.Match.State(match).class)
+end
+
+function tests.WarcraftsteinEveryClassCanFight()
+  for _, class in ipairs({ "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }) do
+    local player, match, walker = mazeOnScreen(6, class)
+    local state = player.private.Match.State(match)
+    local mob = mazeMeet(state, walker, true)
+    equal(class, walker.run.class)
+    mazeHold(walker, { "SPACE" }, 400)
+    equal(true, mob.dead, class .. " gets the better of a kobold")
+    assert(walker.run.health > 0, class .. " lives to tell of it")
+    equal("active", match.status)
+    equal(0, #walker.run.bolts, "nothing left in the air")
+  end
+end
+
+function tests.WarcraftsteinClassesDoWhatTheyDo()
+  --- @param class string
+  --- @return table walker, table run, table mob
+  local function meet(class)
+    local player, match, walker = mazeOnScreen(6, class)
+    return walker, walker.run, mazeMeet(player.private.Match.State(match), walker, true)
+  end
+
+  -- A warrior needs rage for it, and hits everything around
+  local walker, run, mob = meet("WARRIOR")
+  mazeHold(walker, { "F" }, 2)
+  equal(40, mob.health, "nothing without rage")
+  equal(false, walker.ticker.propagates)
+  run.power = 30
+  mazeHold(walker, { "F" }, 2)
+  equal(10, mob.health)
+  assert(run.power < 30)
+  assert(run.ready > 0)
+  equal(1, walker.ability.waits, "it says how long until the next")
+
+  -- Nothing hurts a paladin for a while
+  walker, run, mob = meet("PALADIN")
+  mazeHold(walker, { "F" }, 1)
+  equal(60, run.power)
+  mazeHold(walker, {}, 150)
+  equal(110, run.health)
+  equal(true, mob.awake)
+  mazeHold(walker, {}, 100)
+  assert(run.health < 110, "and then it does again")
+
+  -- A hunter's arrow is worth half from this near, and all of it from further away
+  walker, run, mob = meet("HUNTER")
+  mazeHold(walker, { "SPACE" }, 1)
+  equal(33, mob.health)
+  walker.pose.x, walker.pose.y = walker.pose.x * 2 - mob.x, walker.pose.y * 2 - mob.y
+  mob.frozen = 100
+  mazeHold(walker, { "F" }, 1)
+  equal(19, mob.health, "every kobold in sight")
+  equal(65, math.floor(run.power))
+
+  -- Nobody sees a rogue, and the first blow out of nowhere is worth three
+  walker, run, mob = meet("ROGUE")
+  mazeHold(walker, { "F" }, 1)
+  mazeHold(walker, {}, 100)
+  equal(false, mob.awake)
+  equal(90, run.health)
+  mazeHold(walker, { "SPACE" }, 1)
+  equal(16, mob.health)
+  equal(nil, run.buff, "which is the end of hiding")
+  equal(true, mob.awake)
+  mazeHold(walker, { "SPACE" }, 14)
+  equal(8, mob.health, "and the next is worth one")
+
+  -- A priest heals, but not what isn't hurt
+  walker, run = meet("PRIEST")
+  mazeHold(walker, { "F" }, 1)
+  equal(100, run.power)
+  run.health = 20
+  mazeHold(walker, { "F" }, 1)
+  equal(60, run.health)
+  equal(65, math.floor(run.power))
+
+  -- A shaman's totem fights on its own for as long as it stands
+  walker, run, mob = meet("SHAMAN")
+  mob.frozen = 100
+  mazeHold(walker, { "F" }, 1)
+  assert(run.totem, "a totem")
+  assert(mazeStrips(walker, run.totem) > 0, "to be seen")
+  mazeHold(walker, {}, 120)
+  equal(16, mob.health, "three times in two seconds and a bit")
+  mazeHold(walker, {}, 600)
+  equal(nil, run.totem)
+  -- And their lightning jumps on to the next kobold
+  local other = run.mobs[2]
+  other.dead, other.frozen, other.x, other.y = false, 100, mob.x, mob.y
+  equal(true, mob.dead, "it was the end of that one")
+  mob.health, mob.dead = 40, false
+  mazeHold(walker, { "SPACE" }, 12)
+  equal("27,33.5", math.min(mob.health, other.health) .. "," .. math.max(mob.health, other.health))
+
+  -- A mage freezes what is near
+  walker, run, mob = meet("MAGE")
+  mazeHold(walker, { "F" }, 1)
+  equal(35, mob.health)
+  assert(mob.frozen > 3)
+  mazeHold(walker, {}, 150)
+  equal(80, run.health, "and what is frozen does nothing")
+  mazeHold(walker, {}, 150)
+  assert(run.health < 80, "until it thaws")
+
+  -- A warlock trades health for mana, and gets some back from every bolt that lands
+  walker, run, mob = meet("WARLOCK")
+  mazeHold(walker, { "F" }, 1)
+  equal(90, run.health, "not with all the mana there is")
+  run.power, mob.frozen = 0, 100
+  mazeHold(walker, { "F" }, 1)
+  equal(75, run.health)
+  equal(30, math.floor(run.power))
+  mazeHold(walker, { "SPACE" }, 12)
+  equal(22, mob.health)
+  equal("79.5", string.format("%.1f", run.health))
+
+  -- A druid has claws for a while, and is quicker on its feet
+  walker, run, mob = meet("DRUID")
+  mob.frozen = 100
+  mazeHold(walker, { "F" }, 1)
+  assert(run.buff)
+  mazeHold(walker, { "SPACE" }, 1)
+  equal(29, mob.health)
+  equal(0, #run.bolts)
+  mazeHold(walker, {}, 420)
+  equal(nil, run.buff)
+  mazeHold(walker, { "SPACE" }, 1)
+  equal(1, #run.bolts, "and bolts again after")
+end
+
+function tests.WarcraftsteinPotionsAreDrunk()
+  local player, match, walker = mazeOnScreen(6, "MAGE")
+  local run = walker.run
+  local potions = #run.loot
+  local health, power
+  for _, potion in ipairs(run.loot) do
+    health = potion.kind == "health" and potion or health
+    power = potion.kind == "power" and potion or power
+  end
+  -- Not by anyone who has no use for it
+  health.x, health.y = walker.pose.x, walker.pose.y
+  mazeHold(walker, {}, 2)
+  equal(potions, #run.loot)
+  run.health = 30
+  mazeHold(walker, {}, 2)
+  equal(65, run.health)
+  equal(potions - 1, #run.loot)
+  equal(65, walker.health.value)
+
+  run.power = 80
+  power.x, power.y = walker.pose.x, walker.pose.y
+  mazeHold(walker, {}, 2)
+  equal(100, run.power, "never more than there is room for")
+  equal(potions - 2, #run.loot)
+  equal("active", match.status)
+end
+
+-----------------------------
+-- Fourtiles
+-----------------------------
+
+--- Every word there is in a puzzle, with how many tiles it takes and a move that spells it.
+--- Tried one arrangement of tiles after the other, which is what the game itself has no time for
+--- @param private table
+--- @param state table
+--- @param most number? The most tiles to try, four if left out
+--- @return table<string, { size: number, move: string }>
+local function fourtilesWords(private, state, most)
+  local Lexicon, found = private.Lexicon, {}
+  local function extend(text, move, used, size)
+    if size > 0 and Lexicon.Has("english", text) then
+      assert(not found[text] or found[text].size == size, text .. " takes two numbers of tiles")
+      found[text] = found[text] or { size = size, move = move }
+    end
+    if size == (most or 4) then
+      return
+    end
+    for tile = 1, #state.tiles do
+      if not used[tile] then
+        used[tile] = true
+        extend(text .. state.tiles[tile], move .. string.char(96 + tile), used, size + 1)
+        used[tile] = nil
+      end
+    end
+  end
+  extend("", "", {}, 0)
+  return found
+end
+
+--- The move that spells one of the five words of a puzzle
+local function fourtilesMove(state, word)
+  local function extend(text, move, size)
+    if text == word then
+      return move
+    elseif size == 4 or word:sub(1, #text) ~= text then
+      return nil
+    end
+    for tile = 1, #state.tiles do
+      if not move:find(string.char(96 + tile), 1, true) then
+        local whole = extend(text .. state.tiles[tile], move .. string.char(96 + tile), size + 1)
+        if whole then
+          return whole
+        end
+      end
+    end
+    return nil
+  end
+  return assert(extend("", "", 0), word .. " can't be spelled")
+end
+
+function tests.FourtilesPuzzlesAreSound()
+  local private = loadEngine()
+  local Fourtiles, Lexicon = private.Fourtiles, private.Lexicon
+  equal(1000, #private.FourtilesPuzzles)
+  for _, puzzle in ipairs(private.FourtilesPuzzles) do
+    local tiles, of, words, counts = Fourtiles.Parse(puzzle)
+    equal(20, #tiles, puzzle)
+    equal(5, #words, puzzle)
+    equal(4, #counts, puzzle)
+    local seen = {}
+    for index, tile in ipairs(tiles) do
+      assert(tile:match("^%u%u%u?%u?$") and not seen[tile], "bad or repeated tile in " .. puzzle)
+      seen[tile] = true
+      equal(math.ceil(index / 4), of[index], puzzle)
+    end
+    for _, word in ipairs(words) do
+      assert(Lexicon.Has("english", word), word .. " isn't a word")
+    end
+    local state = { counts = counts }
+    assert(Fourtiles.MostPoints(state) >= Fourtiles.RANKS[#Fourtiles.RANKS] + 15, "the top rank is out of reach in " .. puzzle)
+  end
+end
+
+function tests.FourtilesIsPartOfItsPuzzles()
+  local private = loadEngine()
+  local stamp = private.Random.Seed("fourtiles")
+  for _, puzzle in ipairs(private.FourtilesPuzzles) do
+    stamp = private.Random.Stir(stamp, puzzle)
+  end
+  -- The puzzles and the words that count in them are part of the rules: players with others
+  -- wouldn't agree on what was found. After changing either, give Fourtiles a new version
+  -- (Games/Fourtiles.lua) and write that version and the new numbers here
+  equal(1, private.Games.Get("fourtiles").version)
+  equal(1428637885, stamp, "the puzzles changed")
+  equal(365510098, private.Lexicon.Stamp("english"), "the English list changed")
+end
+
+function tests.FourtilesHasTheWordsItSaysItHas()
+  local private = loadEngine()
+  local game = private.Games.Get("fourtiles")
+  local state = game.newState(1, private.Random.New(11))
+  equal(20, #state.tiles)
+  local shuffled = false
+  for index = 1, 20 do
+    shuffled = shuffled or state.of[index] ~= math.ceil(index / 4)
+  end
+  equal(true, shuffled, "the tiles of a word don't lie in a row")
+
+  local words = fourtilesWords(private, state)
+  local sizes, total = { 0, 0, 0, 0 }, 0
+  for _, word in pairs(words) do
+    sizes[word.size] = sizes[word.size] + 1
+    total = total + 1
+  end
+  for size = 1, 4 do
+    equal(state.counts[size], sizes[size], "words of " .. size .. " tiles")
+  end
+  equal(state.total, total)
+  for _, word in ipairs(state.words) do
+    equal(4, words[word].size)
+  end
+
+  -- Found to the last, the game is over without anyone calling it
+  local score = 0
+  for text, word in pairs(words) do
+    equal(nil, game.result(state))
+    assert(game.validate(state, 1, word.move), text)
+    game.apply(state, 1, word.move)
+    score = score + private.Fourtiles.POINTS[word.size]
+  end
+  equal(score + private.Fourtiles.BONUS, state.score)
+  equal(private.Fourtiles.MostPoints(state), state.score)
+  equal(1, game.result(state).winner)
+end
+
+function tests.FourtilesScoresWordsByTheirTiles()
+  local private = loadEngine()
+  local game, Fourtiles = private.Games.Get("fourtiles"), private.Fourtiles
+  local state = game.newState(1, private.Random.New(3))
+  equal("fourtiles_progress", game.progress(state))
+
+  for _, bad in ipairs({ "", "aa", "abcde", "u", "A", "a1", "a b" }) do
+    local ok, err = game.validate(state, 1, bad)
+    equal(false, ok, bad)
+    equal("invalid_move", err, bad)
+  end
+
+  local long = fourtilesMove(state, state.words[1])
+  assert(game.validate(state, 1, long))
+  local event = game.apply(state, 1, long)
+  equal(state.words[1], event.word)
+  equal(state.words[1], event.notation)
+  equal(4, event.size)
+  equal(8, event.points)
+  equal(nil, event.bonus)
+  equal(4, #event.tiles)
+  equal(8, state.score)
+  local ok, err = game.validate(state, 1, long)
+  equal(false, ok)
+  equal("fourtiles_found", err)
+  -- The same tiles the other way round spell nothing
+  ok, err = game.validate(state, 1, long:reverse())
+  equal(false, ok)
+  equal("fourtiles_not_word", err)
+
+  ok, err = game.validate(state, 1, Fourtiles.WRAP_UP)
+  equal(false, ok)
+  equal("fourtiles_early", err)
+  for index = 2, 5 do
+    event = game.apply(state, 1, fourtilesMove(state, state.words[index]))
+  end
+  equal(true, event.bonus, "the last of the five")
+  equal(5 * 8 + 40, state.score)
+  equal(4, event.rank, "which takes the player up a rank")
+  equal(false, Fourtiles.CanWrapUp(state), "the top rank is still to come")
+
+  -- Short words make up the rest
+  for text, word in pairs(fourtilesWords(private, state, 2)) do
+    if state.score < 100 then
+      assert(game.validate(state, 1, word.move), text)
+      event = game.apply(state, 1, word.move)
+      equal(word.size, event.points, "one tile is worth one and two are worth two")
+    end
+  end
+  assert(state.score >= 100, "not enough short words")
+  equal(5, event.rank)
+  equal(true, Fourtiles.CanWrapUp(state))
+  equal(nil, game.result(state), "it goes on until it is called done")
+  assert(game.validate(state, 1, Fourtiles.WRAP_UP))
+  equal(true, game.apply(state, 1, Fourtiles.WRAP_UP).done)
+  equal(1, game.result(state).winner)
+  equal(false, (game.validate(state, 1, Fourtiles.WRAP_UP)))
+
+  -- Two who made it made it together
+  local shared = game.newState(2, private.Random.New(3))
+  shared.done = true
+  equal(0, game.result(shared).winner)
+  equal(true, game.result(shared).all)
+end
+
+--- Starts a game of Fourtiles between two
+--- @return World, table first, table second, string id
+local function startedFourtiles()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite("Bob-Realm", "fourtiles"))
+  world:Deliver()
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  local first = match.me == 1 and alice or bob
+  return world, first, first == alice and bob or alice, match.id
+end
+
+function tests.FourtilesIsSolvedByTwoTogether()
+  local world, first, second, id = startedFourtiles()
+  local Match = first.private.Match
+  local state = Match.State(first.matches[id])
+  equal(table.concat(state.tiles, " "), table.concat(second.private.Match.State(second.matches[id]).tiles, " "), "the same puzzle for both")
+  equal(true, Match.CanMove(first.matches[id]))
+  equal(true, Match.CanMove(second.matches[id]))
+
+  -- Each finds one at the same moment, and both look for a third
+  assert(first.session:Move(id, fourtilesMove(state, state.words[1])))
+  assert(second.session:Move(id, fourtilesMove(state, state.words[2])))
+  assert(first.session:Move(id, fourtilesMove(state, state.words[3])))
+  assert(second.session:Move(id, fourtilesMove(state, state.words[3])))
+  world:Deliver()
+  world:Tick(30)
+  equal(logOf(first, id), logOf(second, id))
+  for _, player in ipairs({ first, second }) do
+    local shared = player.private.Match.State(player.matches[id])
+    equal(3, #shared.list)
+    equal(24, shared.score)
+    equal(16, shared.by[1])
+    equal(8, shared.by[2])
+    equal(1, shared.found[state.words[3]].seat, "whose log stands found it first")
+  end
+  equal(false, first.session:IsPending(first.matches[id]))
+
+  -- One of them leaving doesn't end it for the other
+  assert(second.session:Resign(id))
+  world:Deliver()
+  equal("active", first.matches[id].status)
+  assert(first.session:Move(id, fourtilesMove(state, state.words[4])))
+  world:Deliver()
+  equal(32, second.private.Match.State(second.matches[id]).score)
+end
+
+function tests.WizardStartsFourtilesAloneOrWithSomeone()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local bob = world:AddPlayer("Bob-Realm")
+  local Wizard = openWizard(alice)
+  pickGame("fourtiles")
+  equal(true, Wizard.IsOpen(), "there is somebody to pick, or nobody")
+  equal(true, says("wizard_step_opponent"))
+  equal(false, says("wizard_turn"), "nobody goes first where there are no turns")
+  Client.Button("wizard_play_alone"):Fire("OnClick")
+  equal(false, Wizard.IsOpen())
+  local alone
+  for _, match in pairs(alice.matches) do
+    alone = match
+  end
+  equal("fourtiles", alone.game)
+  equal(1, #alone.players)
+  equal("active", alone.status)
+  equal(0, #world.queue, "nothing is sent to anyone")
+  assert(alice.session:Move(alone.id, fourtilesMove(alice.private.Match.State(alone), alice.private.Match.State(alone).words[1])))
+  equal(8, alice.private.Match.State(alone).score)
+
+  -- With a name in the box it is a challenge like any other
+  Wizard.Open()
+  pickGame("fourtiles")
+  local box = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end)[1]
+  box:SetText("Bob-Realm")
+  box:Fire("OnTextChanged", true)
+  Client.Button("wizard_send"):Fire("OnClick")
+  world:Deliver()
+  local invited
+  for _, match in pairs(bob.matches) do
+    invited = match
+  end
+  equal("fourtiles", invited.game)
+  equal("incoming", invited.status)
+end
+
+--- The tiles of the game of Fourtiles on screen, by which tile of the puzzle each is
+local function fourtilesOnScreen()
+  local tiles = {}
+  for _, button in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.tile ~= nil and widget:IsVisible()
+  end)) do
+    tiles[button.tile] = button
+  end
+  return tiles
+end
+
+--- Clicks the tiles of a move one after the other
+local function clickFourtiles(move)
+  for letter in move:gmatch(".") do
+    fourtilesOnScreen()[letter:byte() - 96]:Fire("OnClick")
+  end
+end
+
+function tests.WindowPlaysFourtiles()
+  local world, first, second, id, MainFrame = gameOnScreen("fourtiles")
+  local state = first.private.Match.State(first.matches[id])
+  local tiles = fourtilesOnScreen()
+  equal(20, #tiles)
+  equal(state.tiles[7], tiles[7].label.text)
+  equal(true, says("status_together") or says("fourtiles_progress"))
+  equal(false, Client.Button("fourtiles_enter").enabled == true, "nothing to enter yet")
+
+  -- A word is put together a tile at a time, and a tile clicked again comes out of it
+  local move = fourtilesMove(state, state.words[2])
+  clickFourtiles(move)
+  equal("4", tiles[move:byte(4) - 96].number.text)
+  fourtilesOnScreen()[move:byte(4) - 96]:Fire("OnClick")
+  equal("", tiles[move:byte(4) - 96].number.text)
+  Client.Button("fourtiles_enter"):Fire("OnClick")
+  equal("", logOf(first, id), "three of its tiles are no word")
+  equal(true, says("fourtiles_not_word"))
+  fourtilesOnScreen()[move:byte(4) - 96]:Fire("OnClick")
+  Client.Button("fourtiles_enter"):Fire("OnClick")
+  world:Deliver()
+  equal("1" .. move, logOf(first, id))
+  equal("1" .. move, logOf(second, id))
+  equal("", tiles[move:byte(1) - 96].number.text, "and the tray is empty again")
+
+  -- Entered again it is only said to be found
+  clickFourtiles(move)
+  Client.Button("fourtiles_enter"):Fire("OnClick")
+  equal("1" .. move, logOf(first, id))
+  equal(true, says("fourtiles_found"))
+  Client.Button("fourtiles_clear"):Fire("OnClick")
+
+  -- What the other one finds turns up as well
+  assert(second.session:Move(id, fourtilesMove(state, state.words[4])))
+  world:Deliver()
+  equal(true, says("fourtiles_they_found"))
+  equal(16, first.private.Match.State(first.matches[id]).score)
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "fourtiles_wrap_up" and widget:IsVisible()
+  end), "the game can't be called done before the five are found and the top rank reached")
+
+  -- Shuffling moves the tiles about and loses none
+  Client.Button("fourtiles_shuffle"):Fire("OnClick")
+  local after = fourtilesOnScreen()
+  for index = 1, 20 do
+    equal(state.tiles[index], after[index].label.text)
+  end
+  MainFrame.Refresh()
+end
+
+function tests.WindowCallsFourtilesDoneWhenAskedTwice()
+  local world, first, second, id = gameOnScreen("fourtiles")
+  local private = first.private
+  local state = private.Match.State(first.matches[id])
+  local function wrap()
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and (widget.text == "fourtiles_wrap_up" or widget.text == "fourtiles_wrap_up_again") and widget:IsVisible()
+    end)[1]
+  end
+
+  for _, word in ipairs(state.words) do
+    assert(first.session:Move(id, fourtilesMove(state, word)))
+  end
+  equal(nil, wrap(), "eighty points aren't the top rank")
+  for _, word in pairs(fourtilesWords(private, state, 2)) do
+    if state.score < 100 then
+      assert(second.session:Move(id, word.move))
+      world:Deliver()
+    end
+  end
+  state = private.Match.State(first.matches[id])
+  assert(state.score >= 100)
+  equal("fourtiles_wrap_up", wrap().text)
+
+  wrap():Fire("OnClick")
+  equal("active", first.matches[id].status, "once is only asking")
+  equal("fourtiles_wrap_up_again", wrap().text)
+  wrap():Fire("OnClick")
+  world:Deliver()
+  equal("finished", first.matches[id].status)
+  equal("finished", second.matches[id].status)
+  equal(true, private.Match.Result(first.matches[id]).all)
+  equal("status_won_with", private.MainFrame.Describe(first.matches[id]))
+  equal(nil, wrap())
+  -- Written across the board, once it has faded in
+  equal(1, #Client.Find(function(widget)
+    return widget.text == "fourtiles_done"
+  end))
+end
+
+-----------------------------
+-- Rooms
+-----------------------------
+
+--- A guild, a group and whoever is in neither, with rooms that talk to each other through a
+--- network that says on a channel what was said on it to everyone who has it, the sender too
+--- @class RoomWorld
+local RoomWorld = {}
+RoomWorld.__index = RoomWorld
+
+function RoomWorld.New()
+  return setmetatable({ clock = 5000, players = {}, order = {}, queue = {}, sent = {}, seed = 0 }, RoomWorld)
+end
+
+--- @param name string
+--- @param channels table<string, boolean>? The channels the player has, none if left out
+function RoomWorld:Add(name, channels)
+  local player = { name = name, channels = channels or {}, events = {}, online = true, private = loadEngine() }
+  player.Sketch = player.private.Sketch
+  player.rooms = player.private.Rooms.New({
+    me = name,
+    now = function()
+      return self.clock
+    end,
+    random = function(max)
+      self.seed = self.seed + 1
+      return (self.seed * 7) % max + 1
+    end,
+    broadcast = function(channel, text)
+      if not player.channels[channel] then
+        return false
+      end
+      self.queue[#self.queue + 1] = { from = name, channel = channel, text = text }
+      return true
+    end,
+    send = function(target, text)
+      self.queue[#self.queue + 1] = { from = name, to = target, text = text }
+      return true
+    end,
+    onChannel = function(channel)
+      return player.channels[channel] == true
+    end,
+    reaches = function(channel, other)
+      return self.players[other] ~= nil and self.players[other].channels[channel] == true
+    end,
+    notify = function(event, subject)
+      player.events[#player.events + 1] = event
+      if event == "open" then
+        player.heard = subject
+      elseif event == "refused" then
+        player.refused = subject
+      end
+    end,
+  })
+  self.players[name] = player
+  self.order[#self.order + 1] = player
+  return player
+end
+
+function RoomWorld:Deliver()
+  local guard = 0
+  while #self.queue > 0 do
+    guard = guard + 1
+    assert(guard < 5000, "Message storm in a room")
+    local message = table.remove(self.queue, 1)
+    self.sent[#self.sent + 1] = message.from .. ">" .. (message.to or message.channel) .. " " .. message.text
+    for _, player in ipairs(self.order) do
+      local hears = message.to == player.name or (message.channel and player.channels[message.channel])
+      if hears and player.online then
+        player.rooms:Handle(message.from, message.text, message.channel)
+      end
+    end
+  end
+end
+
+--- Lets time pass, a quarter of a second at a time as the client would
+--- @param seconds number
+function RoomWorld:Run(seconds)
+  self:Deliver()
+  for _ = 1, math.ceil(seconds * 4) do
+    self.clock = self.clock + 0.25
+    for _, player in ipairs(self.order) do
+      if player.online then
+        player.rooms:Tick()
+      end
+    end
+    self:Deliver()
+  end
+end
+
+--- A room of Sketch that Alice opened for her guild, with Bob and Carol in it
+--- @return RoomWorld, table alice, table bob, table carol
+local function sketchRoom()
+  local world = RoomWorld.New()
+  local guild = { GUILD = true }
+  local alice, bob, carol = world:Add("Alice-Realm", guild), world:Add("Bob-Realm", guild), world:Add("Carol-Realm", guild)
+  local room = assert(alice.rooms:Open("sketch", "GUILD"))
+  world:Run(1)
+  for _, player in ipairs({ bob, carol }) do
+    equal(room.id, player.heard.id, "heard of the room")
+    assert(player.rooms:Join(room.id))
+    world:Run(2)
+  end
+  return world, alice, bob, carol
+end
+
+--- Starts the game and has whoever is to draw pick the first thing on offer
+--- @return table drawer, string word
+local function sketchRound(world, players)
+  local drawer
+  for _, player in ipairs(players) do
+    local room = player.rooms.room
+    equal("pick", room.state.phase, player.name .. " knows a round began")
+    if room.state.drawer == room.me then
+      drawer = player
+    end
+  end
+  drawer.Sketch.Choose(drawer.rooms.room, 1)
+  world:Run(1)
+  return drawer, drawer.rooms.room.state.word
+end
+
+local function scoresOf(player)
+  local scores = {}
+  for _, member in ipairs(player.rooms.room:Members()) do
+    scores[#scores + 1] = member.name:sub(1, 1) .. member.score
+  end
+  return table.concat(scores, " ")
+end
+
+local function pictureOf(player)
+  local lines = {}
+  for _, stroke in ipairs(player.rooms.room.state.strokes) do
+    lines[#lines + 1] = stroke.color .. stroke.width .. ":" .. table.concat(stroke.points, ",")
+  end
+  return table.concat(lines, " ")
+end
+
+function tests.RoomIsJoinedByWhoeverHearsOfIt()
+  local world, alice, bob, carol = sketchRoom()
+  for _, player in ipairs({ alice, bob, carol }) do
+    equal(3, player.rooms.room.count, player.name .. " knows who is there")
+    equal("Alice-Realm", player.rooms.room.host)
+  end
+  equal(2, bob.rooms.room.me)
+  equal(3, carol.rooms.room.me)
+  equal(false, bob.rooms.room.direct)
+
+  -- Somebody who logs in later asks what there is
+  local dave = world:Add("Dave-Realm", { GUILD = true })
+  assert(dave.rooms:Look())
+  world:Run(1)
+  equal(1, #dave.rooms:Known())
+  assert(dave.rooms:Join(dave.rooms:Known()[1].id))
+  world:Run(2)
+  equal(4, dave.rooms.room.count)
+  equal(4, carol.rooms.room.count)
+
+  carol.rooms:Leave()
+  world:Run(1)
+  equal(nil, carol.rooms.room)
+  equal(3, alice.rooms.room.count)
+  equal(3, dave.rooms.room.count)
+
+  alice.rooms:Leave()
+  world:Run(1)
+  equal(nil, alice.rooms.room)
+  equal(nil, bob.rooms.room, "the room goes with its host")
+  equal("shut", bob.events[#bob.events] == "closed" and "shut")
+end
+
+function tests.RoomTakesInvitedGuestsOnly()
+  local world, alice, bob = sketchRoom()
+  local id = alice.rooms.room.id
+  local erin, frank = world:Add("Erin-Realm"), world:Add("Frank-Realm")
+
+  -- Frank got hold of the room somehow, nobody asked him
+  frank.rooms:Handle("Alice-Realm", "1:ROOM:" .. id .. ":OPEN:sketch:1:G:0", nil)
+  assert(frank.rooms:Join(id))
+  world:Run(2)
+  equal(nil, frank.rooms.room)
+  equal("closed", frank.refused)
+
+  assert(alice.rooms:Invite("Erin-Realm"))
+  world:Run(1)
+  equal(true, erin.heard.invited)
+  assert(erin.rooms:Join(id))
+  world:Run(3)
+  equal(true, erin.rooms.room.direct, "a guest")
+  equal(4, erin.rooms.room.count)
+  equal(4, bob.rooms.room.count)
+
+  -- What the guest says reaches the guild through the host, and the other way round
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  local drawer = sketchRound(world, { alice, bob, erin })
+  equal(alice, drawer)
+  -- The host whispers a guest everything, which takes a moment longer than saying it once
+  world:Run(3)
+  equal("draw", erin.rooms.room.state.phase)
+  assert(erin.Sketch.Guess(erin.rooms.room, "a boat"))
+  assert(bob.Sketch.Guess(bob.rooms.room, "a goat"))
+  world:Run(2)
+  local function said(player)
+    local texts = {}
+    for _, entry in ipairs(player.rooms.room.state.feed) do
+      texts[#texts + 1] = entry.text
+    end
+    -- Two things said at the same moment are heard in one order here and in the other there
+    table.sort(texts)
+    return table.concat(texts, "|")
+  end
+  equal("a boat|a goat", said(bob))
+  equal("a boat|a goat", said(alice))
+  -- The guest hears their own guess at once and Bob's a moment later
+  equal("a boat|a goat", said(erin))
+end
+
+function tests.RoomSendsNoFasterThanTheClientAllows()
+  local world, alice = sketchRoom()
+  world:Run(20)
+  world.sent = {}
+  for index = 1, 20 do
+    alice.rooms.room:Say("G", "guess" .. index)
+  end
+  world:Deliver()
+  equal(6, #world.sent, "what goes out at once")
+  world:Run(10)
+  assert(#world.sent > 10 and #world.sent < 20, "the rest follows as the allowance does")
+  world:Run(30)
+  equal(20, #world.sent)
+end
+
+function tests.SketchRoundIsGuessedAndScored()
+  local world, alice, bob, carol = sketchRoom()
+  local everyone = { alice, bob, carol }
+  equal(false, (bob.Sketch.Start(bob.rooms.room)), "only the host starts")
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  local drawer, word = sketchRound(world, everyone)
+  equal(alice, drawer)
+  for _, player in ipairs(everyone) do
+    equal("draw", player.rooms.room.state.phase)
+  end
+  equal(nil, bob.rooms.room.state.word, "nobody is sent what it is")
+  assert(bob.Sketch.Hint(bob.rooms.room):match("^[_ ]+$"))
+  equal(false, (alice.Sketch.Guess(alice.rooms.room, word)), "whoever draws doesn't guess")
+
+  local ok, right = bob.Sketch.Guess(bob.rooms.room, "certainly not this")
+  equal(true, ok)
+  equal(false, right)
+  world:Run(1)
+  equal("certainly not this", carol.rooms.room.state.feed[#carol.rooms.room.state.feed].text)
+
+  -- However it is written
+  ok, right = carol.Sketch.Guess(carol.rooms.room, " " .. word:upper() .. "! ")
+  equal(true, right)
+  world:Run(1)
+  equal(true, alice.rooms.room.state.got[3])
+  equal(false, (carol.Sketch.Guess(carol.rooms.room, word)), "once is enough")
+  equal("draw", alice.rooms.room.state.phase, "Bob is still guessing")
+
+  ok, right = bob.Sketch.Guess(bob.rooms.room, word)
+  equal(true, right)
+  world:Run(1)
+  for _, player in ipairs(everyone) do
+    equal("over", player.rooms.room.state.phase, "everyone got it")
+    equal(word, player.rooms.room.state.word)
+    equal("A4 B8 C10", scoresOf(player))
+  end
+
+  world:Run(8)
+  for _, player in ipairs(everyone) do
+    equal("pick", player.rooms.room.state.phase)
+    equal(2, player.rooms.room.state.round)
+    equal(2, player.rooms.room.state.drawer, "Bob draws next")
+  end
+  equal(3, #bob.rooms.room.state.choices)
+  -- He doesn't pick, so he is given the first
+  world:Run(16)
+  equal("draw", carol.rooms.room.state.phase)
+  -- And nobody gets it in time
+  world:Run(82)
+  equal("over", carol.rooms.room.state.phase)
+  equal(bob.rooms.room.state.word, carol.rooms.room.state.word)
+  equal("A4 B8 C10", scoresOf(carol))
+
+  alice.Sketch.Stop(alice.rooms.room)
+  world:Run(1)
+  equal("idle", bob.rooms.room.state.phase)
+  world:Run(20)
+  equal("idle", bob.rooms.room.state.phase, "and it stays over")
+end
+
+function tests.SketchPictureArrivesAsItWasDrawn()
+  local world, alice, bob, carol = sketchRoom()
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  sketchRound(world, { alice, bob, carol })
+  local Sketch, room = alice.Sketch, alice.rooms.room
+
+  equal(false, bob.Sketch.Pen(bob.rooms.room, 1, 2, 10, 10), "only whoever draws draws")
+  equal(true, Sketch.Pen(room, 2, 2, 10, 10))
+  for step = 1, 150 do
+    Sketch.Draw(room, 10 + step * 3, 10 + step % 50)
+    if step % 40 == 0 then
+      -- It is sent while it is drawn, not when it is done
+      world:Run(1.25)
+    end
+  end
+  Sketch.Lift(room)
+  world:Run(3)
+  equal(1, #bob.rooms.room.state.strokes, "one line, however many messages it came in")
+  equal(302, #bob.rooms.room.state.strokes[1].points)
+  equal(pictureOf(alice), pictureOf(bob))
+  equal(pictureOf(alice), pictureOf(carol))
+
+  -- A dot, off the sheet: it is put on its edge
+  Sketch.Pen(room, 5, 3, 900, -4)
+  Sketch.Lift(room)
+  Sketch.Pen(room, 1, 1, 40, 40)
+  Sketch.Draw(room, 60, 80)
+  Sketch.Lift(room)
+  world:Run(3)
+  equal(3, #carol.rooms.room.state.strokes)
+  equal("53:511,0", pictureOf(carol):match(" (%S+) "))
+  equal(pictureOf(alice), pictureOf(carol))
+
+  Sketch.Undo(room)
+  world:Run(3)
+  equal(2, #bob.rooms.room.state.strokes)
+  equal(pictureOf(alice), pictureOf(bob))
+
+  -- Somebody comes in late and asks for the picture
+  local dave = world:Add("Dave-Realm", { GUILD = true })
+  dave.rooms:Look()
+  world:Run(1)
+  assert(dave.rooms:Join(room.id))
+  world:Run(12)
+  equal("draw", dave.rooms.room.state.phase)
+  equal(1, dave.rooms.room.state.drawer)
+  equal(pictureOf(alice), pictureOf(dave))
+  assert(dave.Sketch.TimeLeft(dave.rooms.room) < 80, "with the time that is left")
+
+  Sketch.Clear(room)
+  Sketch.Pen(room, 3, 1, 5, 5)
+  Sketch.Draw(room, 9, 9)
+  Sketch.Lift(room)
+  world:Run(3)
+  equal("31:5,5,9,9", pictureOf(dave))
+  equal(pictureOf(alice), pictureOf(bob))
+end
+
+function tests.SketchSkipsWhoeverIsNotThere()
+  local world, alice, bob, carol = sketchRoom()
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  sketchRound(world, { alice, bob, carol })
+  world:Run(82)
+  equal("over", carol.rooms.room.state.phase)
+
+  -- Bob's client is gone without a word, and it is his turn
+  bob.online = false
+  world:Run(8)
+  equal(2, carol.rooms.room.state.drawer)
+  equal("pick", carol.rooms.room.state.phase)
+  world:Run(25)
+  equal("over", carol.rooms.room.state.phase, "the host gives up on him")
+  world:Run(8)
+  equal(3, carol.rooms.room.state.round)
+  equal(3, carol.rooms.room.state.drawer)
+  -- And doesn't ask him again while he says nothing
+  carol.Sketch.Choose(carol.rooms.room, 2)
+  world:Run(82)
+  world:Run(8)
+  equal(4, alice.rooms.room.state.round)
+  equal(1, alice.rooms.room.state.drawer)
+
+  -- Whoever draws leaves in the middle of it
+  alice.Sketch.Choose(alice.rooms.room, 1)
+  world:Run(82)
+  world:Run(8)
+  equal(3, alice.rooms.room.state.drawer)
+  carol.Sketch.Choose(carol.rooms.room, 1)
+  world:Run(1)
+  carol.rooms:Leave()
+  world:Run(1)
+  equal("over", alice.rooms.room.state.phase)
+end
+
+function tests.PartyWindowShowsARoomBigAndSmall()
+  local world, alice, bob = sketchRoom()
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } }, printed = {} }
+  function ForeverGames:Print(text)
+    self.printed[#self.printed + 1] = text
+  end
+  local private = alice.private
+  private.ICON = "icon"
+  private.rooms = alice.rooms
+  private.Transport = {
+    DisplayName = function(name)
+      return name
+    end,
+  }
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/Party.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local Party = private.Party
+  Party.Open()
+  equal(true, Party.IsOpen())
+
+  Client.Button("sketch_start"):Fire("OnClick")
+  world:Run(1)
+  Party.Refresh()
+  equal("pick", bob.rooms.room.state.phase)
+  local word = alice.rooms.room.state.choices[2]
+  Client.Button(word):Fire("OnClick")
+  world:Run(1)
+  Party.Refresh()
+  equal(word, alice.rooms.room.state.word)
+
+  -- The sheet is the one thing on screen that takes the mouse down and watches it move
+  local sheets = Client.Find(function(widget)
+    return widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget.scripts.OnMouseUp and widget:IsVisible()
+  end)
+  equal(1, #sheets)
+  local sheet = sheets[1]
+  local scale = sheet.width / 512
+  Client.cursor, Client.mouseDown = { 100 * scale, sheet.height - 50 * scale }, true
+  sheet:Fire("OnMouseDown", "LeftButton")
+  Client.cursor = { 200 * scale, sheet.height - 150 * scale }
+  sheet:Fire("OnUpdate", 0.02)
+  Client.mouseDown = false
+  sheet:Fire("OnUpdate", 0.02)
+  world:Run(2)
+  equal("12:100,50,200,150", pictureOf(alice))
+  equal("12:100,50,200,150", pictureOf(bob))
+
+  -- Made small while it is the player's turn to draw it stays small: they asked
+  Client.Button("-"):Fire("OnClick")
+  equal(true, ForeverGames.db.profile.party.mini)
+  Party.Refresh()
+  assert(Client.Button("+"), "the way back")
+  world:Run(90)
+  Party.Refresh()
+  equal(2, alice.rooms.room.state.drawer)
 end
 
 -----------------------------

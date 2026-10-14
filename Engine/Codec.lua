@@ -18,6 +18,10 @@
 --   MOV:id:n:total:entry                  entry n of the match log, sender has `total` entries
 --   ACK:id:n                              sender has n log entries
 --   SYN:id:n                              sender has n log entries and wants whatever it is missing
+--   In a game played together (GameDefinition.together) each of the three ends with one more
+--   field, a number that stands for the log up to there (Match.Digest): the entries before
+--   entry n for MOV, the n entries for ACK and SYN. There an ACK also answers an entry rather
+--   than counting them all: the sender has the same first n entries
 --   ASK:id:game:gameVersion               ask whoever linked a game in chat to play it. The id is
 --                                         the asker's, and what the challenge that answers it is
 --                                         called. A DEC with that id says there is no such game
@@ -47,6 +51,7 @@ Codec.MAX_LENGTH = 255
 --- @field n number?
 --- @field total number?
 --- @field entry string?
+--- @field digest number? What the sender's log comes to up to where the message is about, in a game played together
 
 local FIELD = "^[%w%-%+%.=!_]+$"
 
@@ -154,11 +159,13 @@ function Codec.Decode(text)
     message.n = toCount(fields[4])
     message.total = toCount(fields[5])
     message.entry = fields[6]
+    message.digest = toCount(fields[7])
     if not message.n or message.n < 1 or not message.total or not Codec.IsSafeField(message.entry) then
       return nil
     end
   elseif messageType == "ACK" or messageType == "SYN" then
     message.n = toCount(fields[4])
+    message.digest = toCount(fields[5])
     if not message.n then
       return nil
     end

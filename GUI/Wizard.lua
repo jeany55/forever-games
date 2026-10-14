@@ -12,6 +12,8 @@
 -- set goes on to the second step all the same, with only those on it.
 -- A game for two doesn't need anyone picked either: it can be linked in chat instead, and is
 -- then played with whoever clicks the link first.
+-- A game that can be played alone or with others has the players to pick like any other, and is
+-- played alone when nobody is.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -142,7 +144,9 @@ end
 --- @param name string
 local function choose(name)
   if mostOpponents() == 1 then
-    chosenPlayers = { name }
+    -- Where the game can be played alone, picking them again lets them go
+    local again = chosenPlayers[1] == name and Games.CanSeat(chosenGame, 1)
+    chosenPlayers = again and {} or { name }
     return
   end
   local index = chosenIndex(name)
@@ -845,7 +849,8 @@ local function refreshRules()
   rules.description:SetText(chosenGame.description or "")
 
   -- Seats are only for the asking between two, a crowd draws them
-  local seated = not Games.IsSolo(chosenGame) and #opponents() <= 1 and Games.CanSeat(chosenGame, 2)
+  -- and where there are no turns there is no going first either
+  local seated = not Games.IsSolo(chosenGame) and not chosenGame.together and #opponents() <= 1 and Games.CanSeat(chosenGame, 2)
   local lines = {}
   if seated then
     lines[1] = seatLine()
@@ -1108,7 +1113,13 @@ refresh = function()
   local names = opponents()
   local ready = Games.CanSeat(chosenGame, #names + 1)
   panel.sendButton:SetEnabled(ready)
-  if ready then
+  if ready and #names == 0 then
+    -- Nobody picked, and the game doesn't need anyone
+    panel.sendButton:SetText(L["wizard_play_alone"])
+    panel.summary:SetText(L["wizard_summary_alone"]:format(chosenGame.name))
+  elseif ready and chosenGame.together then
+    panel.summary:SetText(L["with_players"]:format(chosenGame.name, listed(names)))
+  elseif ready then
     panel.summary:SetText(L[#names > 1 and "with_players" or "wizard_summary"]:format(chosenGame.name, listed(names)))
   elseif #names == 0 then
     panel.summary:SetText(L["wizard_pick_someone"])

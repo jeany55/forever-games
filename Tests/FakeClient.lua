@@ -200,7 +200,7 @@ function methods:GetVerticalScroll()
   return self.scroll
 end
 
-for _, name in ipairs({ "CreateTexture", "CreateFontString", "CreateAnimationGroup", "CreateAnimation", "CreateLine" }) do
+for _, name in ipairs({ "CreateTexture", "CreateMaskTexture", "CreateFontString", "CreateAnimationGroup", "CreateAnimation", "CreateLine" }) do
   methods[name] = function(self)
     return newWidget(name:sub(7), self)
   end

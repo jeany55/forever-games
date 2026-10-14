@@ -13,12 +13,16 @@
 --              where it is the first entry and nothing can be played before it. Two players
 --              don't need it: there the game is on as soon as the one challenge is accepted
 --   !r<seat>   the seat resigns. With more than two playing the others carry on without them,
---              until only one is left
+--              until only one is left. In a game played together they carry on down to the last
 --   !d<seat>   the seat offers a draw. Only on their own turn, and it stands until the opponent
 --              answers it by moving, which turns it down. Only in matches of two
 --   !a<seat>   the seat accepts the opponent's draw offer, on their own turn
 -- Everything but a resignation is appended by the player whose turn it is (the start by whoever
 -- set the match up), so the clients can't all be adding to the log at the same moment.
+--
+-- A game played together (GameDefinition.together) has no turns to say whose a move is, so there
+-- the seat is written in front of it: "2cfk" is seat 2 playing "cfk". And there the clients do
+-- add to the log at the same moment, which the session sorts out (Session:onMoveTogether).
 --
 -- A match of one is a game the player plays alone. Its log never leaves the client, which is
 -- what lets a move be taken back: the log is cut short by an entry (Match.Truncate).
@@ -58,6 +62,7 @@ local _, private = ...
 --- @field winner number Seat of the winner, 0 for a draw
 --- @field reason "win"|"draw"|"resign"
 --- @field detail string? How the game says it ended, e.g. "checkmate"
+--- @field all boolean? Nobody won over anybody: the players were on the same side and made it together
 
 --- What a log entry did. Games add their own fields to moves, see GameDefinition.apply.
 --- @class MatchEvent
@@ -194,11 +199,14 @@ local function step(game, replay, entry)
       replay.out[seat] = true
       replay.left = replay.left - 1
       replay.events[#replay.events + 1] = { kind = "resign", seat = seat }
-      if replay.left > 1 then
-        game.drop(replay.state, seat)
+      -- A game played together isn't won by being the last one in it: whoever is left plays on
+      if replay.left > 1 or (game.together and replay.left > 0) then
+        if game.drop then
+          game.drop(replay.state, seat)
+        end
         local result = game.result(replay.state)
         if result then
-          replay.result = { winner = result.winner, reason = result.winner == 0 and "draw" or "win", detail = result.detail }
+          replay.result = { winner = result.winner, reason = result.winner == 0 and "draw" or "win", detail = result.detail, all = result.all }
         end
         return true
       end
@@ -235,18 +243,26 @@ local function step(game, replay, entry)
     return false, "invalid_move"
   end
 
-  local seat = game.turn(replay.state)
+  local seat, move
+  if game.together then
+    seat, move = tonumber(entry:sub(1, 1)), entry:sub(2)
+    if not seat or seat < 1 or seat > replay.seats or move == "" then
+      return false, "invalid_move"
+    end
+  else
+    seat, move = game.turn(replay.state), entry
+  end
   if replay.out[seat] then
     return false, "invalid_move"
   end
-  local ok, err = game.validate(replay.state, seat, entry)
+  local ok, err = game.validate(replay.state, seat, move)
   if not ok then
     return false, err or "invalid_move"
   end
 
   -- Every move stirs what the dice come from, the one being made included
   replay.chance = private.Random.Stir(replay.chance, entry)
-  local event = game.apply(replay.state, seat, entry, private.Random.New(replay.chance)) or {}
+  local event = game.apply(replay.state, seat, move, private.Random.New(replay.chance)) or {}
   event.kind, event.seat = "move", seat
   replay.events[#replay.events + 1] = event
   if replay.offer and replay.offer ~= seat then
@@ -256,7 +272,7 @@ local function step(game, replay, entry)
 
   local result = game.result(replay.state)
   if result then
-    replay.result = { winner = result.winner, reason = result.winner == 0 and "draw" or "win", detail = result.detail }
+    replay.result = { winner = result.winner, reason = result.winner == 0 and "draw" or "win", detail = result.detail, all = result.all }
   end
   return true
 end
@@ -273,7 +289,7 @@ local function newReplay(match, game)
     events = {},
     -- A match started before the game learned about draws is played out the way it started, the
     -- opponent may still be on the version that doesn't know them
-    draws = game.draws == true and match.gameVersion == game.version and seats == 2,
+    draws = game.draws == true and not game.together and match.gameVersion == game.version and seats == 2,
     seats = seats,
     host = match.host,
     -- Only a crowd has to be gathered first
@@ -429,7 +445,16 @@ function Match.IsOut(match, seat)
   return replay ~= nil and replay.out[seat] == true
 end
 
---- Seat that moves next, nil once the game is over
+--- Whether the match is of a game without turns, where everyone moves whenever they like
+--- @param match Match
+--- @return boolean
+function Match.IsTogether(match)
+  local game = private.Games.Get(match.game)
+  return game ~= nil and game.together == true
+end
+
+--- Seat that moves next, nil once the game is over and in a game played together, where it is
+--- nobody's turn in particular
 --- @param match Match
 --- @return number?
 function Match.Turn(match)
@@ -437,13 +462,50 @@ function Match.Turn(match)
   if not replay or replay.result or match.status ~= "active" or not replay.started then
     return nil
   end
-  return private.Games.Get(match.game).turn(replay.state)
+  local game = private.Games.Get(match.game)
+  if game.together then
+    return nil
+  end
+  return game.turn(replay.state)
 end
 
 --- @param match Match
 --- @return boolean
 function Match.IsMyTurn(match)
   return Match.Turn(match) == match.me
+end
+
+--- Whether the local player may move right now: on their turn, and at any time in a game played
+--- together
+--- @param match Match
+--- @return boolean
+function Match.CanMove(match)
+  if not Match.IsTogether(match) then
+    return Match.IsMyTurn(match)
+  end
+  local replay = replayOf(match)
+  return match.status == "active" and replay.started and not replay.result and not replay.out[match.me]
+end
+
+--- How a move of the local player is written in the log
+--- @param match Match
+--- @param move string
+--- @return string
+function Match.MoveEntry(match, move)
+  return Match.IsTogether(match) and match.me .. move or move
+end
+
+--- A number that stands for the first `count` entries of the log: two logs that give the same one
+--- begin the same way. How the players of a game played together find out that they don't
+--- @param match Match
+--- @param count number
+--- @return number
+function Match.Digest(match, count)
+  local digest = private.Random.Seed(match.id)
+  for index = 1, count do
+    digest = private.Random.Stir(digest, match.log[index])
+  end
+  return digest
 end
 
 --- Validates an entry against the current state and appends it to the log

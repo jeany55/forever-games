@@ -5,7 +5,8 @@ your own pace. Make a move, go pull a boss, come back later.
 
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
 Chinese Checkers, which is for up to six, and Crazy Eights, which is too. And Solitaire, Minesweeper
-Sudoku and 2048, for when nobody is around.
+Sudoku, 2048 and Warcraftstein 3D, for when nobody is around. And Fourtiles, a word puzzle to
+solve on your own or the two of you together, both at once.
 
 ## Usage
 
@@ -24,10 +25,24 @@ Sudoku and 2048, for when nobody is around.
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
+- A game that can be played alone or together, like Fourtiles, is played alone if you pick
+  nobody: **Play Alone**. Played together it has no turns. Both of you play whenever you like,
+  online together or not, and what each of you did is put together when you next meet
 - A game for two doesn't need anyone picked: **Link in Chat** puts `[Forever Games: Chess]` where
   you type, to send to your party, your guild or anyone else. Everyone with the addon sees it
   as a link, and the first to click it plays you, by the rules you set. The game stays open for
   an hour
+- **Party games** on the front page, or `/fg party`, opens the window of the games that are played
+  in a room by whoever turns up. Open a room for your guild, for the group you are in, or for
+  nobody but the players you invite. Everyone on that channel with the addon is told, and can
+  come and go while the room lasts. Whoever opened it can type a name to ask in a friend who
+  isn't in the guild or the group, a few of them at most. The room is gone when its host leaves,
+  and nothing of it is kept. The small button in the corner of the window makes it small enough
+  to sit in a corner while you do something else: it shows only the game, and grows again when
+  the game needs you
+- **Sketch** is the first of them: one of you is given three things to pick from and draws one,
+  everyone else types what they think it is. The sooner you get it the more it is worth, and
+  whoever drew gets something for everyone who did
 - A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
   One with something to set up, like how hard Minesweeper is, asks for that first, and
   `/fg play` goes by what you said last.
@@ -46,6 +61,12 @@ Sudoku and 2048, for when nobody is around.
 - In Chinese Checkers, click a marble and then one of the marked holes: every hole it can hop
   its way to is marked, however many hops that takes. Your own corner of the star is at the
   bottom, and the list next to the board says who plays which colour and whose turn it is
+- In Fourtiles, click one to four of the twenty tiles to spell a word and press **Enter**. A
+  word is worth 1, 2, 4 or 8 points by how many tiles it takes, and the five words the tiles
+  were cut from, the Fourtiles, are worth 40 more once you have them all. **Shuffle** lays the
+  tiles out another way. With the five found and the rank of Master reached, at 100 points,
+  **Call It Done** ends the game, and until then there are more words to find. The keys work
+  while the cursor is over the game: Enter, Backspace, and Space to shuffle
 - In Backgammon the dice are rolled for you. Click a checker and then where it goes, or drag it:
   the points it can reach are marked, by one die or by both. Put your turn together a checker at
   a time, **Undo** or a right click takes the last one back, and nothing is sent until you
@@ -85,6 +106,17 @@ Sudoku and 2048, for when nobody is around.
   square, which are tidied away as the digits they are about get written. **Hint** fills in
   the square you are on, though a game with a hint in it doesn't count for your best time.
   The keys are only the game's while the cursor is over it, and never in combat
+- Warcraftstein 3D is a maze you stand in: find the portal that leads out of it and walk into
+  it, before the kobolds that live there get you. You go in as the class of the character you
+  are on (press space), or as any other you pick: each strikes its own way, from a warrior's
+  sword to a mage's fireballs, and can do one thing more, from a rogue's stealth to a shaman's
+  totem. Hold W and S or the up and down arrows to walk, A and D or the left and right arrows
+  to turn, Q and E to step sideways, space to strike and F for what your class can do, with the
+  cursor over the game. With the cursor anywhere else the maze stands still. Potions on the
+  floor are drunk by walking over them, red for health and blue for mana, rage or energy. The letter at the top says
+  which way you are looking, and the walls are built differently in different parts of the
+  maze. Pick how big it is when you set the game up, your best time for every size is kept.
+  Where you are isn't: a maze you come back to after logging out begins at the start again
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -126,6 +158,10 @@ nothing: that catches mistakes in what the window does, not in how it looks.
   - `Match.lua` a match is its players and a log of moves, state is derived by replaying it
   - `Session.lua` challenges, moves, retries and resync, between two players or among several
   - `Presence.lua` who is online with the addon
+  - `Rooms.lua` rooms for the games played by whoever turns up: who is in one, what is said in
+    it on a guild or group channel, guests the host passes everything on to and from, and a
+    queue that keeps it all under what the client lets an addon send. Nothing like a match:
+    no log, nothing sent again, nothing kept. `Games/Sketch.lua` is the game to copy from
 - `Games/` one file per game: its rules and its view
 - `Transport.lua` addon messages, lockdown and online/offline detection
 - `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
@@ -155,6 +191,9 @@ nothing: that catches mistakes in what the window does, not in how it looks.
     into it, squares washed in a colour, a frame around the one the player is on, figures that
     pop in, squares that shake their head or light up one after the other. With it a pad of
     keys to write with, which say something small about themselves and can be dimmed or on
+  - `Canvas.lua` a sheet to draw on with the mouse and to show a drawing on, at any size: lines
+    in a handful of colours and widths, drawn over each other in the order they were made
+  - `Party.lua` the window a room is played in, whole or small enough for a corner
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`
@@ -185,6 +224,11 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
   halves and nothing else: there is no challenge, it is always seat 1's turn and no move is
   ever sent. With `undo = true` the window lets moves be taken back, and `progress(state)` is
   a few words on how it is going for where other games say whose turn it is
+- **Together**: a game with `together = true` has no turns and no `turn`. Everyone moves whenever
+  they like, also while the others are offline, and `view.canMove` is true for as long as the
+  game lasts. What the players did at the same moment, or apart, ends up one after the other in
+  some order, so `validate` and `apply` must come out right whichever it is, and a move that is
+  no longer legal by the time its turn comes (somebody else got there first) is dropped
 - **View**: `createView(stage)` builds the game's widgets in the frame it is given and returns an
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
   played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
@@ -220,6 +264,12 @@ and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everythin
 `Games/Sudoku.lua` is played on a grid of numbers
 (`GUI/NumberGrid.lua`). It makes its own puzzles, which takes a solver that has to be quick: a
 game is put together again from its moves every time it is loaded, so `newState` runs often.
+`Games/Fourtiles.lua` is played alone or by two together, with no turns (`together`), and has
+its puzzles made ahead of time by a tool.
+`Games/Warcraftstein.lua` isn't played in moves at all: its view walks the player through a maze
+many times a second and draws what they see a column at a time, the kobolds in it included, and
+the engine only ever hears who went in, and that the way out was found or that they died
+looking. What a class is in there is a table of numbers at the top of the file (`CLASSES`).
 
 The round pieces, the star Chinese Checkers is played on and the icons of the games played with
 them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
@@ -228,7 +278,9 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 (a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
-The icon of Sudoku is drawn by `Tools/make_sudoku.py`.
+The puzzles of Fourtiles and its icon are made by `Tools/make_fourtiles.py`.
+The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls of Warcraftstein 3D,
+everything that stands between them and its icon by `Tools/make_warcraftstein.py`.
 
 ## Credits
 
@@ -238,3 +290,6 @@ by Zulban, used under CC BY-SA 4.0. See `Images/Chess/README.md`.
 The playing cards, the dice and the sounds are from the
 Boardgame Pack by [Kenney](https://www.kenney.nl), released into the public
 domain (CC0).
+
+The words the puzzles of Fourtiles are cut from were picked with the help of
+[SCOWL](http://wordlist.aspell.net) by Kevin Atkinson, whose lists say how common a word is.

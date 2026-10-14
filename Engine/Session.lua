@@ -24,6 +24,14 @@
 -- A match that has been waiting on someone for a long time checks in with them now and then,
 -- which is how it comes out that they never got the move, or no longer have the match at all.
 --
+-- A game played together has no turns, so its players do add to the log at the same moment, and
+-- go on adding to it while they can't reach each other. Nothing of that is thrown away. Between
+-- any two of them it is the log of the lower seat that stands: the other takes it an entry at a
+-- time, and puts whatever it had there instead back on top, as far as that is still legal. And
+-- since logs that part ways are nothing unusual there, the players don't take each other's word
+-- for how much they have in common: every count comes with a number that stands for the log up
+-- to there, and they start over from the beginning when those differ. See Session:onMoveTogether.
+--
 -- A game for one is a match like any other with nobody else in it: there is no challenge, it is
 -- never anyone's turn but the player's, and nothing about it is ever sent. It doesn't count as
 -- waiting on the player either, a game nobody else is in can wait for as long as it likes.
@@ -60,6 +68,7 @@ local _, private = ...
 --- @field offered table<string, table<number, number>> Highest log entry already on its way to each seat, by match id
 --- @field gathering table<string, table> Challenges that have yet to say who everyone playing is, by match id
 --- @field checkedIn table<string, number> When the player a match is waiting on was last asked how much of it they have, by match id
+--- @field mended table<string, table<number, number>> When a log that had parted ways with a seat's without it showing was last set right from the start, by match id
 --- @field asked table<string, { host: string, game: string, expires: number }> Games the player asked for by clicking a link and hasn't heard about yet, by the id they gave them
 local Session = {}
 Session.__index = Session
@@ -92,7 +101,7 @@ function Session.New(env)
   end
   env.records = env.records or {}
   env.offers = env.offers or {}
-  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, asked = {} }, Session)
+  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, mended = {}, asked = {} }, Session)
 end
 
 -----------------------------
@@ -117,6 +126,20 @@ end
 --- @return boolean
 function Session:send(match, seat, type, ...)
   return self.env.send(match.players[seat], Codec.Encode(type, match.id, ...))
+end
+
+--- Tells a player how many log entries there are here, or how many of theirs. In a game played
+--- together that comes with what the log is up to there, see Match.Digest
+--- @param match Match
+--- @param seat number
+--- @param type "ACK"|"SYN"
+--- @param count number
+--- @return boolean
+function Session:sendCount(match, seat, type, count)
+  if Match.IsTogether(match) then
+    return self:send(match, seat, type, count, Match.Digest(match, count))
+  end
+  return self:send(match, seat, type, count)
 end
 
 --- Seats of the players who are sent what happens in a match
@@ -164,8 +187,9 @@ function Session:pushLog(match, seat, restart)
     first = math.max(first, offered[seat] or 0)
   end
   local last = math.min(#match.log, stretchEnd(match, seen))
+  local together = Match.IsTogether(match)
   for n = first + 1, last do
-    if not self:send(match, seat, "MOV", n, #match.log, match.log[n]) then
+    if not self:send(match, seat, "MOV", n, #match.log, match.log[n], together and Match.Digest(match, n - 1) or nil) then
       return false
     end
     offered[seat] = n
@@ -608,13 +632,13 @@ function Session:Move(id, move)
   if not match or match.status ~= "active" then
     return false, "no_match"
   end
-  if not Match.IsMyTurn(match) then
+  if not Match.CanMove(match) then
     return false, "not_your_turn"
   end
   if type(move) ~= "string" or move:sub(1, 1) == "!" then
     return false, "invalid_move"
   end
-  return self:appendOwn(id, move)
+  return self:appendOwn(id, Match.MoveEntry(match, move))
 end
 
 --- @param id string
@@ -826,7 +850,7 @@ function Session:Flush(force)
         if match.status == "outgoing" then
           self:sendInvite(match, seat)
         else
-          if sync[seat] and self:send(match, seat, "SYN", #match.log) then
+          if sync[seat] and self:sendCount(match, seat, "SYN", #match.log) then
             sync[seat] = nil
           end
           self:pushLog(match, seat, true)
@@ -1056,15 +1080,18 @@ end
 --- @param seat number Who it came from
 --- @param n number
 function Session:arrived(match, seat, n)
-  -- Whoever sent it is taken to be sending it to everyone else too
-  for _, other in ipairs(Match.Others(match)) do
-    match.seen[other] = math.max(match.seen[other] or 0, n)
+  -- Whoever sent it is taken to be sending it to everyone else too. Not in a game played
+  -- together: where it ends up in their logs is another matter there
+  if not Match.IsTogether(match) then
+    for _, other in ipairs(Match.Others(match)) do
+      match.seen[other] = math.max(match.seen[other] or 0, n)
+    end
   end
   match.seen[seat] = n
 
   local event = eventFor(match, match.log[n])
   -- With more than two playing, most moves leave it someone else's turn: those aren't news
-  local news = #match.players == 2 or event ~= "moved" or Match.IsMyTurn(match)
+  local news = #match.players == 2 or event ~= "moved" or Match.CanMove(match)
   self:touch(match, event, news)
 end
 
@@ -1173,6 +1200,147 @@ function Session:onCount(match, seat, message, wantsReply)
     self:send(match, seat, "ACK", length)
   elseif message.n > length then
     self:send(match, seat, "SYN", length)
+  end
+  self.env.notify("changed", match)
+end
+
+--- The log of a game played together turned out to differ from another player's somewhere
+--- before the place a message of theirs was about. Where isn't known, so the one whose log gives
+--- way is sent the other from the start, or from as far as they were last known to agree: the
+--- entry they part ways at shows up on the way. Once in a while is enough, everything else that
+--- was already on its way would only say the same again.
+--- @param match Match
+--- @param seat number
+function Session:mend(match, seat)
+  local mended = self.mended[match.id] or {}
+  self.mended[match.id] = mended
+  local now = self.env.now()
+  if mended[seat] and now - mended[seat] < RETRY_BASE then
+    return
+  end
+  mended[seat] = now
+
+  if seat < match.me then
+    self:sendCount(match, seat, "SYN", 0)
+    return
+  end
+  if (match.seen[seat] or 0) >= #match.log then
+    -- They were taken to have all of it
+    match.seen[seat] = 0
+  end
+  self:pushLog(match, seat, true)
+end
+
+--- An entry of a game played together arrived. See the top of the file for how logs that were
+--- added to at the same moment, or while the players couldn't reach each other, become one.
+--- @param match Match
+--- @param seat number Who it came from
+--- @param message Message
+function Session:onMoveTogether(match, seat, message)
+  self:markAccepted(match, seat)
+  if match.status ~= "active" and match.status ~= "finished" then
+    return
+  end
+
+  local n, entry = message.n, message.entry
+  local length = #match.log
+  if n > length + 1 then
+    self:sendCount(match, seat, "SYN", length)
+    return
+  end
+  if message.digest ~= Match.Digest(match, n - 1) then
+    self:mend(match, seat)
+    return
+  end
+  -- Everything before the entry is the same here and there
+  match.seen[seat] = math.max(match.seen[seat] or 0, n - 1)
+
+  local answer = #match.players == 2 or n == message.total or n % PUSH_LIMIT == 0
+  if n == length + 1 then
+    if Match.Append(match, entry) then
+      self:arrived(match, seat, n)
+      if answer then
+        self:sendCount(match, seat, "ACK", n)
+      end
+    end
+    return
+  end
+
+  if match.log[n] == entry then
+    match.seen[seat] = math.max(match.seen[seat], n)
+    if answer then
+      self:sendCount(match, seat, "ACK", n)
+    end
+    return
+  end
+
+  if seat > match.me then
+    -- This log stands and they have yet to find out what it has here. It is on its way, or will
+    -- be when it is next tried again
+    match.seen[seat] = n - 1
+    self:pushLog(match, seat)
+    return
+  end
+
+  -- Theirs stands. What was here from this entry on goes back on top of it: it was played without
+  -- knowing of theirs, and only what theirs has made illegal is lost
+  local previous = {}
+  for i = n, length do
+    previous[#previous + 1] = match.log[i]
+  end
+  Match.Truncate(match, n - 1)
+  self.offered[match.id] = nil
+  for _, other in ipairs(Match.Others(match)) do
+    match.seen[other] = math.min(match.seen[other] or 0, n - 1)
+  end
+  local taken = Match.Append(match, entry)
+  if taken then
+    match.seen[seat] = n
+  end
+  for _, old in ipairs(previous) do
+    Match.Append(match, old)
+  end
+  self:touch(match, eventFor(match, entry), true)
+  if taken and answer then
+    self:sendCount(match, seat, "ACK", n)
+  end
+  if n >= message.total then
+    -- That was all they had. Before that, every entry of theirs still to come would only send
+    -- what is on top back down again
+    self:pushAll(match)
+  end
+end
+
+--- A player of a game played together told us how many entries they have, or how many of ours
+--- @param match Match
+--- @param seat number
+--- @param message Message
+--- @param wantsReply boolean
+function Session:onCountTogether(match, seat, message, wantsReply)
+  self:markAccepted(match, seat)
+  if match.status ~= "active" and match.status ~= "finished" then
+    return
+  end
+
+  local length = #match.log
+  if message.n > length then
+    -- More than there is here, so there is no telling whether it begins the same way. They can
+    -- tell from what there is here
+    self:sendCount(match, seat, wantsReply and "ACK" or "SYN", length)
+  elseif message.digest ~= Match.Digest(match, message.n) then
+    self:mend(match, seat)
+  else
+    if wantsReply then
+      match.seen[seat] = message.n
+    else
+      -- Answers to entries come one by one and not always in order
+      match.seen[seat] = math.max(match.seen[seat] or 0, message.n)
+    end
+    if message.n < length then
+      self:pushLog(match, seat, wantsReply)
+    elseif wantsReply then
+      self:sendCount(match, seat, "ACK", length)
+    end
   end
   self.env.notify("changed", match)
 end
@@ -1301,8 +1469,16 @@ function Session:Receive(sender, text)
   elseif message.type == "DEC" then
     self:onDecline(match, seat, message)
   elseif message.type == "MOV" then
-    self:onMove(match, seat, message)
+    if Match.IsTogether(match) then
+      self:onMoveTogether(match, seat, message)
+    else
+      self:onMove(match, seat, message)
+    end
   elseif message.type == "ACK" or message.type == "SYN" then
-    self:onCount(match, seat, message, message.type == "SYN")
+    if Match.IsTogether(match) then
+      self:onCountTogether(match, seat, message, message.type == "SYN")
+    else
+      self:onCount(match, seat, message, message.type == "SYN")
+    end
   end
 end
