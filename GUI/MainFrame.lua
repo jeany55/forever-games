@@ -1,16 +1,17 @@
 --------------------------
 --  Main window
 --------------------------
--- A header saying who is around to play and a New Game button, then the player's games on the
--- left and the selected one on the right. The window knows nothing about any particular game:
--- it gives the game's view a stage to draw on and tells it which position to show. What every
--- game shares is built here around that stage: the status line, resigning and draw offers, the
--- list of moves and stepping back through them. A game the player plays alone has no opponent
--- to name and nobody to wait for: it can be given up or started again at any time, and a move
--- can be taken back where the game allows it.
+-- The window opens on its front page: the logo, who is around to play, a way to start a game
+-- and a way back into one, and the player's games, with a challenge answered right there. A
+-- game that is picked takes the whole window, and has a way back to the front page. The window
+-- knows nothing about any particular game: it gives the game's view a stage to draw on and
+-- tells it which position to show. What every game shares is built here around that stage: the
+-- status line, resigning and draw offers, the list of moves and stepping back through them. A
+-- game the player plays alone has no opponent to name and nobody to wait for: it can be given
+-- up or started again at any time, and a move can be taken back where the game allows it.
 --
--- The window can be resized, and "focus" hides everything but the selected game. Either way the
--- stage is given whatever room is left and the game's view lays itself out in it.
+-- The window can be resized. The stage is given whatever room there is and the game's view
+-- lays itself out in it.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -26,11 +27,50 @@ local MainFrame = {}
 private.MainFrame = MainFrame
 
 local MIN_WIDTH, MIN_HEIGHT = 764, 560
-local LIST_WIDTH = 244
-local ROW_HEIGHT = 54
+local ROW_HEIGHT = 46
+-- The games on the front page: no wider than this however wide the window is, and how wide the
+-- buttons a game has there are
+local LIST_WIDTH, ROW_BUTTON_WIDTH = 620, 84
 -- Space between the window's edge and what is in it, and between the panels
 local INSET, GAP = 14, 8
-local HEADER_TOP, HEADER_HEIGHT = 32, 50
+-- The logo is wider than it is high, and stretched into a square texture: see Tools/make_logo.py,
+-- which also makes the light and the line the page it is on is dressed with
+local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\"
+local LOGO_HEIGHT, LOGO_ASPECT = 200, 1.591
+-- With games to list under it the logo makes room: the share of the page's height it gets, and
+-- how small it may become
+local LOGO_SHARE, LOGO_SMALLEST = 0.27, 110
+-- And how far under the top of the page it is then
+local LOGO_TOP = 6
+-- The two big buttons on the front page, and the space between them
+local HOME_BUTTON_WIDTH, HOME_BUTTON_GAP = 200, 24
+-- The blue the logo glows with
+local LOGO_BLUE = { 0.16, 0.55, 1 }
+-- Where the middle line of the logo's infinity sign runs, measured on the picture: how far under
+-- the middle of the logo its crossing is, and how far its loops reach sideways and up and down,
+-- as fractions of the logo's width and height
+local LOOP_DROP, LOOP_REACH, LOOP_RISE = 0.245, 0.189, 0.082
+-- The wisp that drifts around it: seconds for a lap, how many lights its tail is made of and
+-- how many seconds each is behind the one before, and how many motes it sheds and how long
+-- each lasts
+local WISP_LAP, WISP_TAIL, WISP_GAP = 4.5, 24, 0.03
+-- How often where the wisp is gets remembered, for its tail to be where it was
+local WISP_STEP = 0.015
+-- The tail stays clear of the wisp, so the two are told apart: how far from the middle of the
+-- wisp it is gone altogether, and how much further out it is all there
+local WISP_CLEAR, WISP_CLEAR_FADE = 15, 9
+-- The tail is a pale thread with a blue light around it. The thread is drawn over the logo
+-- rather than added to it, or it would be lost on the gold and on the blue alike
+local WISP_THREAD = { 0.88, 0.97, 1 }
+local WISP_MOTES, WISP_MOTE_LIFE = 8, 1.4
+local WISP_CORE, WISP_HALO, WISP_TRAIL = { 0.75, 0.9, 1 }, { 0.2, 0.5, 1 }, { 0.35, 0.7, 1 }
+-- What the game's own wisp looks like, the one a night elf is when dead, and how big a frame it
+-- is shown in. Where the client doesn't have it the wisp is made of lights instead
+local WISP_DISPLAY, WISP_MODEL_SIZE = 10045, 52
+local AUTHOR, THANKS = "Jeany Beany", "Quetz"
+-- The space between the words of the disclaimer where one text ends and the next begins
+local DISCLAIMER_GAP = 3
+local HEADER_TOP = 32
 -- Room the selected game's panel keeps around the stage: its title above, the note and buttons below
 local STAGE_TOP, STAGE_BOTTOM, STAGE_SIDE = 66, 72, 12
 local MOVES_WIDTH = 150
@@ -40,7 +80,13 @@ local STEP_BUTTON_WIDTH = 36
 local TOOLTIP_NAMES = 15
 -- Opening the window looks for players again if the last look is older than this
 local STALE_AFTER = 60
--- How long the header says it is looking after a refresh
+-- The box that says who is around, and what turns in it while that is being asked: how big it
+-- is, how many dots it is made of and how many seconds they take to go around, and how big each
+-- dot is
+local PRESENCE_HEIGHT = 44
+local SPINNER_SIZE, SPINNER_LIGHTS, SPINNER_LAP = 20, 8, 0.9
+local SPINNER_DOT = 4
+-- How long the front page says it is looking after a refresh
 local LOOKING_FOR = 6
 
 local DECLINE_REASONS = {
@@ -54,8 +100,12 @@ local DECLINE_REASONS = {
 local SOURCE_LABELS = { guild = "source_guild", friend = "source_friend", other = "source_other" }
 
 local frame
+-- The game on screen. The front page is, while there is none
 --- @type string?
 local selectedId
+-- The game that was on screen last, which is the one to go on with
+--- @type string?
+local lastId
 -- One stage per game, so each game keeps its own widgets
 --- @type table<string, { stage: Frame, view: GameViewObject, width: number?, height: number? }>
 local views = {}
@@ -68,7 +118,7 @@ local movesShown
 local refreshing = false
 
 --- Window settings that are remembered between sessions
---- @return { width: number, height: number, focus: boolean, scale: number }
+--- @return { width: number, height: number, scale: number }
 local function settings()
   return ForeverGames.db.profile.window
 end
@@ -335,7 +385,7 @@ local function actionsFor(match)
 end
 
 -----------------------------
--- Header
+-- Who is around
 -----------------------------
 
 --- Asks who is online again, if it hasn't just been done
@@ -347,31 +397,35 @@ local function lookForPlayers()
   MainFrame.Refresh()
 end
 
-local function refreshHeader()
-  local header = frame.header
+local function refreshPresence()
+  local presence = frame.home.presence
   local counts = private.presence:Counts()
   local since = private.presence:SinceAnnounce()
-  header.refresh:SetEnabled(private.presence:CanAnnounce())
+  presence.refresh:SetEnabled(private.presence:CanAnnounce())
 
-  if counts.total == 0 and since and since < LOOKING_FOR then
-    header.dot:SetColorTexture(1, 0.82, 0)
-    header.title:SetText(L["presence_looking"])
-    header.title:SetTextColor(1, 1, 1)
-    header.detail:SetText(L["presence_looking_detail"])
+  -- While the answers are still coming in the dot gives way to something that turns
+  local looking = since ~= nil and since < LOOKING_FOR
+  presence.spinner:SetShown(looking)
+  presence.dot:SetShown(not looking)
+
+  if counts.total == 0 and looking then
+    presence.title:SetText(L["presence_looking"])
+    presence.title:SetTextColor(1, 1, 1)
+    presence.detail:SetText(L["presence_looking_detail"])
     return
   end
 
   if counts.total == 0 then
-    header.dot:SetColorTexture(0.45, 0.45, 0.45)
-    header.title:SetText(L["presence_none"])
-    header.title:SetTextColor(unpack(Widgets.GREY))
-    header.detail:SetText(L["presence_none_detail"])
+    presence.dot:SetColorTexture(0.45, 0.45, 0.45)
+    presence.title:SetText(L["presence_none"])
+    presence.title:SetTextColor(unpack(Widgets.GREY))
+    presence.detail:SetText(L["presence_none_detail"])
     return
   end
 
-  header.dot:SetColorTexture(unpack(Widgets.GREEN))
-  header.title:SetText((counts.total == 1 and L["presence_one"] or L["presence_many"]):format(counts.total))
-  header.title:SetTextColor(1, 1, 1)
+  presence.dot:SetColorTexture(unpack(Widgets.GREEN))
+  presence.title:SetText((counts.total == 1 and L["presence_one"] or L["presence_many"]):format(counts.total))
+  presence.title:SetTextColor(1, 1, 1)
 
   local parts = {}
   for _, source in ipairs({ "guild", "friend", "other" }) do
@@ -379,13 +433,13 @@ local function refreshHeader()
       parts[#parts + 1] = L["presence_" .. source]:format(counts[source])
     end
   end
-  header.detail:SetText(table.concat(parts, "  |cff666666-|r  "))
+  presence.detail:SetText(table.concat(parts, "  |cff666666-|r  "))
 end
 
 --- @param owner Frame
 local function showPresenceTooltip(owner)
   local players = private.presence:List()
-  GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT", owner:GetWidth(), 0)
+  GameTooltip:SetOwner(owner, "ANCHOR_BOTTOM")
   GameTooltip:SetText(L["presence_tooltip_title"])
   if #players == 0 then
     GameTooltip:AddLine(L["presence_tooltip_none"], 1, 1, 1, true)
@@ -400,65 +454,114 @@ local function showPresenceTooltip(owner)
   GameTooltip:Show()
 end
 
+--- Lights in a ring that brighten one after the other, around and around, for as long as it is
+--- shown: something is being waited for
+--- @param parent Frame
 --- @return Frame
-local function createHeader()
-  local header = Widgets.Panel(frame)
-  header:SetPoint("TOPLEFT", 14, -32)
-  header:SetPoint("TOPRIGHT", -14, -32)
-  header:SetHeight(50)
+local function createSpinner(parent)
+  local spinner = CreateFrame("Frame", nil, parent)
+  spinner:SetSize(SPINNER_SIZE, SPINNER_SIZE)
 
-  -- The presence summary is one hover target that lists who it is counting
-  local presence = CreateFrame("Frame", nil, header)
-  presence:SetPoint("TOPLEFT")
-  presence:SetPoint("BOTTOMLEFT")
-  presence:SetWidth(380)
+  local lights = {}
+  for index = 1, SPINNER_LIGHTS do
+    local angle = (index - 1) / SPINNER_LIGHTS * 2 * math.pi
+    -- Dots with an edge to them: soft lights this small run into one blur
+    local light = spinner:CreateTexture(nil, "ARTWORK")
+    light:SetTexture(IMAGES .. "Board\\dot")
+    light:SetVertexColor(unpack(Widgets.GOLD))
+    light:SetSize(SPINNER_DOT, SPINNER_DOT)
+    -- Clockwise from the top
+    local reach = (SPINNER_SIZE - SPINNER_DOT) / 2
+    light:SetPoint("CENTER", math.sin(angle) * reach, math.cos(angle) * reach)
+    lights[index] = light
+  end
+
+  local turned = 0
+  spinner:SetScript("OnUpdate", function(_, elapsed)
+    turned = (turned + elapsed / SPINNER_LAP) % 1
+    for index, light in ipairs(lights) do
+      -- Brightest where the turn has just been, fading the longer ago that was
+      local behind = (turned - (index - 1) / SPINNER_LIGHTS) % 1
+      light:SetAlpha(0.15 + 0.85 * (1 - behind) ^ 2)
+    end
+  end)
+  return spinner
+end
+
+--- Who is around to play, in a box of its own: two lines, and a way to ask again
+--- @param parent Frame
+--- @return Frame
+local function createPresence(parent)
+  -- The summary is one hover target that lists who it is counting
+  local presence = Widgets.Panel(parent)
+  presence:SetHeight(PRESENCE_HEIGHT)
   presence:EnableMouse(true)
   presence:SetScript("OnEnter", showPresenceTooltip)
   presence:SetScript("OnLeave", GameTooltip_Hide)
 
-  header.dot = presence:CreateTexture(nil, "ARTWORK")
-  header.dot:SetSize(10, 10)
-  header.dot:SetPoint("LEFT", 14, 0)
+  presence.dot = presence:CreateTexture(nil, "ARTWORK")
+  presence.dot:SetSize(10, 10)
+  presence.dot:SetPoint("CENTER", presence, "LEFT", 22, 0)
 
-  header.title = Widgets.Label(presence, "GameFontNormal")
-  header.title:SetPoint("TOPLEFT", 36, -10)
+  presence.spinner = createSpinner(presence)
+  presence.spinner:SetPoint("CENTER", presence.dot)
+  presence.spinner:Hide()
 
-  header.detail = Widgets.Label(presence, "GameFontHighlightSmall")
-  header.detail:SetPoint("TOPLEFT", header.title, "BOTTOMLEFT", 0, -4)
-  header.detail:SetTextColor(unpack(Widgets.GREY))
-
-  header.newGame = Widgets.Button(header, L["new_game"], 150, 30)
-  header.newGame:SetPoint("RIGHT", -10, 0)
-  header.newGame:SetScript("OnClick", function()
-    MainFrame.NewGame()
-  end)
-
-  header.refresh = Widgets.Button(header, L["presence_refresh"], 90, 24)
-  header.refresh:SetPoint("RIGHT", header.newGame, "LEFT", -10, 0)
-  header.refresh:SetScript("OnClick", lookForPlayers)
-  header.refresh:SetScript("OnEnter", function(self)
+  presence.refresh = Widgets.Button(presence, L["presence_refresh"], 84, 24)
+  presence.refresh:SetPoint("RIGHT", -10, 0)
+  presence.refresh:SetScript("OnClick", lookForPlayers)
+  presence.refresh:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:SetText(L["presence_refresh"])
     GameTooltip:AddLine(L["presence_refresh_tooltip"], 1, 1, 1, true)
     GameTooltip:Show()
   end)
-  header.refresh:SetScript("OnLeave", GameTooltip_Hide)
+  presence.refresh:SetScript("OnLeave", GameTooltip_Hide)
 
-  return header
+  presence.title = Widgets.Label(presence, "GameFontNormal")
+  presence.title:SetPoint("TOPLEFT", 42, -8)
+  presence.title:SetPoint("RIGHT", presence.refresh, "LEFT", -10, 0)
+  presence.title:SetWordWrap(false)
+
+  presence.detail = Widgets.Label(presence, "GameFontHighlightSmall")
+  presence.detail:SetPoint("TOPLEFT", presence.title, "BOTTOMLEFT", 0, -4)
+  presence.detail:SetPoint("RIGHT", presence.refresh, "LEFT", -10, 0)
+  presence.detail:SetWordWrap(false)
+  presence.detail:SetTextColor(unpack(Widgets.GREY))
+  return presence
 end
 
 -----------------------------
 -- Game list
 -----------------------------
 
+--- What a game is called in a list: who it is with and what it is, or just what it is
+--- @param match Match
+--- @return string
+local function nameFor(match)
+  local game = Games.Get(match.game)
+  local name = game and game.name or match.game
+  if Match.IsSolo(match) then
+    return name
+  end
+  return MainFrame.Names(match) .. "  |cff808080" .. name .. "|r"
+end
+
+--- What can be done about a game without opening it: answering a challenge, taking one back,
+--- and clearing away or playing again one that is over. A game that is being played is opened
+--- @param match Match
+--- @return { text: string, onClick: fun(), disabled: boolean? }[]
+local function listActionsFor(match)
+  if match.status == "active" then
+    return {}
+  end
+  return actionsFor(match)
+end
+
 --- @param content Frame
 --- @return Button
 local function createRow(content)
   local row = CreateFrame("Button", nil, content)
-
-  row.selected = row:CreateTexture(nil, "BACKGROUND")
-  row.selected:SetAllPoints()
-  row.selected:SetColorTexture(1, 0.82, 0, 0.16)
 
   local hover = row:CreateTexture(nil, "HIGHLIGHT")
   hover:SetAllPoints()
@@ -471,19 +574,24 @@ local function createRow(content)
   row.marker:SetColorTexture(unpack(Widgets.GREEN))
   row.markerPulse = Widgets.Pulse(row.marker)
 
-  row.icon = Widgets.Icon(row, private.ICON, 36)
+  row.icon = Widgets.Icon(row, private.ICON, 32)
   row.icon:SetPoint("LEFT", 12, 0)
 
   row.name = Widgets.Label(row, "GameFontNormal")
-  row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 10, -2)
-  row.name:SetPoint("RIGHT", -6, 0)
+  row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 10, -1)
   row.name:SetWordWrap(false)
 
   row.status = Widgets.Label(row, "GameFontHighlightSmall")
-  row.status:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 10, 2)
-  row.status:SetPoint("RIGHT", -6, 0)
+  row.status:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 10, 1)
   row.status:SetWordWrap(false)
   row.statusPulse = Widgets.Pulse(row.status)
+
+  row.buttons = {}
+  for index = 1, 2 do
+    local button = Widgets.Button(row, "", ROW_BUTTON_WIDTH, 22)
+    button:SetPoint("RIGHT", -10 - (index - 1) * (ROW_BUTTON_WIDTH + 4), 0)
+    row.buttons[index] = button
+  end
 
   row:SetScript("OnClick", function(self)
     MainFrame.Select(self.matchId)
@@ -494,17 +602,11 @@ end
 --- @param row Button
 --- @param match Match
 local function fillRow(row, match)
-  local game = Games.Get(match.game)
   local waiting = waitingOnMe(match)
 
   row.matchId = match.id
   row.icon:SetTexture(iconFor(match))
-  if Match.IsSolo(match) then
-    row.name:SetText(game and game.name or match.game)
-  else
-    row.name:SetText(MainFrame.Names(match) .. "  |cff808080" .. (game and game.name or match.game) .. "|r")
-  end
-  row.selected:SetShown(match.id == selectedId)
+  row.name:SetText(nameFor(match))
 
   if waiting then
     row.status:SetText(match.status == "incoming" and L["list_challenge"] or L["list_waiting_on_you"])
@@ -526,40 +628,71 @@ local function fillRow(row, match)
     row.statusPulse:Stop()
     row.status:SetAlpha(1)
   end
+
+  -- The first thing to do is the one nearest the name
+  local actions = listActionsFor(match)
+  for index, button in ipairs(row.buttons) do
+    local action = actions[#actions + 1 - index]
+    button:SetShown(action ~= nil)
+    if action then
+      button:SetText(action.text)
+      button:SetEnabled(not action.disabled)
+      button:SetScript("OnClick", function()
+        local challenge = match.status == "incoming"
+        action.onClick()
+        -- A challenge is taken up to play it
+        if challenge and match.status == "active" then
+          MainFrame.Select(match.id)
+        end
+      end)
+    end
+  end
+  -- The texts end where the buttons begin
+  local room = -10 - #actions * (ROW_BUTTON_WIDTH + 4)
+  row.name:SetPoint("RIGHT", room, 0)
+  row.status:SetPoint("RIGHT", room, 0)
 end
 
---- @param body Frame
+--- @param parent Frame
 --- @return Frame
-local function createListPanel(body)
-  local panel = Widgets.Panel(body)
-  panel:SetPoint("TOPLEFT")
-  panel:SetPoint("BOTTOMLEFT")
-  panel:SetWidth(LIST_WIDTH)
+local function createListPanel(parent)
+  local panel = Widgets.Panel(parent)
 
   panel.title = Widgets.Label(panel, "GameFontNormal", L["list_title"])
-  panel.title:SetPoint("TOPLEFT", 12, -10)
+  panel.title:SetPoint("TOPLEFT", 12, -9)
 
   panel.waiting = Widgets.Label(panel, "GameFontHighlightSmall")
-  panel.waiting:SetPoint("TOPRIGHT", -10, -12)
+  panel.waiting:SetPoint("TOPRIGHT", -12, -10)
   panel.waiting:SetTextColor(unpack(Widgets.GREEN))
   panel.waitingPulse = Widgets.Pulse(panel.waiting)
 
   panel.list = Widgets.List(panel, LIST_WIDTH - 8, ROW_HEIGHT, createRow)
-  panel.list.frame:SetPoint("TOPLEFT", 4, -32)
+  panel.list.frame:SetPoint("TOPLEFT", 4, -28)
   panel.list.frame:SetPoint("BOTTOMRIGHT", -4, 4)
   return panel
 end
 
+--- The games that can't go on until the player does something, in the order they are listed
 --- @param list Match[]
-local function refreshList(list)
-  local panel = frame.listPanel
-  local waiting = 0
+--- @param except string? A match to leave out
+--- @return Match[]
+local function waitingIn(list, except)
+  local waiting = {}
   for _, match in ipairs(list) do
-    if waitingOnMe(match) then
-      waiting = waiting + 1
+    if match.id ~= except and waitingOnMe(match) then
+      waiting[#waiting + 1] = match
     end
   end
+  return waiting
+end
 
+--- @param list Match[]
+--- @param width number How wide the panel is
+local function refreshList(list, width)
+  local panel = frame.home.listPanel
+  local waiting = #waitingIn(list)
+
+  panel.list:SetWidth(width - 8)
   panel.list:Update(list, fillRow)
   if waiting > 0 then
     panel.waiting:SetText(L["list_waiting_count"]:format(waiting))
@@ -595,10 +728,6 @@ end
 local function stageSize(history)
   local width = frame:GetWidth() - INSET * 2 - STAGE_SIDE * 2
   local height = frame:GetHeight() - HEADER_TOP - INSET - STAGE_TOP - STAGE_BOTTOM
-  if not frame.focused then
-    width = width - LIST_WIDTH - GAP
-    height = height - HEADER_HEIGHT - GAP
-  end
   if history then
     width = width - MOVES_WIDTH - GAP
   end
@@ -747,6 +876,7 @@ end
 --- @return Frame
 local function createDetailPanel(body)
   local detail = Widgets.Panel(body)
+  detail:SetAllPoints()
 
   detail.icon = Widgets.Icon(detail, private.ICON, 40)
   detail.icon:SetPoint("TOPLEFT", 14, -12)
@@ -758,16 +888,25 @@ local function createDetailPanel(body)
   detail.status:SetPoint("TOPLEFT", detail.header, "BOTTOMLEFT", 0, -5)
   detail.statusPulse = Widgets.Pulse(detail.status)
 
-  -- Gives the selected game the whole window, or brings the rest back
-  detail.focus = Widgets.Button(detail, "", 96, 22)
-  detail.focus:SetPoint("TOPRIGHT", -STAGE_SIDE, -12)
-  detail.focus:SetScript("OnClick", function()
-    settings().focus = not settings().focus
-    MainFrame.Refresh()
+  -- Back to the front page, where the other games are
+  detail.home = Widgets.Button(detail, L["home"], 96, 22)
+  detail.home:SetPoint("TOPRIGHT", -STAGE_SIDE, -12)
+  detail.home:SetScript("OnClick", function()
+    MainFrame.Home()
+  end)
+
+  -- Straight on to another game that is waiting on the player, while there is one
+  detail.next = Widgets.Button(detail, "", 150, 22)
+  detail.next:SetPoint("RIGHT", detail.home, "LEFT", -6, 0)
+  detail.next:SetScript("OnClick", function()
+    local waiting = waitingIn(private.session:List(), selectedId)
+    if waiting[1] then
+      MainFrame.Select(waiting[1].id)
+    end
   end)
 
   detail.seat = Widgets.Label(detail, "GameFontDisableSmall")
-  detail.seat:SetPoint("TOPRIGHT", detail.focus, "BOTTOMRIGHT", -2, -6)
+  detail.seat:SetPoint("TOPRIGHT", detail.home, "BOTTOMRIGHT", -2, -6)
 
   -- Says so when whoever set the game up changed its rules, and what to when pointed at
   detail.rules = CreateFrame("Frame", nil, detail)
@@ -899,7 +1038,9 @@ local function refreshDetail(match, fresh)
     detail.header:SetText(title:format(game and game.name or match.game, MainFrame.Names(match)))
   end
   detail.status:SetText(MainFrame.Describe(match))
-  detail.focus:SetText(frame.focused and L["focus_off"] or L["focus_on"])
+  local others = #waitingIn(private.session:List(), match.id)
+  detail.next:SetShown(others > 0)
+  detail.next:SetText(L["next_waiting"]:format(others))
   if waiting then
     detail.status:SetTextColor(unpack(Widgets.GREEN))
     detail.statusPulse:Play()
@@ -1006,64 +1147,402 @@ local function refreshDetail(match, fresh)
 end
 
 -----------------------------
--- Empty state
+-- Front page
 -----------------------------
 
---- Shown instead of the list and board while the player has no games at all
+--- A soft light behind something, which slowly swells and dims
+--- @param parent Frame
+--- @param color number[]
+--- @param from number How bright it is at its dimmest, as alpha
+--- @param to number
+--- @param seconds number From one to the other
+--- @return Texture
+local function createGlow(parent, color, from, to, seconds)
+  local glow = parent:CreateTexture(nil, "BACKGROUND")
+  glow:SetTexture(IMAGES .. "glow")
+  glow:SetBlendMode("ADD")
+  glow:SetVertexColor(unpack(color))
+  glow:SetAlpha(from)
+
+  local group = glow:CreateAnimationGroup()
+  group:SetLooping("BOUNCE")
+  local fade = group:CreateAnimation("Alpha")
+  fade:SetFromAlpha(from)
+  fade:SetToAlpha(to)
+  fade:SetDuration(seconds)
+  fade:SetSmoothing("IN_OUT")
+  group:Play()
+  return glow
+end
+
+--- One of the round lights a wisp is made of
+--- @param parent Frame
+--- @param color number[]
+--- @return Texture
+local function createLight(parent, color)
+  local light = parent:CreateTexture(nil, "OVERLAY")
+  light:SetTexture(IMAGES .. "glow")
+  light:SetBlendMode("ADD")
+  light:SetVertexColor(unpack(color))
+  return light
+end
+
+--- A wisp that drifts around the infinity sign of the logo for as long as it is shown: the game's
+--- own, or a pale heart in a blue halo that flickers where the client has none, with a tail that
+--- wavers behind it and motes that float up off it
+--- @param parent Frame
+--- @param logo Region
+--- @return Frame wisp Hidden, it is gone and costs nothing
+local function createWisp(parent, logo)
+  -- Its own frame, so the lights are drawn over the logo and only move while it is on screen
+  local wisp = CreateFrame("Frame", nil, parent)
+  wisp:SetAllPoints(logo)
+
+  local tail, motes = {}, {}
+  for index = 1, WISP_TAIL do
+    tail[index] = { glow = createLight(wisp, WISP_TRAIL), thread = createLight(wisp, WISP_THREAD) }
+    tail[index].thread:SetBlendMode("BLEND")
+  end
+  for index = 1, WISP_MOTES do
+    motes[index] = { light = createLight(wisp, WISP_HALO), age = WISP_MOTE_LIFE, x = 0, y = 0, drift = 0 }
+    motes[index].light:Hide()
+  end
+  local halo, core = createLight(wisp, WISP_HALO), createLight(wisp, WISP_CORE)
+  core:SetSize(16, 16)
+
+  local model = CreateFrame("PlayerModel", nil, wisp)
+  model:SetSize(WISP_MODEL_SIZE, WISP_MODEL_SIZE)
+  -- A model forgets what it is of while hidden
+  model:SetScript("OnShow", function()
+    model:SetDisplayInfo(WISP_DISPLAY)
+  end)
+  model:SetDisplayInfo(WISP_DISPLAY)
+
+  --- Where on the logo the wisp is a part of a lap in, from the middle of the logo
+  --- @param lap number
+  --- @return number x, number y
+  local function along(lap)
+    -- A figure of eight: once across and back while twice up and down
+    local angle = lap * 2 * math.pi
+    return LOOP_REACH * logo:GetWidth() * math.cos(angle), (LOOP_RISE * math.sin(2 * angle) - LOOP_DROP) * logo:GetHeight()
+  end
+
+  -- Where it has been, newest first, a WISP_STEP apart: x and y in turn
+  local trail, kept = {}, 2 * (math.ceil(WISP_TAIL * WISP_GAP / WISP_STEP) + 2)
+  local clock, lap, owed, shed, nextMote = 0, 0, 0, 0, 1
+  local lastX, lastY
+  wisp:SetScript("OnUpdate", function(_, elapsed)
+    -- A stutter shouldn't fling it across the logo
+    elapsed = math.min(elapsed, 0.1)
+    clock = clock + elapsed
+
+    -- It doesn't keep a pace: it lingers, then glides on, and never quite the same way twice
+    local pace = 1 + 0.55 * math.sin(clock * 0.83) + 0.3 * math.sin(clock * 2.09 + 2)
+    lap = lap + elapsed / WISP_LAP * pace
+
+    -- Nor does it keep to the line. It floats, rising and sinking and wandering to the sides
+    local x, y = along(lap)
+    x = x + 2.5 * math.sin(clock * 1.37 + 1) + 1 * math.sin(clock * 4.1)
+    y = y + 4 * math.sin(clock * 1.9) + 1.5 * math.sin(clock * 3.3 + 0.5)
+    core:SetPoint("CENTER", logo, "CENTER", x, y)
+    halo:SetPoint("CENTER", logo, "CENTER", x, y)
+    model:SetPoint("CENTER", logo, "CENTER", x, y)
+    -- The lights stand in for the model for as long as there is none
+    local drawn = not (model.GetModelFileID and model:GetModelFileID())
+    core:SetShown(drawn)
+    halo:SetShown(drawn)
+
+    -- Two waves that never quite line up make the halo flicker without a beat to it
+    local flicker = 0.5 + 0.25 * math.sin(clock * 7.3) + 0.25 * math.sin(clock * 11.9 + 1)
+    halo:SetAlpha(0.5 + 0.3 * flicker)
+    local size = 40 + 8 * flicker
+    halo:SetSize(size, size)
+
+    -- Remember the way it came since the last time, however long ago that was
+    lastX, lastY = lastX or x, lastY or y
+    owed = owed + elapsed
+    local steps = math.floor(owed / WISP_STEP)
+    owed = owed - steps * WISP_STEP
+    for step = 1, steps do
+      local part = step / steps
+      table.insert(trail, 1, lastY + (y - lastY) * part)
+      table.insert(trail, 1, lastX + (x - lastX) * part)
+    end
+    for index = #trail, kept + 1, -1 do
+      trail[index] = nil
+    end
+    lastX, lastY = x, y
+
+    -- The tail is where the wisp was, so it bunches up where it lingers and draws out where it
+    -- glides, thinning towards its end. It is a thin thing next to the wisp, and isn't drawn
+    -- where it would run into it
+    for index, light in ipairs(tail) do
+      local fade = 1 - index / (WISP_TAIL + 1)
+      local at = 2 * math.floor(index * WISP_GAP / WISP_STEP)
+      local tailX, tailY = trail[at + 1] or x, trail[at + 2] or y
+      local away = math.sqrt((tailX - x) ^ 2 + (tailY - y) ^ 2)
+      local clear = math.max(0, math.min(1, (away - WISP_CLEAR) / WISP_CLEAR_FADE))
+      local size = 4 + 7 * fade
+      light.thread:SetPoint("CENTER", logo, "CENTER", tailX, tailY)
+      light.thread:SetAlpha(fade * clear)
+      light.thread:SetSize(size, size)
+      light.glow:SetPoint("CENTER", logo, "CENTER", tailX, tailY)
+      light.glow:SetAlpha(0.7 * fade * clear)
+      light.glow:SetSize(size * 2.6, size * 2.6)
+    end
+
+    -- Every so often a mote comes off it, and floats up as it goes out
+    shed = shed + elapsed
+    if shed >= WISP_MOTE_LIFE / WISP_MOTES then
+      shed = 0
+      local mote = motes[nextMote]
+      nextMote = nextMote % WISP_MOTES + 1
+      mote.age, mote.x, mote.y, mote.drift = 0, x, y, math.sin(clock * 13) * 6
+      mote.light:Show()
+    end
+    for _, mote in ipairs(motes) do
+      if mote.age < WISP_MOTE_LIFE then
+        mote.age = mote.age + elapsed
+        local progress = math.min(1, mote.age / WISP_MOTE_LIFE)
+        mote.light:SetPoint("CENTER", logo, "CENTER", mote.x + mote.drift * progress, mote.y + 14 * progress)
+        mote.light:SetAlpha(0.8 * (1 - progress))
+        mote.light:SetSize(7 - 3 * progress, 7 - 3 * progress)
+        mote.light:SetShown(progress < 1)
+      end
+    end
+  end)
+  return wisp
+end
+
+--- A line across that fades out at both ends
+--- @param parent Frame
+--- @param width number
+--- @param color number[]
+--- @param alpha number
+--- @return Texture
+local function createRule(parent, width, color, alpha)
+  local rule = parent:CreateTexture(nil, "ARTWORK")
+  rule:SetTexture(IMAGES .. "rule")
+  rule:SetSize(width, 2)
+  rule:SetVertexColor(color[1], color[2], color[3], alpha)
+  return rule
+end
+
+--- The game to go on with: one that is waiting on the player, else the one they looked at last
+--- if it is still being played, else any that is
+--- @param list Match[]
+--- @return Match?
+local function gameToContinue(list)
+  local waiting = waitingIn(list)[1]
+  if waiting then
+    return waiting
+  end
+  local playing
+  for _, match in ipairs(list) do
+    if match.status == "active" then
+      if match.id == lastId then
+        return match
+      end
+      playing = playing or match
+    end
+  end
+  return playing
+end
+
+--- The page the window opens on, and the one it shows whenever no game is picked: the logo, who
+--- is around, a way to start a game and one to go on with one, the player's games, and who the
+--- addon is by
 --- @param body Frame
 --- @return Frame
-local function createEmptyPanel(body)
-  local empty = Widgets.Panel(body)
-  empty:SetAllPoints()
+local function createHomePanel(body)
+  local home = Widgets.Panel(body)
+  home:SetAllPoints()
 
-  local icon = Widgets.Icon(empty, private.ICON, 64)
-  icon:SetPoint("CENTER", 0, 90)
+  -- The logo and what glows and drifts around it, as one thing that is made smaller as one
+  local crest = CreateFrame("Frame", nil, home)
+  crest:SetSize(LOGO_HEIGHT * LOGO_ASPECT, LOGO_HEIGHT)
+  home.crest = crest
 
-  local title = Widgets.Label(empty, "GameFontNormalHuge", L["empty_title"])
-  title:SetPoint("TOP", icon, "BOTTOM", 0, -16)
+  local logo = Widgets.Icon(crest, IMAGES .. "logo", LOGO_HEIGHT)
+  logo:SetAllPoints()
 
-  local text = Widgets.Label(empty, "GameFontHighlight", L["empty_text"])
-  text:SetPoint("TOP", title, "BOTTOM", 0, -10)
-  text:SetWidth(420)
-  text:SetJustifyH("CENTER")
-  text:SetTextColor(unpack(Widgets.GREY))
+  -- The light behind it reaches as far again as the logo to every side, see refreshHome
+  home.halo = createGlow(crest, LOGO_BLUE, 0.22, 0.42, 3.5)
+  home.halo:SetWidth(LOGO_HEIGHT * LOGO_ASPECT * 2)
+  home.halo:SetPoint("BOTTOM", crest, "CENTER", 0, -LOGO_HEIGHT)
 
-  local button = Widgets.Button(empty, L["new_game"], 180, 36)
-  button:SetPoint("TOP", text, "BOTTOM", 0, -22)
-  button:SetScript("OnClick", function()
+  home.wisp = createWisp(crest, crest)
+
+  local rule = createRule(home, 340, Widgets.GOLD, 0.7)
+  rule:SetPoint("TOP", crest, "BOTTOM", 0, -4)
+
+  home.presence = createPresence(home)
+  home.presence:SetPoint("TOP", rule, "BOTTOM", 0, -10)
+  -- It shows things that change with time alone: the "looking" message after a refresh and
+  -- whether Refresh can be pressed again
+  local sinceUpdate = 0
+  home.presence:SetScript("OnUpdate", function(_, elapsed)
+    sinceUpdate = sinceUpdate + elapsed
+    if sinceUpdate >= 1 then
+      sinceUpdate = 0
+      refreshPresence()
+    end
+  end)
+
+  -- Said only while there are no games to list instead
+  home.title = Widgets.Label(home, "GameFontNormalHuge", L["empty_title"])
+  home.title:SetPoint("TOP", home.presence, "BOTTOM", 0, -12)
+
+  home.blurb = Widgets.Label(home, "GameFontHighlight", L["empty_text"])
+  home.blurb:SetPoint("TOP", home.title, "BOTTOM", 0, -8)
+  home.blurb:SetWidth(460)
+  home.blurb:SetJustifyH("CENTER")
+  home.blurb:SetSpacing(2)
+  home.blurb:SetTextColor(unpack(Widgets.GREY))
+
+  -- The two big buttons sit side by side in a row of their own, or the one in the middle of it
+  home.actions = CreateFrame("Frame", nil, home)
+  home.actions:SetSize(HOME_BUTTON_WIDTH * 2 + HOME_BUTTON_GAP, 38)
+
+  home.newGame = Widgets.Button(home.actions, L["new_game"], HOME_BUTTON_WIDTH, 38)
+  home.newGame:SetScript("OnClick", function()
     MainFrame.NewGame()
   end)
-  return empty
+
+  home.continue = Widgets.Button(home.actions, L["continue_game"], HOME_BUTTON_WIDTH, 38)
+  home.continue:SetPoint("RIGHT")
+  home.continue:SetScript("OnClick", function(self)
+    MainFrame.Select(self.target)
+  end)
+  for _, button in ipairs({ home.newGame, home.continue }) do
+    button:SetNormalFontObject("GameFontNormalLarge")
+    button:SetHighlightFontObject("GameFontHighlightLarge")
+  end
+
+  -- Which game that is
+  home.continuing = Widgets.Label(home.actions, "GameFontHighlightSmall")
+  home.continuing:SetPoint("TOP", home.continue, "BOTTOM", 0, -4)
+  home.continuing:SetWidth(HOME_BUTTON_WIDTH + HOME_BUTTON_GAP)
+  home.continuing:SetJustifyH("CENTER")
+  home.continuing:SetWordWrap(false)
+  home.continuing:SetTextColor(unpack(Widgets.GREY))
+
+  -- The small print, from the bottom up
+  -- One line with the words that matter most in it drawn heavier. A text can't change weight
+  -- part of the way, so it is three texts in a row
+  local before, after = L["empty_disclaimer"]:match("^(.-)%s*%%s%s*(.*)$")
+  local disclaimer = CreateFrame("Frame", nil, home)
+  disclaimer:SetPoint("BOTTOM", 0, 12)
+  local parts, width = {}, 0
+  for index, text in ipairs({ before or L["empty_disclaimer"], L["disclaimer_stress"], after or "" }) do
+    local part = Widgets.Label(disclaimer, "GameFontDisableSmall", text)
+    part:SetTextColor(unpack(Widgets.RED))
+    if index == 2 then
+      -- The client has no bold of this font: an outline in its own colour is what makes it heavy
+      local font, size = part:GetFont()
+      part:SetFont(font, size, "OUTLINE")
+      part:SetTextColor(1, 0.42, 0.36)
+    end
+    if index == 1 then
+      part:SetPoint("LEFT")
+    else
+      part:SetPoint("LEFT", parts[index - 1], "RIGHT", DISCLAIMER_GAP, 0)
+    end
+    parts[index] = part
+    width = width + part:GetStringWidth()
+  end
+  disclaimer:SetSize(width + 2 * DISCLAIMER_GAP, 12)
+
+  local gold = "|cffffd100%s|r"
+  local credits = Widgets.Label(home, "GameFontHighlightSmall")
+  credits:SetPoint("BOTTOM", disclaimer, "TOP", 0, 6)
+  credits:SetTextColor(unpack(Widgets.GREY))
+  credits:SetText(table.concat({
+    L["empty_version"]:format(gold:format(C_AddOns.GetAddOnMetadata(private.ADDON_NAME, "Version"))),
+    L["empty_created"]:format(gold:format(AUTHOR)),
+    L["empty_thanks"]:format(gold:format(THANKS)) .. " |T" .. IMAGES .. "heart:12:12|t",
+  }, "    |cff555555\194\183|r    "))
+
+  local line = createRule(home, 560, { 1, 1, 1 }, 0.22)
+  line:SetPoint("BOTTOM", credits, "TOP", 0, 8)
+
+  -- The games get what is left between the buttons and the small print
+  home.listPanel = createListPanel(home)
+  home.listPanel:SetPoint("TOP", home.actions, "BOTTOM", 0, -24)
+  home.listPanel:SetPoint("BOTTOM", line, "TOP", 0, 8)
+
+  -- It comes up out of the dark rather than being there all at once
+  local arrive = home:CreateAnimationGroup()
+  local fade = arrive:CreateAnimation("Alpha")
+  fade:SetFromAlpha(0)
+  fade:SetToAlpha(1)
+  fade:SetDuration(0.45)
+  fade:SetSmoothing("OUT")
+  home:SetScript("OnShow", function()
+    arrive:Play()
+  end)
+  return home
+end
+
+--- @param list Match[] The player's games
+local function refreshHome(list)
+  local home = frame.home
+  local width, height = frame:GetWidth() - INSET * 2, frame:GetHeight() - HEADER_TOP - INSET
+  local any = #list > 0
+  refreshPresence()
+  -- The wisp is there unless the player would rather the logo kept still, see GUI/Options.lua
+  home.wisp:SetShown(ForeverGames.db.profile.wisp ~= false)
+
+  -- With no games the logo is the page, a little above the middle of it. With games it moves up
+  -- and makes room for them, the more the less room there is
+  local scale = any and math.max(LOGO_SMALLEST, math.min(LOGO_HEIGHT, height * LOGO_SHARE)) / LOGO_HEIGHT or 1
+  home.crest:SetScale(scale)
+  -- At the top of the page there is less room over the logo than its light reaches, and the
+  -- light ends where the page does. The page can't cut it off itself: a list that scrolls draws
+  -- nothing inside a frame that cuts its children off
+  local over = any and LOGO_HEIGHT / 2 + LOGO_TOP / scale or LOGO_HEIGHT
+  home.halo:SetHeight(LOGO_HEIGHT + over)
+  home.halo:SetTexCoord(0, 1, (LOGO_HEIGHT - over) / (LOGO_HEIGHT * 2), 1)
+  home.crest:ClearAllPoints()
+  if any then
+    -- Where a frame is put is measured in its own points, which are smaller now
+    home.crest:SetPoint("TOP", home, "TOP", 0, -LOGO_TOP / scale)
+  else
+    home.crest:SetPoint("CENTER", home, "CENTER", 0, 118)
+  end
+
+  home.title:SetShown(not any)
+  home.blurb:SetShown(not any)
+  home.actions:ClearAllPoints()
+  if any then
+    home.actions:SetPoint("TOP", home.presence, "BOTTOM", 0, -10)
+  else
+    home.actions:SetPoint("TOP", home.blurb, "BOTTOM", 0, -18)
+  end
+
+  local match = gameToContinue(list)
+  home.continue:SetShown(match ~= nil)
+  home.continuing:SetShown(match ~= nil)
+  home.newGame:ClearAllPoints()
+  home.newGame:SetPoint(match and "LEFT" or "CENTER")
+  if match then
+    home.continue.target = match.id
+    home.continuing:SetText(nameFor(match))
+  end
+
+  -- The two boxes are as wide as each other
+  local listWidth = math.min(LIST_WIDTH, width - 40)
+  home.presence:SetWidth(listWidth)
+  home.listPanel:SetShown(any)
+  if any then
+    home.listPanel:SetWidth(listWidth)
+    refreshList(list, listWidth)
+  end
 end
 
 -----------------------------
 -- Construction
 -----------------------------
-
---- Arranges the panels for the whole window or for just the selected game
---- @param focused boolean
-local function arrange(focused)
-  if frame.focused == focused then
-    return
-  end
-  frame.focused = focused
-
-  frame.body:ClearAllPoints()
-  if focused then
-    frame.body:SetPoint("TOPLEFT", INSET, -HEADER_TOP)
-  else
-    frame.body:SetPoint("TOPLEFT", frame.header, "BOTTOMLEFT", 0, -GAP)
-  end
-  frame.body:SetPoint("BOTTOMRIGHT", -INSET, INSET)
-
-  frame.detail:ClearAllPoints()
-  if focused then
-    frame.detail:SetPoint("TOPLEFT")
-  else
-    frame.detail:SetPoint("TOPLEFT", frame.listPanel, "TOPRIGHT", GAP, 0)
-  end
-  frame.detail:SetPoint("BOTTOMRIGHT")
-end
 
 --- Makes the window as big as the player wants everything in it, and lets it be resized up to
 --- the size of the screen, which is fewer of the window's own points the bigger it is drawn
@@ -1135,29 +1614,17 @@ local function create()
   table.insert(UISpecialFrames, "ForeverGamesFrame")
   frame.TitleText:SetText(L["title"])
 
-  frame.header = createHeader()
-  -- The header shows things that change with time alone: the "looking" message after a refresh
-  -- and whether Refresh can be pressed again
-  local sinceUpdate = 0
-  frame.header:SetScript("OnUpdate", function(_, elapsed)
-    sinceUpdate = sinceUpdate + elapsed
-    if sinceUpdate >= 1 then
-      sinceUpdate = 0
-      refreshHeader()
-    end
-  end)
-
   frame.body = CreateFrame("Frame", nil, frame)
-  frame.listPanel = createListPanel(frame.body)
+  frame.body:SetPoint("TOPLEFT", INSET, -HEADER_TOP)
+  frame.body:SetPoint("BOTTOMRIGHT", -INSET, INSET)
   frame.detail = createDetailPanel(frame.body)
-  frame.empty = createEmptyPanel(frame.body)
+  frame.home = createHomePanel(frame.body)
   -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend
   frame.detail:SetScript("OnUpdate", function(_, elapsed)
     if selectedId and not review and not Wizard.IsOpen() then
       private.session:Spend(selectedId, elapsed)
     end
   end)
-  arrange(false)
   createResizeGrip()
 
   Wizard.Init(frame, function(matchId)
@@ -1183,29 +1650,24 @@ function MainFrame.Refresh()
   frame.body:SetShown(not inWizard)
 
   if inWizard then
-    frame.header:Hide()
     Wizard.Refresh()
   else
     local selected = selectedId and private.session:Get(selectedId)
     if not selected or selected.hidden then
-      selected = private.session:List()[1]
-      selectedId = selected and selected.id
+      -- A game that is gone leaves the player at the front page
+      selected, selectedId = nil, nil
     end
     local fresh = selected ~= nil and selected.unread == true
     if selected then
+      lastId = selected.id
       -- Looking at a match is what clears its "something new" flag
       private.session:MarkRead(selected.id)
     end
-    local list = private.session:List()
 
-    -- Focus needs a game to focus on
-    local focused = settings().focus and selected ~= nil
-    arrange(focused)
-    frame.header:SetShown(not focused)
-    refreshHeader()
-    frame.empty:SetShown(#list == 0)
-    frame.listPanel:SetShown(#list > 0 and not focused)
-    refreshList(list)
+    frame.home:SetShown(not selected)
+    if not selected then
+      refreshHome(private.session:List())
+    end
     refreshDetail(selected, fresh)
   end
 
@@ -1232,10 +1694,15 @@ function MainFrame.ResetWindow()
   end
 end
 
---- @param id string?
+--- @param id string? The match to show, or none for the front page
 function MainFrame.Select(id)
   selectedId = id
   MainFrame.Refresh()
+end
+
+--- Back to the front page
+function MainFrame.Home()
+  MainFrame.Select(nil)
 end
 
 --- Whether the player is currently looking at this match
@@ -1245,7 +1712,7 @@ function MainFrame.IsViewing(id)
   return frame ~= nil and frame:IsShown() and not Wizard.IsOpen() and selectedId == id
 end
 
---- @param id string? Match to select
+--- @param id string? Match to show. Without one the window is where it was left: on the front page, or on the game that was being looked at
 function MainFrame.Open(id)
   if not frame then
     create()

@@ -93,6 +93,7 @@ function Options.Init()
     end
   end)
   Settings.CreateCheckbox(category, minimap, L["options_minimap_tip"])
+  Settings.CreateCheckbox(category, stored("wisp", MainFrame.Refresh), L["options_wisp_tip"])
 
   local usualScale = ForeverGames.db.defaults.profile.window.scale
   local scale = Settings.RegisterProxySetting(category, "ForeverGames_scale", "number", L["options_scale"], usualScale, function()

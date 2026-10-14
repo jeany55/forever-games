@@ -41,8 +41,10 @@ local defaults = {
     sound = true,
     -- Who the player takes challenges from: "anyone", or only "known" friends and guildmates
     challenges = "anyone",
+    -- Whether a wisp drifts around the logo on the window's front page
+    wisp = true,
     -- The scale is in hundredths of the window's usual size
-    window = { width = 920, height = 680, focus = false, scale = 100 },
+    window = { width = 920, height = 680, scale = 100 },
     -- Ids of the games the player starred in the new game wizard
     favourites = {},
     -- How the player last set the rules of each game in the wizard, by game id

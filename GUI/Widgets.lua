@@ -19,6 +19,7 @@ local SOUNDS = { cardPlace = 3, cardSlide = 3, chipsCollide = 3, dieThrow = 2, d
 Widgets.GREEN = { 0.3, 0.9, 0.3 }
 Widgets.GREY = { 0.65, 0.65, 0.65 }
 Widgets.GOLD = { 1, 0.82, 0 }
+Widgets.RED = { 1, 0.3, 0.25 }
 
 --- A slightly darker box with a hairline border, for grouping content
 --- @param parent Frame

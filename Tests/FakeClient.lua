@@ -241,6 +241,11 @@ function Client.Install()
   GameTooltip = newWidget("GameTooltip")
   GameTooltip_Hide = ignore
   UISpecialFrames, StaticPopupDialogs = {}, {}
+  C_AddOns = {
+    GetAddOnMetadata = function()
+      return "1.2.3"
+    end,
+  }
   StaticPopup_Show = ignore
   STANDARD_TEXT_FONT, YES, NO = "font", "Yes", "No"
   SOUNDKIT = setmetatable({}, {

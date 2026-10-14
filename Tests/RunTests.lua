@@ -1178,7 +1178,7 @@ end
 --- @return table MainFrame
 local function openWindow(player)
   Client.Install()
-  ForeverGames = { db = { profile = { sound = true, window = { width = 920, height = 680, focus = false, scale = 100 } } }, printed = {} }
+  ForeverGames = { db = { profile = { sound = true, window = { width = 920, height = 680, scale = 100 } } }, printed = {} }
   function ForeverGames:Print(text)
     self.printed[#self.printed + 1] = text
   end
@@ -1272,6 +1272,130 @@ local function chessOnScreen()
   local MainFrame = openWindow(white)
   MainFrame.Open(match.id)
   return world, white, black, match.id, MainFrame
+end
+
+function tests.WindowWithNoGamesSaysWhatItIsAndWhoMadeIt()
+  local alone = World.New():AddPlayer("Alice-Realm")
+  openWindow(alone).Open()
+
+  -- The texts are their keys here
+  for _, key in ipairs({ "empty_title", "empty_text", "empty_version", "empty_created", "empty_thanks", "empty_disclaimer" }) do
+    local shown = Client.Find(function(widget)
+      return type(widget.text) == "string" and widget.text:find(key, 1, true) ~= nil and widget:IsVisible()
+    end)
+    equal(1, #shown, key)
+  end
+
+  -- The wisp on the logo goes around, shedding motes, without tripping over anything
+  local moving = Client.Find(function(widget)
+    return widget:GetScript("OnUpdate") ~= nil and widget:IsVisible()
+  end)
+  assert(#moving >= 1, "something should be moving")
+  for _ = 1, 400 do
+    for _, widget in ipairs(moving) do
+      widget:Fire("OnUpdate", 0.02)
+    end
+  end
+
+  -- A player who would rather the logo kept still can say so in the options
+  local wisp = ForeverGamesFrame.home.wisp
+  equal(true, wisp:IsVisible())
+  ForeverGames.db.profile.wisp = false
+  alone.private.MainFrame.Refresh()
+  equal(false, wisp:IsVisible())
+end
+
+function tests.WindowOpensOnItsFrontPageWhateverGamesThereAre()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local challenge = assert(bob.session:Invite("Alice-Realm", "chess"))
+  world:Deliver()
+  local alone = assert(alice.session:Invite({}, "solitaire"))
+  local MainFrame = openWindow(alice)
+  MainFrame.Open()
+
+  --- @return table[] The games listed, from the top
+  local function rows()
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.matchId ~= nil and widget:IsVisible()
+    end)
+  end
+  --- @param text string
+  --- @return number How many visible buttons say so
+  local function buttons(text)
+    return #Client.Find(function(widget)
+      return widget.kind == "Button" and widget.text == text and widget:IsVisible()
+    end)
+  end
+
+  -- No game is picked for the player: the games are listed under the logo, the challenge first
+  equal(false, MainFrame.IsViewing(challenge.id))
+  equal(false, MainFrame.IsViewing(alone.id))
+  equal(1, buttons("new_game"))
+  equal(0, buttons("home"))
+  equal(2, #rows())
+  equal(challenge.id, rows()[1].matchId)
+  equal("list_challenge", rows()[1].status.text)
+  equal(true, rows()[1].marker:IsShown())
+  -- A game that is being played is opened, not resigned from the list
+  equal(0, buttons("give_up"))
+
+  -- Going on is with the game that waits on the player
+  Client.Button("continue_game"):Fire("OnClick")
+  equal(true, MainFrame.IsViewing(challenge.id))
+  equal(0, buttons("new_game"))
+  Client.Button("home"):Fire("OnClick")
+  equal(false, MainFrame.IsViewing(challenge.id))
+
+  -- The challenge is answered where it is listed, and taking it up is playing it
+  equal(1, buttons("decline"))
+  Client.Button("accept"):Fire("OnClick")
+  world:Deliver()
+  equal("active", alice.matches[challenge.id].status)
+  equal(true, MainFrame.IsViewing(challenge.id))
+  equal(0, buttons("next_waiting"), "nothing else waits on the player")
+
+  -- Another challenge is a click away from the game that is on screen
+  local second = assert(bob.session:Invite("Alice-Realm", "checkers"))
+  world:Deliver()
+  Client.Button("next_waiting"):Fire("OnClick")
+  equal(true, MainFrame.IsViewing(second.id))
+  Client.Button("decline"):Fire("OnClick")
+  world:Deliver()
+
+  -- Closed and opened again the window is where it was left
+  MainFrame.Select(alone.id)
+  MainFrame.Toggle()
+  MainFrame.Toggle()
+  equal(true, MainFrame.IsViewing(alone.id))
+
+  -- With nobody waiting, going on is with the game that was looked at last
+  assert(alice.session:Resign(challenge.id))
+  world:Deliver()
+  MainFrame.Home()
+  Client.Button("continue_game"):Fire("OnClick")
+  equal(true, MainFrame.IsViewing(alone.id))
+
+  -- A game that is given up leaves the player at the front page
+  Client.Button("give_up"):Fire("OnClick")
+  equal(false, MainFrame.IsViewing(alone.id))
+  equal(1, buttons("new_game"))
+
+  -- Who is around is said in a box of its own, where something turns while that is being asked
+  local presence = ForeverGamesFrame.home.presence
+  equal("presence_none", presence.title.text)
+  equal(true, presence.dot:IsVisible())
+  equal(false, presence.spinner:IsVisible())
+  function alice.private.presence:SinceAnnounce()
+    return 2
+  end
+  MainFrame.Refresh()
+  equal("presence_looking", presence.title.text)
+  equal(false, presence.dot:IsVisible())
+  equal(true, presence.spinner:IsVisible())
+  for _ = 1, 60 do
+    presence.spinner:Fire("OnUpdate", 0.02)
+  end
 end
 
 function tests.WindowPlaysChessByClickingAndDragging()
@@ -1444,12 +1568,6 @@ function tests.WindowGivesTheBoardTheRoomItHas()
 
   ForeverGamesFrame:SetSize(1400, 1000)
   assert(board.width > normal, "a bigger window should mean a bigger board")
-  local big = board.width
-
-  Client.Button("focus_on"):Fire("OnClick")
-  assert(board.width > big, "focus should give the board the room the list had")
-  Client.Button("focus_off"):Fire("OnClick")
-  equal(big, board.width)
 
   ForeverGamesFrame:SetSize(764, 560)
   assert(board.width >= 8 * 30, "the board should stay usable in the smallest window, got " .. board.width)
@@ -2875,9 +2993,9 @@ function tests.WindowShowsACrowdGathering()
   world:Deliver()
   equal("active", guests[1].matches[id].status)
   -- In, with the others still to answer: nothing to play and nothing to resign from
-  equal(3, #Client.Find(function(widget)
+  equal(2, #Client.Find(function(widget)
     return widget.text == "status_gathering" and widget:IsVisible()
-  end), "said in the list, under the title and where the board will be")
+  end), "said under the title and where the board will be")
   equal(0, #Client.Find(function(widget)
     return widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget:IsVisible()
   end), "no board yet")
@@ -7783,11 +7901,6 @@ function tests.WindowFits2048IntoTheRoomItHas()
     ForeverGamesFrame:SetSize(764, 560)
     assert(grid.side < normal)
     fits()
-    -- With the list of matches out of the way there is more of it
-    local small = grid.side
-    Client.Button("focus_on"):Fire("OnClick")
-    assert(grid.side > small)
-    fits()
   end
 end
 
@@ -8180,7 +8293,8 @@ function tests.WindowPlaysSolitaire()
   equal(false, MainFrame.IsViewing(match.id))
   Client.Button("give_up"):Fire("OnClick")
   equal(1, #player.session:List())
-  equal(true, MainFrame.IsViewing(match.id))
+  -- With the game gone the player is back at the front page, where the other can be cleared away
+  equal(false, MainFrame.IsViewing(match.id))
   Client.Button("remove"):Fire("OnClick")
   equal(0, #player.session:List())
 end
@@ -8229,6 +8343,8 @@ function tests.WindowListsAGameForOneByItsName()
   local player, id, MainFrame = solitaireOnScreen()
   local match = player.matches[id]
   equal("solitaire_progress", MainFrame.Describe(match))
+  -- The games are listed on the front page
+  MainFrame.Home()
   local rows = Client.Find(function(widget)
     return widget.kind == "Button" and widget.matchId == id and widget:IsVisible()
   end)
