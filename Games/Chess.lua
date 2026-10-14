@@ -17,10 +17,8 @@ local L = private.L
 local WHITE, BLACK = 1, 2
 
 local KNIGHT_STEPS = { { 1, 2 }, { 2, 1 }, { 2, -1 }, { 1, -2 }, { -1, -2 }, { -2, -1 }, { -2, 1 }, { -1, 2 } }
-local ROOK_STEPS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
-local BISHOP_STEPS = { { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+-- Straight first, then diagonally
 local ALL_STEPS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
-local SLIDERS = { r = ROOK_STEPS, b = BISHOP_STEPS, q = ALL_STEPS }
 local PROMOTIONS = { "q", "r", "b", "n" }
 local BACK_RANK = { "r", "n", "b", "q", "k", "b", "n", "r" }
 
@@ -85,6 +83,34 @@ local function offset(square, files, ranks)
   return rank * 8 + file
 end
 
+-- From every square: where a knight jumps to, and the squares a line runs through in each of
+-- ALL_STEPS, nearest first. Worked out once, they are asked about all the time
+--- @type table<number, number[]>
+local KNIGHT_JUMPS = {}
+--- @type table<number, number[][]>
+local RAYS = {}
+for square = 0, 63 do
+  KNIGHT_JUMPS[square] = {}
+  for _, step in ipairs(KNIGHT_STEPS) do
+    KNIGHT_JUMPS[square][#KNIGHT_JUMPS[square] + 1] = offset(square, step[1], step[2])
+  end
+  RAYS[square] = {}
+  for index, step in ipairs(ALL_STEPS) do
+    local ray, to = {}, offset(square, step[1], step[2])
+    while to do
+      ray[#ray + 1] = to
+      to = offset(to, step[1], step[2])
+    end
+    RAYS[square][index] = ray
+  end
+end
+-- Which of the lines from a square each piece moves along: the first four of ALL_STEPS are
+-- straight, the last four diagonal
+local SLIDES = { r = { 1, 4 }, b = { 5, 8 }, q = { 1, 8 }, k = { 1, 8 } }
+-- The pieces that attack along the straight lines and along the diagonals, by seat
+local STRAIGHT = { [WHITE] = { R = true, Q = true }, [BLACK] = { r = true, q = true } }
+local DIAGONAL = { [WHITE] = { B = true, Q = true }, [BLACK] = { b = true, q = true } }
+
 --- @param board table<number, string>
 --- @param square number
 --- @param by number Attacking seat
@@ -104,29 +130,23 @@ local function isAttacked(board, square, by)
     end
   end
 
-  for _, step in ipairs(KNIGHT_STEPS) do
-    local from = offset(square, step[1], step[2])
-    if from and board[from] == knight then
+  for _, from in ipairs(KNIGHT_JUMPS[square]) do
+    if board[from] == knight then
       return true
     end
   end
 
-  for index, step in ipairs(ALL_STEPS) do
-    local straight = index <= 4
-    local from = offset(square, step[1], step[2])
-    if from and board[from] == king then
-      return true
-    end
-    while from do
+  local straight, diagonal = STRAIGHT[by], DIAGONAL[by]
+  for index, ray in ipairs(RAYS[square]) do
+    local sliders = index <= 4 and straight or diagonal
+    for distance, from in ipairs(ray) do
       local piece = board[from]
       if piece then
-        local kind = piece:lower()
-        if ownerOf(piece) == by and (kind == "q" or kind == (straight and "r" or "b")) then
+        if sliders[piece] or (distance == 1 and piece == king) then
           return true
         end
         break
       end
-      from = offset(from, step[1], step[2])
     end
   end
 
@@ -256,24 +276,23 @@ local function legalMoves(state)
       local kind = piece:lower()
       if kind == "p" then
         pawnMoves(state, candidates, from, seat)
-      elseif kind == "n" or kind == "k" then
-        for _, step in ipairs(kind == "n" and KNIGHT_STEPS or ALL_STEPS) do
-          local to = offset(from, step[1], step[2])
-          if to and ownerOf(board[to]) ~= seat then
+      elseif kind == "n" then
+        for _, to in ipairs(KNIGHT_JUMPS[from]) do
+          if ownerOf(board[to]) ~= seat then
             add(candidates, from, to, false)
           end
         end
       else
-        for _, step in ipairs(SLIDERS[kind]) do
-          local to = offset(from, step[1], step[2])
-          while to do
+        local rays = RAYS[from]
+        for index = SLIDES[kind][1], SLIDES[kind][2] do
+          for distance, to in ipairs(rays[index]) do
             if ownerOf(board[to]) ~= seat then
               add(candidates, from, to, false)
             end
-            if board[to] then
+            -- A king goes one square, the others as far as nothing is in the way
+            if board[to] or kind == "k" then
               break
             end
-            to = offset(to, step[1], step[2])
           end
         end
       end
@@ -281,16 +300,38 @@ local function legalMoves(state)
   end
   castlingMoves(state, candidates, seat)
 
-  -- Keep the moves that don't leave the mover's own king attacked
+  -- Keep the moves that don't leave the mover's own king attacked. Each is made on the board
+  -- itself and taken back again, which only ever touches the squares saved here
   local legal = {}
-  for _, move in ipairs(candidates) do
-    local after = {}
-    for square, piece in pairs(board) do
-      after[square] = piece
+  local king, kingAt = seat == WHITE and "K" or "k", nil
+  for square = 0, 63 do
+    if board[square] == king then
+      kingAt = square
+      break
     end
-    movePieces(after, move, state.enPassant)
-    if not inCheck(after, seat) then
+  end
+  local enemy, enPassant = other(seat), state.enPassant
+  for _, move in ipairs(candidates) do
+    local from, to = move.from, move.to
+    local piece = board[from]
+    local kind = piece:lower()
+    local touched = { from, to }
+    if kind == "p" and to == enPassant then
+      touched[3] = offset(to, 0, seat == WHITE and -1 or 1)
+    elseif kind == "k" and math.abs(to - from) == 2 then
+      touched[3], touched[4] = to > from and from + 3 or from - 4, to > from and from + 1 or from - 1
+    end
+    local saved = {}
+    for index, square in ipairs(touched) do
+      saved[index] = board[square] or false
+    end
+    movePieces(board, move, enPassant)
+    local at = kind == "k" and to or kingAt
+    if not at or not isAttacked(board, at, enemy) then
       legal[moveName(move)] = move
+    end
+    for index, square in ipairs(touched) do
+      board[square] = saved[index] or nil
     end
   end
   return legal
@@ -506,6 +547,198 @@ local function apply(state, seat, moveString)
   end
   return event
 end
+
+-----------------------------
+-- The computer
+-----------------------------
+-- It counts what each side has, and where: every piece has squares it is better on, a knight
+-- in the middle, a rook on the seventh rank, pawns further up the board. The king keeps out of
+-- the way behind its pawns until the queens are gone and there is little left that could
+-- trouble it, and comes out to fight then. Two bishops are worth more than a bishop and a
+-- knight. It looks at captures first, the most valuable piece taken by the least valuable
+-- first, and never stops looking in the middle of an exchange.
+
+local VALUES_OF = { p = 100, n = 320, b = 330, r = 500, q = 900, k = 0 }
+local BISHOP_PAIR = 30
+-- Below this much besides pawns and kings on the board, the king comes out
+local ENDGAME = 1300
+-- Where each piece is better and worse off, for white, from a8 along to h1: the way a board
+-- is printed. Black's are these upside down
+local PLACES = {
+  p = {
+    0, 0, 0, 0, 0, 0, 0, 0,
+    50, 50, 50, 50, 50, 50, 50, 50,
+    10, 10, 20, 30, 30, 20, 10, 10,
+    5, 5, 10, 25, 25, 10, 5, 5,
+    0, 0, 0, 20, 20, 0, 0, 0,
+    5, -5, -10, 0, 0, -10, -5, 5,
+    5, 10, 10, -20, -20, 10, 10, 5,
+    0, 0, 0, 0, 0, 0, 0, 0,
+  },
+  n = {
+    -50, -40, -30, -30, -30, -30, -40, -50,
+    -40, -20, 0, 0, 0, 0, -20, -40,
+    -30, 0, 10, 15, 15, 10, 0, -30,
+    -30, 5, 15, 20, 20, 15, 5, -30,
+    -30, 0, 15, 20, 20, 15, 0, -30,
+    -30, 5, 10, 15, 15, 10, 5, -30,
+    -40, -20, 0, 5, 5, 0, -20, -40,
+    -50, -40, -30, -30, -30, -30, -40, -50,
+  },
+  b = {
+    -20, -10, -10, -10, -10, -10, -10, -20,
+    -10, 0, 0, 0, 0, 0, 0, -10,
+    -10, 0, 5, 10, 10, 5, 0, -10,
+    -10, 5, 5, 10, 10, 5, 5, -10,
+    -10, 0, 10, 10, 10, 10, 0, -10,
+    -10, 10, 10, 10, 10, 10, 10, -10,
+    -10, 5, 0, 0, 0, 0, 5, -10,
+    -20, -10, -10, -10, -10, -10, -10, -20,
+  },
+  r = {
+    0, 0, 0, 0, 0, 0, 0, 0,
+    5, 10, 10, 10, 10, 10, 10, 5,
+    -5, 0, 0, 0, 0, 0, 0, -5,
+    -5, 0, 0, 0, 0, 0, 0, -5,
+    -5, 0, 0, 0, 0, 0, 0, -5,
+    -5, 0, 0, 0, 0, 0, 0, -5,
+    -5, 0, 0, 0, 0, 0, 0, -5,
+    0, 0, 0, 5, 5, 0, 0, 0,
+  },
+  q = {
+    -20, -10, -10, -5, -5, -10, -10, -20,
+    -10, 0, 0, 0, 0, 0, 0, -10,
+    -10, 0, 5, 5, 5, 5, 0, -10,
+    -5, 0, 5, 5, 5, 5, 0, -5,
+    0, 0, 5, 5, 5, 5, 0, -5,
+    -10, 5, 5, 5, 5, 5, 0, -10,
+    -10, 0, 5, 0, 0, 0, 0, -10,
+    -20, -10, -10, -5, -5, -10, -10, -20,
+  },
+  k = {
+    -30, -40, -40, -50, -50, -40, -40, -30,
+    -30, -40, -40, -50, -50, -40, -40, -30,
+    -30, -40, -40, -50, -50, -40, -40, -30,
+    -30, -40, -40, -50, -50, -40, -40, -30,
+    -20, -30, -30, -40, -40, -30, -30, -20,
+    -10, -20, -20, -20, -20, -20, -20, -10,
+    20, 20, 0, 0, 0, 0, 20, 20,
+    20, 30, 10, 0, 0, 10, 30, 20,
+  },
+  -- The king once there is little left
+  e = {
+    -50, -40, -30, -20, -20, -30, -40, -50,
+    -30, -20, -10, 0, 0, -10, -20, -30,
+    -30, -10, 20, 30, 30, 20, -10, -30,
+    -30, -10, 30, 40, 40, 30, -10, -30,
+    -30, -10, 30, 40, 40, 30, -10, -30,
+    -30, -10, 20, 30, 30, 20, -10, -30,
+    -30, -30, 0, 0, 0, 0, -30, -30,
+    -50, -30, -30, -30, -30, -30, -30, -50,
+  },
+}
+
+--- How well a seat stands
+--- @param state ChessState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local board = state.board
+  local officers, bishops = 0, { 0, 0 }
+  for _, piece in pairs(board) do
+    local kind = piece:lower()
+    if kind ~= "p" and kind ~= "k" then
+      officers = officers + VALUES_OF[kind]
+    end
+    if kind == "b" then
+      local owner = ownerOf(piece)
+      bishops[owner] = bishops[owner] + 1
+    end
+  end
+  local endgame = officers <= ENDGAME
+
+  local score = 0
+  for square, piece in pairs(board) do
+    local kind = piece:lower()
+    local owner = ownerOf(piece)
+    local rank, file = math.floor(square / 8), square % 8
+    -- The tables are printed from white's side, rank 8 first
+    local row = owner == WHITE and 7 - rank or rank
+    local places = PLACES[(kind == "k" and endgame) and "e" or kind]
+    local worth = VALUES_OF[kind] + places[row * 8 + file + 1]
+    score = score + (owner == seat and worth or -worth)
+  end
+  for owner = WHITE, BLACK do
+    if bishops[owner] >= 2 then
+      score = score + (owner == seat and BISHOP_PAIR or -BISHOP_PAIR)
+    end
+  end
+  return score
+end
+
+--- What a move takes, if anything, en passant included
+--- @param state ChessState
+--- @param move ChessMove
+--- @return string?
+local function takes(state, move)
+  local captured = state.board[move.to]
+  if not captured and move.to == state.enPassant and state.board[move.from]:lower() == "p" then
+    return "p"
+  end
+  return captured and captured:lower()
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  priority = function(state, name)
+    local move = state.legal[name]
+    if not move then
+      return 0
+    end
+    local captured = takes(state, move)
+    local score = move.promotion and VALUES_OF[move.promotion] or 0
+    if captured then
+      score = score + VALUES_OF[captured] * 10 - VALUES_OF[state.board[move.from]:lower()] / 100
+    end
+    return score
+  end,
+  noisy = function(state, name)
+    local move = state.legal[name]
+    return move ~= nil and (move.promotion ~= nil or takes(state, move) ~= nil)
+  end,
+  -- How often it came up and, close to the fifty moves, how close: the same pieces can be a draw
+  -- one way and not another
+  key = function(state)
+    local placed = positionKey(state)
+    return placed .. (state.positions[placed] or 0) .. (state.halfMoves >= 90 and state.halfMoves or "")
+  end,
+  copy = function(state)
+    local board = {}
+    for square, piece in pairs(state.board) do
+      board[square] = piece
+    end
+    local castle = state.castle
+    -- A move works out the legal moves anew and only adds to how often a position came up
+    return {
+      board = board,
+      turn = state.turn,
+      castle = { K = castle.K, Q = castle.Q, k = castle.k, q = castle.q },
+      enPassant = state.enPassant,
+      halfMoves = state.halfMoves,
+      positions = private.Computer.Over(state.positions),
+      legal = state.legal,
+      check = state.check,
+      last = state.last,
+      outcome = state.outcome,
+    }
+  end,
+  levels = {
+    -- Looks no further than what it takes, and doesn't see it coming back
+    easy = { depth = 2, budget = 300, slip = 0.3, among = 3, quiet = 0 },
+    medium = { depth = 3, budget = 1500, slip = 0.1, quiet = 4 },
+    hard = { depth = 8, budget = 8000, quiet = 8 },
+  },
+}
 
 -----------------------------
 -- View
@@ -829,6 +1062,7 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return seat == WHITE and L["chess_white"] or L["chess_black"]

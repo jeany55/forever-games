@@ -48,27 +48,27 @@ end
 --- @param board table<number, number>
 --- @param seat number
 --- @param square number
---- @return number[]
+--- @return number[]? nil if it would turn none, and the disc can't go there
 local function flipsFor(board, seat, square)
-  local flips = {}
+  local flips = nil
   local column, row = square % SIZE, math.floor(square / SIZE)
   for _, direction in ipairs(DIRECTIONS) do
-    local line = {}
-    local nextColumn, nextRow = column + direction[1], row + direction[2]
+    local across, up = direction[1], direction[2]
+    local nextColumn, nextRow, between = column + across, row + up, 0
     while nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE do
-      local at = nextRow * SIZE + nextColumn
-      local owner = board[at]
+      local owner = board[nextRow * SIZE + nextColumn]
       if owner == seat then
         -- The line is closed off by one of their own, everything in between turns
-        for _, trapped in ipairs(line) do
-          flips[#flips + 1] = trapped
+        for step = 1, between do
+          flips = flips or {}
+          flips[#flips + 1] = (row + up * step) * SIZE + column + across * step
         end
         break
       elseif not owner then
         break
       end
-      line[#line + 1] = at
-      nextColumn, nextRow = nextColumn + direction[1], nextRow + direction[2]
+      between = between + 1
+      nextColumn, nextRow = nextColumn + across, nextRow + up
     end
   end
   return flips
@@ -82,7 +82,7 @@ local function legalMoves(board, seat)
   for square = 0, SIZE * SIZE - 1 do
     if not board[square] then
       local flips = flipsFor(board, seat, square)
-      if #flips > 0 then
+      if flips then
         legal[square] = flips
       end
     end
@@ -159,6 +159,148 @@ local function moves(state)
   end
   return list
 end
+
+-----------------------------
+-- The computer
+-----------------------------
+-- What a square is worth depends on where it is more than on anything else. A corner can never be
+-- turned over, and holds the edges either side of it. The squares next to a corner are the
+-- worst there are while it is empty, they hand it to the opponent: diagonally next to it most
+-- of all. Then it is about having moves: a player who has many and leaves the other few gets to
+-- choose, the other has to take what is left. The number of discs counts for little until the
+-- board fills up, and for everything at the end, which the computer looks all the way through
+-- to once there are few enough squares left.
+
+-- By square, from a1, row by row
+local WORTH = {
+  100, -20, 10, 5, 5, 10, -20, 100,
+  -20, -50, -2, -2, -2, -2, -50, -20,
+  10, -2, 1, 1, 1, 1, -2, 10,
+  5, -2, 1, 0, 0, 1, -2, 5,
+  5, -2, 1, 0, 0, 1, -2, 5,
+  10, -2, 1, 1, 1, 1, -2, 10,
+  -20, -50, -2, -2, -2, -2, -50, -20,
+  100, -20, 10, 5, 5, 10, -20, 100,
+}
+-- The corner each square next to a corner is next to, which makes it safe once it is taken
+local CORNER_OF = {
+  [1] = 0,
+  [8] = 0,
+  [9] = 0,
+  [6] = 7,
+  [14] = 7,
+  [15] = 7,
+  [48] = 56,
+  [49] = 56,
+  [57] = 56,
+  [54] = 63,
+  [55] = 63,
+  [62] = 63,
+}
+-- What a move more than the opponent has is worth, and a disc more once the board is full
+local MOBILITY, DISC = 8, 1
+
+--- How many squares a seat could put a disc on, without working out what each would turn over
+--- @param board table<number, number>
+--- @param seat number
+--- @return number
+local function countMoves(board, seat)
+  local count = 0
+  for square = 0, SIZE * SIZE - 1 do
+    if not board[square] then
+      local column, row = square % SIZE, math.floor(square / SIZE)
+      for _, direction in ipairs(DIRECTIONS) do
+        local nextColumn, nextRow, between = column + direction[1], row + direction[2], 0
+        local closed = false
+        while nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE do
+          local owner = board[nextRow * SIZE + nextColumn]
+          if owner == seat then
+            closed = between > 0
+            break
+          elseif not owner then
+            break
+          end
+          between = between + 1
+          nextColumn, nextRow = nextColumn + direction[1], nextRow + direction[2]
+        end
+        if closed then
+          count = count + 1
+          break
+        end
+      end
+    end
+  end
+  return count
+end
+
+--- How well a seat stands in a position
+--- @param state ReversiState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local board, opponent = state.board, other(seat)
+  local score = 0
+  for square, owner in pairs(board) do
+    local worth = WORTH[square + 1]
+    local corner = CORNER_OF[square]
+    if corner and board[corner] then
+      -- Next to a corner that is taken already it is an edge like any other
+      worth = 2
+    end
+    score = score + (owner == seat and worth or -worth)
+  end
+
+  -- How many places each could put a disc, worked out already for whoever is to move
+  local moving = 0
+  for _ in pairs(state.legal) do
+    moving = moving + 1
+  end
+  local waiting = countMoves(board, other(state.turn))
+  local mine, theirs = moving, waiting
+  if state.turn ~= seat then
+    mine, theirs = waiting, moving
+  end
+  score = score + MOBILITY * (mine - theirs) * 10 / (mine + theirs + 2)
+
+  -- The discs themselves, more and more as the board fills
+  local filled = state.counts[seat] + state.counts[opponent]
+  return score + DISC * (state.counts[seat] - state.counts[opponent]) * filled / (SIZE * SIZE)
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  priority = function(_, move)
+    return WORTH[(move:byte(1) - 97) + (tonumber(move:sub(2)) - 1) * SIZE + 1]
+  end,
+  key = function(state)
+    local squares = {}
+    for square = 0, SIZE * SIZE - 1 do
+      squares[square + 1] = state.board[square] or 0
+    end
+    return table.concat(squares) .. state.turn
+  end,
+  copy = function(state)
+    local board = {}
+    for square, owner in pairs(state.board) do
+      board[square] = owner
+    end
+    -- The legal moves are worked out anew by every move, never changed
+    return {
+      board = board,
+      turn = state.turn,
+      legal = state.legal,
+      counts = { state.counts[1], state.counts[2] },
+      last = state.last,
+      passed = state.passed,
+      outcome = state.outcome,
+    }
+  end,
+  levels = {
+    easy = { depth = 1, slip = 0.35, among = 3 },
+    medium = { depth = 3, budget = 2500, slip = 0.1 },
+    hard = { depth = 20, budget = 12000 },
+  },
+}
 
 -----------------------------
 -- View
@@ -296,6 +438,7 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = seatLabel,
 })

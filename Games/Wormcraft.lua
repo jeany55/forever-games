@@ -37,6 +37,11 @@
 -- "2R30JW12Ffb.45.80L20" is the second of the squad walking right for a second, jumping, waiting
 -- and firing, then running back the way they came. Before that, every player picks a class with
 -- "c" and its name, "cMAGE", in seat order.
+--
+-- The computer plays whichever squads nobody else does (Engine/Computer.lua), picking its class
+-- and making its turns like anyone: how it decides on them is Brain's, further down. A game the
+-- player started alone before that, with the computer's squads part of the game itself, is
+-- still played out the way it was then (`alone`), the player's client making every move.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -416,7 +421,7 @@ end
 -- Rules
 -----------------------------
 
---- @param players number Played alone, the other squads are the computer's
+--- @param players number One for a game played alone from before the computer was the engine's: the other squads are the computer's then, as many as `bots` says
 --- @param random Random
 --- @param rules table<string, any>?
 --- @return WormcraftState
@@ -1944,8 +1949,9 @@ end
 -- turn will be played out, and picks the one that does the most harm to the others and the
 -- least to itself. How good it is (SKILLS) is how many it tries and how well it aims what it
 -- picked: the easiest only ever throws fireballs and grenades and arrows, from where it stands,
--- and its hand shakes. Its moves are made by whoever plays the game alone, and are written down
--- like any other, so nothing it does is ever worked out again.
+-- and its hand shakes. Its moves are written down like any other, so nothing it does is ever
+-- worked out again: the engine has it think them through (COMPUTER below), or in a game played
+-- alone from before, the view does.
 --
 -- It thinks a few hundred ticks at a time (Brain:Think), so that it can be spread over frames.
 -- Nothing in here needs to come out the same on another client: the move does, and only the
@@ -1962,6 +1968,8 @@ local SKILLS = {
   hard = { kinds = { shell = true, grenade = true, shot = true, chain = true, melee = true, drain = true, dash = true, strike = true, kodo = true, sheep = true, heal = true, charge = true, shield = true }, angles = { 20, 40, 58, 75 }, halvings = 6, targets = 2, walks = { 0, -45, 45 }, wobble = 0, push = 1, among = 1, everyone = true },
 }
 local SKILL_ORDER = { "easy", "medium", "hard" }
+-- What a round of its thinking counts as to the engine: reason enough to look at the clock
+local CLOCK_TICKS = 4
 -- How long it looks as though it aims before it fires, and how many ticks it plays out at a time
 local PONDER, THOUGHT = 20, 600
 
@@ -1976,9 +1984,10 @@ local Brain = {}
 Brain.__index = Brain
 
 --- @param state WormcraftState Whose turn it is is the computer's
+--- @param skill string? How good it is, the skill a game played alone was set up with if left out
 --- @return WormcraftBrain
-function Brain.New(state)
-  local self = setmetatable({ state = state, seat = state.turn, skill = SKILLS[state.skill] or SKILLS.medium, work = 0 }, Brain)
+function Brain.New(state, skill)
+  local self = setmetatable({ state = state, seat = state.turn, skill = SKILLS[skill or state.skill] or SKILLS.medium, work = 0 }, Brain)
   self.dice = private.Random.New(private.Random.Stir(state.seed, "brain" .. state.turns))
   self.thread = coroutine.create(function()
     return self:decide()
@@ -2310,6 +2319,29 @@ function Brain:decide()
   end
   return spell(best.slot, inputs)
 end
+
+-- What the engine's computer knows about Wormcraft: everything of it is in the brain. Its levels
+-- are the brain's skills, and it picks a class at random. A turn is never taken back, the wind
+-- and the crates would come out another way
+local COMPUTER = {
+  takeback = false,
+  pause = 0.8,
+  think = function(seen, seat, brain)
+    if seen.picking then
+      return CLASS .. CLASS_ORDER[brain.random:Roll(#CLASS_ORDER)]
+    end
+    local squad = Brain.New(seen, brain.level.skill)
+    while true do
+      local move = squad:Think()
+      if move then
+        return move
+      end
+      -- Its own thinking goes a few hundred ticks at a time: this is where a frame goes by
+      brain:Spend(CLOCK_TICKS)
+    end
+  end,
+  levels = { easy = { skill = "easy" }, medium = { skill = "medium" }, hard = { skill = "hard" } },
+}
 
 -- For the view and the tests
 private.Wormcraft = {
@@ -3416,12 +3448,19 @@ end
 --- @param seat number
 --- @return string
 function View:teamName(seat)
-  local state = self.view.state
-  local team = state.teams[seat]
-  if team and team.computer then
+  local view = self.view
+  local team = view.state.teams[seat]
+  local computer = team and (team.computer or (view.computers and view.computers[seat]))
+  if computer and team.class then
     return L["wormcraft_computer"]:format(className(team.class))
   end
-  return self.view.names[seat] or ""
+  return view.names[seat] or ""
+end
+
+--- Whether there is a turn still being shown, which the next one has to wait for
+--- @return boolean
+function View:Busy()
+  return self.replay ~= nil or #self.queue > 0
 end
 
 --- Lets the computer think for a while, and makes its move once it knows and has looked as though
@@ -3785,7 +3824,8 @@ function View:refresh()
       status = status .. "  " .. L["wormcraft_ready"]
     end
   else
-    status = L[self.brain and "wormcraft_thinking" or "wormcraft_their_turn"]:format(self:teamName(state.turn))
+    local computer = self.brain or (view.computers and view.computers[state.turn])
+    status = L[computer and "wormcraft_thinking" or "wormcraft_their_turn"]:format(self:teamName(state.turn))
   end
   self.status:SetText(status)
   self.round:SetText(L["wormcraft_round"]:format(state.round, state.level))
@@ -4003,8 +4043,11 @@ private.Games.Register({
   genre = "strategy",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\wormcraft",
   version = 1,
-  seats = { 1, 2, 3, 4 },
+  seats = { 2, 3, 4 },
   options = {
+    -- The computer's squads in a game played alone from before the computer was the engine's.
+    -- Only ever offered to a game for one, which this no longer is: they are here for the games
+    -- that were set up with them, to be played out the way they were
     {
       id = "bots",
       name = L["wormcraft_option_bots"],
@@ -4079,6 +4122,11 @@ private.Games.Register({
   moves = moves,
   result = result,
   drop = drop,
+  beaten = function(state, seat)
+    local team = state.teams[seat]
+    return not state.picking and team ~= nil and team.out == true
+  end,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return L["wormcraft_team_" .. TEAM_COLORS[seat]]

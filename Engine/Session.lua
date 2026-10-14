@@ -36,6 +36,12 @@
 -- never anyone's turn but the player's, and nothing about it is ever sent. It doesn't count as
 -- waiting on the player either, a game nobody else is in can wait for as long as it likes.
 --
+-- A game against the computer is the player's alone in the same way: nothing about it is sent,
+-- and it waits on nobody. The computer's moves are made here, a little thinking at a time
+-- whenever whoever shows the match asks for it (Session:Think), and go in the log like anyone's.
+-- The player may take a move back, the computer's answer to it with it, where the game allows
+-- that. How each game against it went is counted, by how well it played (Session:Tally).
+--
 -- A game for two can also be left open to whoever wants it: the player links it in chat, and the
 -- first one to click the link asks for it. Asking is as good as accepting, so the challenge that
 -- comes back is on at once. Whoever asks too late, or for a game that was never open, is told so.
@@ -54,6 +60,15 @@ local _, private = ...
 --- @field offers table<string, Offer>? The games the player linked in chat that nobody took yet, by game id. Persisted. Forgotten with the session if left out
 --- @field onRefused (fun(host: string, gameId: string, reason: string))? Called when a game the player asked for isn't to be had
 --- @field takes (fun(sender: string): boolean)? Whether the player takes challenges from this player. From everyone if left out
+--- @field clock (fun(): number)? Milliseconds from some time or other, for the computer to tell how long it has been thinking. Without it the computer thinks until it knows, however long that takes
+--- @field versus table<string, table<string, VersusTally>>? How the player's games against the computer went, by game id and level. Persisted. Forgotten with the session if left out
+--- @field log (fun(...: string))? Where to say that something went wrong that the player needn't be bothered with
+
+--- How the games against the computer at one level went
+--- @class VersusTally
+--- @field won number
+--- @field drawn number
+--- @field lost number
 
 --- A game that is open to whoever clicks its link first
 --- @class Offer
@@ -70,13 +85,16 @@ local _, private = ...
 --- @field checkedIn table<string, number> When the player a match is waiting on was last asked how much of it they have, by match id
 --- @field mended table<string, table<number, number>> When a log that had parted ways with a seat's without it showing was last set right from the start, by match id
 --- @field asked table<string, { host: string, game: string, expires: number }> Games the player asked for by clicking a link and hasn't heard about yet, by the id they gave them
+--- @field thinking table<string, { ply: number, thinker: Thinker }> What the computer is deciding on in each game against it, by match id, and how long the log was when it started
 local Session = {}
 Session.__index = Session
 private.Session = Session
 
 local Codec = private.Codec
+local Computer = private.Computer
 local Games = private.Games
 local Match = private.Match
+local Random = private.Random
 
 local RETRY_BASE = 30
 local RETRY_MAX = 600
@@ -101,7 +119,8 @@ function Session.New(env)
   end
   env.records = env.records or {}
   env.offers = env.offers or {}
-  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, mended = {}, asked = {} }, Session)
+  env.versus = env.versus or {}
+  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, mended = {}, asked = {}, thinking = {} }, Session)
 end
 
 -----------------------------
@@ -148,7 +167,7 @@ end
 local function peersOf(match)
   local seats = {}
   for _, seat in ipairs(Match.Others(match)) do
-    if not (match.gone and match.gone[seat]) then
+    if not (match.gone and match.gone[seat]) and not Match.IsComputer(match, seat) then
       seats[#seats + 1] = seat
     end
   end
@@ -264,7 +283,7 @@ end
 --- @param match Match
 --- @return boolean
 function Session:NeedsAttention(match)
-  if match.hidden or Match.IsSolo(match) then
+  if match.hidden or Match.IsLocal(match) then
     return false
   end
   return match.status == "incoming" or match.unread == true or Match.IsMyTurn(match)
@@ -310,7 +329,7 @@ function Session:Opponents()
   for _, match in pairs(self.env.matches) do
     if not match.hidden then
       for seat, name in pairs(match.players) do
-        if seat ~= match.me then
+        if seat ~= match.me and not Match.IsComputer(match, seat) then
           last[name] = math.max(last[name] or 0, match.updated or 0)
         end
       end
@@ -377,11 +396,67 @@ function Session:startSolo(game, options)
   return match
 end
 
+--- Starts a game against the computer. It is on at once, there is nobody to ask
+--- @param game GameDefinition
+--- @param setup InviteSetup
+--- @return Match?, string? error
+function Session:startComputer(game, setup)
+  local level, count = setup.computer.level or Computer.DEFAULT_LEVEL, setup.computer.count or 1
+  if not Computer.Plays(game) then
+    return nil, "no_computer"
+  end
+  if not Computer.IsLevel(level) or type(count) ~= "number" or count < 1 or not Games.CanSeat(game, count + 1) then
+    return nil, "player_count"
+  end
+
+  local now, seats = self.env.now(), count + 1
+  local players, computers, mySeat = {}, {}, nil
+  if seats == 2 and (setup.seat == 1 or setup.seat == 2) then
+    mySeat = setup.seat
+  else
+    mySeat = self.env.random(seats)
+  end
+  for seat = 1, seats do
+    players[seat] = seat == mySeat and self.env.me or Match.COMPUTER
+    computers[seat] = seat ~= mySeat and level or nil
+  end
+  --- @type Match
+  local match = {
+    id = string.format("%x%06x", now, self.env.random(0xFFFFFF)),
+    game = game.id,
+    gameVersion = game.version,
+    players = players,
+    computers = computers,
+    options = Games.Chosen(game, Games.ForPlayers(game, setup.options, seats)),
+    me = mySeat,
+    log = {},
+    status = "active",
+    seen = {},
+    created = now,
+    updated = now,
+  }
+  if seats > 2 then
+    -- Everyone is there already: the game begins as it is set up
+    match.host = mySeat
+    assert(Match.Append(match, Match.START))
+  end
+  self.env.matches[match.id] = match
+  self.env.notify("changed", match)
+  return match
+end
+
+--- How a game is to be set up
+--- @class InviteSetup
+--- @field options table<string, any>? How the rules are set, by option id. The usual way if left out
+--- @field seat number? For a game of two, the seat the local player takes. At random if left out
+--- @field id string? The id of a match that was asked for, which it goes by
+--- @field computer { level: string?, count: number? }? Against the computer instead of anyone: how well it plays, Computer.DEFAULT_LEVEL if left out, and how many seats it takes, one if left out
+
 --- Challenges one player, or several to a game for more than two. With nobody to challenge it
---- starts a game for one, where the game is one
+--- starts a game for one, where the game is one, or against the computer, where that is asked for
 --- @param targets string|string[] Full player names
 --- @param gameId string
---- @param setup { options: table<string, any>?, seat: number?, id: string? }? How the rules are set, by option id, and for a game of two the seat the local player takes. The usual rules and a seat at random if left out. A match that was asked for goes by the id it was asked for with
+--- @param setup InviteSetup?
 --- @return Match?, string? error
 function Session:Invite(targets, gameId, setup)
   setup = setup or {}
@@ -391,6 +466,9 @@ function Session:Invite(targets, gameId, setup)
   end
   if type(targets) ~= "table" then
     targets = { targets }
+  end
+  if #targets == 0 and setup.computer then
+    return self:startComputer(game, setup)
   end
   if #targets == 0 then
     if Games.CanSeat(game, 1) then
@@ -620,6 +698,8 @@ function Session:appendOwn(id, entry)
   match.unread = nil
   self:pushAll(match)
   self:record(match)
+  self:beaten(match)
+  self:Tally(match)
   self:touch(match, "changed")
   return true
 end
@@ -647,6 +727,18 @@ function Session:Resign(id)
   local match = self.env.matches[id]
   if not match or match.status ~= "active" or not Match.Started(match) or Match.IsOut(match, match.me) then
     return false, "no_match"
+  end
+  if Match.IsComputerMatch(match) and not Match.Result(match) then
+    -- The computer doesn't play on among itself: the game is over once the player is out of it
+    self.thinking[id] = nil
+    local ok, err = Match.Append(match, Match.ResignEntry(match.me))
+    if not ok then
+      return false, err
+    end
+    match.status = "finished"
+    self:Tally(match)
+    self:touch(match, "changed")
+    return true
   end
   return self:appendOwn(id, Match.ResignEntry(match.me))
 end
@@ -740,13 +832,39 @@ function Session:Spend(id, seconds)
   end
 end
 
---- Whether the local player can take their last move back: only in a game they play alone
---- that allows it, and not once it is over
+--- How long the log of a game against the computer is to be once the player's last move is
+--- taken back: whatever the computer did since goes with it, and so does a draw offer the
+--- player made with it
+--- @param match Match
+--- @return number? nil if the player hasn't moved yet
+local function beforeLastMove(match)
+  local events = Match.Events(match)
+  for index = #events, 1, -1 do
+    local event = events[index]
+    if event.seat == match.me and event.kind == "move" then
+      local cut = index - 1
+      while cut > 0 and events[cut].seat == match.me and events[cut].kind == "offer" do
+        cut = cut - 1
+      end
+      return cut
+    end
+  end
+  return nil
+end
+
+--- Whether the local player can take their last move back: in a game they play alone that
+--- allows it, or against the computer where the game does, and not once it is over
 --- @param match Match
 --- @return boolean
 function Session:CanUndo(match)
   local game = Games.Get(match.game)
-  return game ~= nil and game.undo == true and Match.IsSolo(match) and match.status == "active" and #match.log > 0
+  if not game or match.status ~= "active" then
+    return false
+  end
+  if Match.IsComputerMatch(match) then
+    return Computer.TakesBack(game) and beforeLastMove(match) ~= nil
+  end
+  return game.undo == true and Match.IsSolo(match) and #match.log > 0
 end
 
 --- Takes the local player's last move back
@@ -760,9 +878,162 @@ function Session:Undo(id)
   if not self:CanUndo(match) then
     return false, "no_undo"
   end
-  Match.Truncate(match, #match.log - 1)
+  self.thinking[id] = nil
+  Match.Truncate(match, Match.IsComputerMatch(match) and beforeLastMove(match) or #match.log - 1)
   self:touch(match, "changed")
   return true
+end
+
+-----------------------------
+-- The computer
+-----------------------------
+
+--- The seat the computer is to move in, in a game against it that waits on it
+--- @param match Match
+--- @return number? nil if it isn't the computer's move
+function Session:ComputerTurn(match)
+  if not Match.IsComputerMatch(match) or match.status ~= "active" then
+    return nil
+  end
+  local turn = Match.Turn(match)
+  return turn and Match.IsComputer(match, turn) and turn or nil
+end
+
+--- Whether the computer knows what it is going to do and is only waiting to be let do it
+--- @param match Match
+--- @return boolean
+function Session:ComputerReady(match)
+  local thought = self.thinking[match.id]
+  return thought ~= nil and thought.ply == #match.log and thought.thinker.done
+end
+
+--- Makes the computer's move, or answers the player's draw offer. A move that turns out not to
+--- be legal after all is put right with one that is: the game goes on whatever the computer did
+--- @param match Match
+--- @param seat number
+--- @param thinker Thinker
+function Session:computerMoves(match, seat, thinker)
+  local game = Games.Get(match.game)
+  local log = self.env.log
+  if thinker.failed and log then
+    log("computer", match.game, "failed:", thinker.failed)
+  end
+  local offer = Match.DrawOffer(match)
+  local entry = thinker.move
+  if offer and offer ~= seat and thinker.score and thinker.score <= 0 then
+    -- No better off playing on than settling for a draw
+    entry = Match.DrawAcceptEntry(seat)
+  end
+  local ok, err = false, "no_move"
+  if entry then
+    ok, err = Match.Append(match, entry)
+  end
+  if not ok then
+    if log then
+      log("computer", match.game, "played", tostring(entry), "which was refused:", tostring(err))
+    end
+    for _, move in ipairs(game.moves and game.moves(Match.State(match), seat) or {}) do
+      ok = Match.Append(match, move)
+      if ok then
+        break
+      end
+    end
+    if not ok then
+      ok = Match.Append(match, Match.ResignEntry(seat))
+    end
+  end
+  self:beaten(match)
+  self:Tally(match)
+  self:touch(match, "changed")
+end
+
+--- Ends a game against the computer for the player once the others have put them out of it
+--- @param match Match
+function Session:beaten(match)
+  local game = Games.Get(match.game)
+  if match.status ~= "active" or not Match.IsComputerMatch(match) or not game or not game.beaten then
+    return
+  end
+  if game.beaten(Match.State(match), match.me) then
+    self.thinking[match.id] = nil
+    match.status, match.beaten = "finished", true
+  end
+end
+
+--- Lets the computer think about its move in a game against it, if it is the computer's move
+--- @param id string
+--- @param ms number? For how long it may think now, until it knows if left out
+--- @param ready boolean? Whether it may make the move once it knows it. Otherwise it waits with it, for whoever shows the match to be done showing the move before
+--- @return boolean thinking Whether the computer is still to move
+function Session:Think(id, ms, ready)
+  local match = self.env.matches[id]
+  local seat = match and self:ComputerTurn(match)
+  if not seat then
+    self.thinking[id] = nil
+    return false
+  end
+  -- Only the match being looked at is thought about: what was half thought out for another goes
+  for other in pairs(self.thinking) do
+    if other ~= id then
+      self.thinking[other] = nil
+    end
+  end
+  local thought = self.thinking[id]
+  if not thought or thought.ply ~= #match.log then
+    local game = Games.Get(match.game)
+    local state = Match.State(match)
+    -- Only ever what its own seat may see, on a copy it can do what it likes with
+    local seen = Computer.Copy(game.visible and game.visible(state, seat) or state)
+    local seed = Random.Stir(Random.Seed(match.id), "computer" .. #match.log)
+    local offer = Match.DrawOffer(match)
+    local thinker = Computer.Think(game, seen, seat, match.computers[seat], seed, offer ~= nil and offer ~= seat)
+    thought = { ply = #match.log, thinker = thinker }
+    self.thinking[id] = thought
+  end
+  if not thought.thinker:Run(ms, self.env.clock) or not ready then
+    return true
+  end
+  self.thinking[id] = nil
+  self:computerMoves(match, seat, thought.thinker)
+  return self:ComputerTurn(match) ~= nil
+end
+
+--- Plays the computer's moves until it is the player's turn again or the game is over, thinking
+--- for as long as that takes. For the tests, and for anything that can't wait a frame at a time
+--- @param id string
+function Session:ThinkThrough(id)
+  while self:Think(id, nil, true) do
+  end
+end
+
+--- Counts a game against the computer that is over, once
+--- @param match Match
+function Session:Tally(match)
+  if match.tallied or match.status ~= "finished" or not Match.IsComputerMatch(match) then
+    return
+  end
+  local result, level = Match.Result(match), Match.Level(match)
+  local how = "lost"
+  if result and result.winner == match.me then
+    how = "won"
+  elseif result and result.winner == 0 and result.reason ~= "resign" then
+    how = "drawn"
+  end
+  local byLevel = self.env.versus[match.game] or {}
+  self.env.versus[match.game] = byLevel
+  local tally = byLevel[level] or { won = 0, drawn = 0, lost = 0 }
+  byLevel[level] = tally
+  tally[how] = tally[how] + 1
+  match.tallied = true
+end
+
+--- How the player's games against the computer went, at a level
+--- @param gameId string
+--- @param level string
+--- @return VersusTally
+function Session:Versus(gameId, level)
+  local tally = self.env.versus[gameId] and self.env.versus[gameId][level]
+  return { won = tally and tally.won or 0, drawn = tally and tally.drawn or 0, lost = tally and tally.lost or 0 }
 end
 
 --- Whether the local player can walk away from a match without resigning it first: it is over,
@@ -775,6 +1046,10 @@ function Session:CanForget(match)
   end
   if Match.IsSolo(match) then
     return true
+  end
+  if Match.IsComputerMatch(match) and match.status == "active" then
+    -- Walking away from a game against it would be a way of never losing one
+    return beforeLastMove(match) == nil
   end
   return match.status ~= "active" or not Match.Started(match) or Match.IsOut(match, match.me)
 end
@@ -791,6 +1066,7 @@ function Session:Forget(id)
   if not self:CanForget(match) then
     return false, "match_in_progress"
   end
+  self.thinking[id] = nil
 
   if match.status == "outgoing" or (match.status == "active" and not Match.Started(match)) then
     -- The host calls it off for everyone, anyone else tells the host they are out after all
@@ -830,7 +1106,8 @@ function Session:Flush(force)
 
   for id, match in pairs(self.env.matches) do
     local turn = Match.Turn(match)
-    if turn and turn ~= match.me and now - math.max(match.updated or 0, self.checkedIn[id] or 0) >= CHECK_IN then
+    local waiting = turn and turn ~= match.me and not Match.IsComputer(match, turn)
+    if waiting and now - math.max(match.updated or 0, self.checkedIn[id] or 0) >= CHECK_IN then
       -- Asked once and not again until the next time round, whether or not it gets through
       self.checkedIn[id] = now
       self:send(match, turn, "SYN", #match.log)

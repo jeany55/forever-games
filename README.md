@@ -1,7 +1,8 @@
 # Forever Games
 
 A World of Warcraft Forever addon for playing classic games against your friends and guildies, at
-your own pace. Make a move, go pull a boss, come back later.
+your own pace. Make a move, go pull a boss, come back later. Or against the computer, whenever
+nobody is around.
 
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
 Chinese Checkers, which is for up to six, and Crazy Eights, which is too. Wormcraft, artillery for
@@ -26,6 +27,18 @@ solve on your own or the two of you together, both at once.
 - A game for more than two has you pick everyone who plays: click them in the list, or type a
   name and press Enter, one after the other. The game begins once they have all accepted, and it
   is off if one of them declines. Whoever resigns leaves the others to play on
+- Every game for two or more can be played against the computer: it is at the top of the list
+  of players, **The computer**. Pick it, and how good it is joins the rules: **Easy** doesn't
+  look far ahead and makes mistakes, **Medium** thinks a few moves ahead and seldom slips,
+  **Hard** looks as far ahead as it can and never slips. Next to each is how your games against
+  it went. In a game for more than two, set how many seats it takes. The game begins at once,
+  nothing about it is sent anywhere, and it waits for you: the computer only thinks while the
+  game is on screen, and takes a moment over its move so you see it made. **Take Back** takes
+  back your last move and the computer's answer to it, in the games where that gives nothing
+  away (not where cards or a hidden fleet were turned up, nor where the dice were rolled for
+  it). **Offer Draw** works too: it takes the draw when it is no better off playing on.
+  **Play Again** sets the same game up again, the other way round. The next game of that kind
+  starts out against the computer again, set the same way, and so does `/fg play <game>`
 - A game that can be played alone or together, like Fourtiles, is played alone if you pick
   nobody: **Play Alone**. Played together it has no turns. Both of you play whenever you like,
   online together or not, and what each of you did is put together when you next meet
@@ -56,7 +69,8 @@ solve on your own or the two of you together, both at once.
   combat, and the question that was up counts for nothing; it goes on by itself a few seconds
   after the fight, and the host can **Pause** and **Go On** by hand too. Made small, its window
   hides while you fight. The host doesn't ask what it asked lately, from one night to the next
-- A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
+- A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`
+  (which plays a game for more against the computer).
   One with something to set up, like how hard Minesweeper is, asks for that first, and
   `/fg play` goes by what you said last.
   It waits for as long as you like, **Undo** takes back a move, and as many more as you press
@@ -94,10 +108,10 @@ solve on your own or the two of you together, both at once.
   while you wait for the other fleet. After that click a square of the other sea to fire at it:
   you are told what the shot did right away, whether your opponent is around or not. The sea
   you aren't playing on is shown small, click it for a closer look
-- Wormcraft is for up to four, each with a squad on an island. Play it alone (pick nobody, then
-  **Play Alone**) and you play against one to three squads of the computer's, Easy, Medium or
-  Hard: set how many and how good next to the rest of the rules. With others there is no
-  computer. Everybody picks a class first,
+- Wormcraft is for up to four, each with a squad on an island. Against the computer you play one
+  to three squads of its own, Easy, Medium or Hard: Easy throws things more or less your way,
+  Hard hardly ever misses and walks to where it can hit you from. Once your squad is gone the
+  game is lost, whoever of the computer's is left. Everybody picks a class first,
   and every class has one thing of its own: a warrior's Charge, a mage's Blink, a priest's
   Prayer of Healing. Then you take turns: walk one of your squad about with the arrow keys or A
   and D, aim with up and down or W and S, and hold space to wind up a shot, longer for more
@@ -192,6 +206,13 @@ moves (`moves`, see `Engine/Games.lua`) is played out at random from a few seeds
 move it lists has to be legal and fit in a message, and the log has to replay to the same
 position on another client. A new game is checked the moment it is registered.
 
+A game the computer plays has it decide on a move at some of those positions, at every level:
+it has to be a move the game takes, the same one every time from the same position, and deciding
+mustn't change what it was shown. What the game tells the computer is held to that too: a guess
+at a hidden position has to look from the seat exactly like what the seat sees, a quick copy has
+to be a copy, and how good a position is has to stay well short of a win. Then the computer plays
+a whole game against itself.
+
 Words after it run only the tests whose names have one of them in:
 `./Tests/RunTests.sh EveryGame_chess Codec`.
 
@@ -201,6 +222,10 @@ Words after it run only the tests whose names have one of them in:
   - `Codec.lua` wire format
   - `Random.lua` dice and shuffles that come out the same for every player
   - `Games.lua` game registry
+  - `Computer.lua` the computer: looks ahead through the moves a game lists with its own rules,
+    as far as its level lets it, and picks the best. Counts what it looks at rather than
+    seconds, so it plays the same on any computer, and thinks a little at a time so the client
+    never stalls. Only ever sees what its seat may see, and guesses at the rest
   - `Match.lua` a match is its players and a log of moves, state is derived by replaying it
   - `Session.lua` challenges, moves, retries and resync, between two players or among several
   - `Presence.lua` who is online with the addon
@@ -278,6 +303,21 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
   game lasts. What the players did at the same moment, or apart, ends up one after the other in
   some order, so `validate` and `apply` must come out right whichever it is, and a move that is
   no longer legal by the time its turn comes (somebody else got there first) is dropped
+- **Computer**: `computer = {}` lets the game be played against the computer, which needs
+  nothing more than `moves`: it looks ahead through them with the game's own rules, and judges
+  where it gets to by playing on from there at random. It plays far better told how good a
+  position is (`evaluate`), which moves to look at first (`priority`, captures in chess) and
+  which ones it can't stop looking after (`noisy`), what a position is called so it can tell it
+  has been there before (`key`), and a quicker way to copy one (`copy`). A game with secrets
+  says what could be behind what a seat sees (`guess`): the computer plays against a few such
+  guesses at once. A game that needs another way of thinking altogether does its own (`think`),
+  with the engine's search to hand: Backgammon weighs every roll the other side could throw,
+  Battleship counts the ways a ship could lie, Words builds its words a letter at a time. Each
+  level (`levels`) can look further or less far and slip more or less often, and is given a
+  budget of positions to look at, so that a move takes about as long in every game. See
+  `Engine/Computer.lua`, and `Games/ConnectFour.lua` for a game that tells it everything. A game
+  for more than two where a player can be put out by the others (`beaten`) is over for the
+  player then, the computer doesn't play on among itself
 - **View**: `createView(stage)` builds the game's widgets in the frame it is given and returns an
   object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
   played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
@@ -288,8 +328,7 @@ A game can let whoever sets it up change some of its rules with `options`: each 
 or off). `newState` is handed what they are all set to as its third argument, and keeps what the
 rules need of it in the state. The wizard, the challenge and the rematch are the engine's. See
 `Games/Words.lua`. An option marked `alone` is only offered for a game played alone, of one that
-can be played with others too, and never sent with a challenge: how many computer players there
-are and how good, see `Games/Wormcraft.lua`.
+can be played with others too, and never sent with a challenge.
 
 Give the game a `genre` so it can be found in the new game wizard: one that is there already
 (`strategy`, `casual`, `dice`, `cards`, `words`, `solo`) or a new one, with its name in the locale file as `genre_<name>`.
@@ -297,7 +336,8 @@ Give the game a `genre` so it can be found in the new game wizard: one that is t
 Everything else is the engine's and the same for every game: challenges, gathering the players
 of a game for more than two, turn notifications, saving, delivery, resigning, and for games of two
 that ask for them draw offers (`draws = true`) and the move list with stepping back through the
-game (`history = true`).
+game (`history = true`). And the games against the computer: setting them up, letting it think,
+taking moves back, and how your games against it went.
 
 `Games/TicTacToe.lua` is the smallest example, `Games/Chess.lua` uses all of it. For a game
 where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`, at

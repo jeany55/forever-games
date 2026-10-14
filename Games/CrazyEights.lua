@@ -289,6 +289,119 @@ local function visible(state, seat)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- It sees what anyone at the table would, its own hand and the pile, and guesses at the rest:
+-- the cards it hasn't seen dealt out among the other hands and the deck, as many to each as
+-- there are. It plays its hand against a few such guesses at once and does whatever comes out
+-- best over all of them. What it wants is fewer cards than anybody else, and to keep it that
+-- way: an eight held back for when nothing else will do, and a hand of few suits, which is
+-- easier to keep playing from.
+
+local HELD, OTHERS, EIGHT, SUITED = 10, 4, 6, 2
+
+--- How well a seat stands
+--- @param state CrazyEightsState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local hand = state.hands[seat]
+  local score = -HELD * #hand
+  -- The others' hands, the shortest of them most of all: that is who is about to win
+  local fewest, total, others = nil, 0, 0
+  for other = 1, state.seats do
+    if other ~= seat and not state.out[other] then
+      local held = #state.hands[other]
+      fewest = fewest and math.min(fewest, held) or held
+      total, others = total + held, others + 1
+    end
+  end
+  if others > 0 then
+    score = score + OTHERS * (fewest + total / others) / 2
+  end
+  local suits = {}
+  for _, card in ipairs(hand) do
+    local rank, suit = parts(card)
+    if rank == WILD then
+      score = score + EIGHT
+    else
+      suits[suit] = (suits[suit] or 0) + 1
+    end
+  end
+  for _, count in pairs(suits) do
+    score = score + SUITED * (count - 1)
+  end
+  return score
+end
+
+--- The whole table as it could be, from what a seat sees of it: every card it hasn't seen
+--- dealt out at random among the other hands and the deck, as many to each as there are
+--- @param seen CrazyEightsState
+--- @param seat number
+--- @param random Random
+--- @return CrazyEightsState
+local function guess(seen, seat, random)
+  local known = {}
+  for _, card in ipairs(seen.hands[seat]) do
+    known[card] = true
+  end
+  for _, card in ipairs(seen.pile) do
+    known[card] = true
+  end
+  local unseen = {}
+  for suit in SUITS:gmatch(".") do
+    for rank in RANKS:gmatch(".") do
+      if not known[rank .. suit] then
+        unseen[#unseen + 1] = rank .. suit
+      end
+    end
+  end
+  random:Shuffle(unseen)
+
+  local world = {}
+  for key, value in pairs(seen) do
+    world[key] = value
+  end
+  world.pile, world.hands, world.out = { unpack(seen.pile) }, {}, {}
+  for other in pairs(seen.out) do
+    world.out[other] = true
+  end
+  for other, hand in ipairs(seen.hands) do
+    if other == seat then
+      world.hands[other] = { unpack(hand) }
+    else
+      world.hands[other] = {}
+      for index = 1, #hand do
+        world.hands[other][index] = table.remove(unseen)
+      end
+    end
+  end
+  world.deck = {}
+  for index = 1, #seen.deck do
+    world.deck[index] = table.remove(unseen)
+  end
+  return world
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  guess = guess,
+  priority = function(state, move)
+    -- An eight last, drawing after that
+    if move == DRAW or move == PASS then
+      return -2
+    end
+    return parts(move) == WILD and -1 or 0
+  end,
+  levels = {
+    easy = { depth = 1, slip = 0.35, among = 3, samples = 2 },
+    medium = { depth = 2, budget = 1500, samples = 4, slip = 0.05 },
+    -- Looking further ahead than this only goes further into what it guessed
+    hard = { depth = 3, budget = 6000, samples = 8 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- A card table on the shared cards (GUI/Cards.lua): the player's hand along the bottom, the
@@ -722,5 +835,6 @@ private.Games.Register({
   end,
   drop = drop,
   visible = visible,
+  computer = COMPUTER,
   createView = createView,
 })

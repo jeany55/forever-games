@@ -293,6 +293,92 @@ local function moves(state)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- It counts pieces first, a king for more than a man, and a man for a little more the further
+-- it has come. Men left on the back row keep the other side from being crowned, and pieces in
+-- the middle of the board have more to go to. Ahead, it is glad to trade pieces off: three
+-- against two is better than four against three, and the fewer there are the more the one
+-- left over counts. It never stops looking in the middle of taking, where the next jump may
+-- take everything back.
+
+local MAN, KING = 100, 160
+-- What each row a man has come forward is worth, a man on its own back row, and a piece in one
+-- of the middle squares
+local ADVANCE, GUARD, MIDDLE = 3, 12, 6
+local CENTRE = { [27] = true, [28] = true, [35] = true, [36] = true, [18] = true, [21] = true, [42] = true, [45] = true }
+
+--- How well a seat stands
+--- @param state CheckersState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local material, score = { 0, 0 }, 0
+  for square, piece in pairs(state.board) do
+    local owner, worth = ownerOf(piece), 0
+    if isKing(piece) then
+      worth = KING
+    else
+      -- Rows come forward from the owner's own side
+      local row = math.floor(square / SIZE)
+      local forward = owner == RED and row or SIZE - 1 - row
+      worth = MAN + forward * ADVANCE + (forward == 0 and GUARD or 0)
+    end
+    if CENTRE[square] then
+      worth = worth + MIDDLE
+    end
+    material[owner] = material[owner] + (isKing(piece) and KING or MAN)
+    score = score + (owner == seat and worth or -worth)
+  end
+  -- Ahead, the fewer pieces there are the better
+  local mine, theirs = material[seat], material[other(seat)]
+  if mine ~= theirs then
+    score = score + (mine - theirs) * 200 / (mine + theirs + 1)
+  end
+  return score
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  priority = function(state, move)
+    local made = state.legal[move]
+    return made and #made.captures or 0
+  end,
+  noisy = function(state, move)
+    local made = state.legal[move]
+    return made ~= nil and #made.captures > 0
+  end,
+  -- How often it came up and, close to the forty moves, how close: the same pieces can be a draw
+  -- one way and not another
+  key = function(state)
+    local placed = positionKey(state)
+    return placed .. (state.positions[placed] or 0) .. (state.quiet >= QUIET_LIMIT - 10 and state.quiet or "")
+  end,
+  copy = function(state)
+    local board = {}
+    for square, piece in pairs(state.board) do
+      board[square] = piece
+    end
+    -- Moves only ever add to how often a position came up, and work out the legal moves anew
+    return {
+      board = board,
+      turn = state.turn,
+      legal = state.legal,
+      quiet = state.quiet,
+      positions = private.Computer.Over(state.positions),
+      free = state.free,
+      last = state.last,
+      outcome = state.outcome,
+    }
+  end,
+  levels = {
+    easy = { depth = 2, slip = 0.3, among = 3, quiet = 2 },
+    medium = { depth = 4, budget = 3000, slip = 0.08 },
+    hard = { depth = 20, budget = 15000 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- Played on the shared board (GUI/Board.lua). What is checkers about it is in here: taking
@@ -527,6 +613,7 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return seat == RED and L["checkers_red"] or L["checkers_white"]

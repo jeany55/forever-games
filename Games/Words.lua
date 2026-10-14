@@ -778,6 +778,338 @@ local function moves(state, seat)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- It puts its words together the way a player hunting for one does, a letter at a time, but
+-- everywhere at once: along every stretch of every row and column that would join what lies on
+-- the board, it lays down what it holds in every order that is still the beginning of some word
+-- the length of the stretch, and stops as soon as nothing begins that way. Where a word from
+-- Azeroth would go, it tries those too. Every word it finds is scored by the rules themselves,
+-- the words it makes across the line and the bonuses included, and it plays the best.
+--
+-- Its best doesn't only count the points: what it keeps for next time matters too. A blank and
+-- an S are worth holding on to, a Q without a U or the same letter three times aren't, and a
+-- rack of all vowels or none is hard to play from. At its easiest it only knows short words,
+-- and doesn't always play the best of those. With nothing to lay it swaps its tiles while there
+-- are enough in the bag, and passes when there aren't.
+
+-- How long a word it looks for, by level
+local LONGEST_BY_LEVEL = { easy = 4, medium = 7, hard = SIZE }
+-- The lines of the board from the middle out, the order it looks along them in: where it has to
+-- stop looking, it has looked where the play mostly is
+local LINES_OUTWARD = {}
+for distance = 0, math.floor(SIZE / 2) do
+  for _, line in ipairs({ math.floor(SIZE / 2) - distance, math.floor(SIZE / 2) + distance }) do
+    if line >= 0 and line < SIZE and LINES_OUTWARD[#LINES_OUTWARD] ~= line then
+      LINES_OUTWARD[#LINES_OUTWARD + 1] = line
+    end
+  end
+end
+-- What keeping a tile is worth, beyond what it scores when laid
+local KEEP = {
+  [BLANK] = 25,
+  S = 8,
+  E = 3,
+  R = 2,
+  A = 1,
+  I = 1,
+  N = 1,
+  T = 1,
+  L = 1,
+  X = 1,
+  Z = 1,
+  K = -1,
+  J = -2,
+  W = -2,
+  U = -2,
+  V = -3,
+  Q = -7,
+}
+local VOWELS = { A = true, E = true, I = true, O = true, U = true }
+
+--- What the tiles left on a rack are worth for the turns to come
+--- @param rack string[]
+--- @return number
+local function leaveWorth(rack)
+  local total, seen, vowels, hasU = 0, {}, 0, false
+  for _, tile in ipairs(rack) do
+    total = total + (KEEP[tile] or 0)
+    seen[tile] = (seen[tile] or 0) + 1
+    if seen[tile] > 1 and tile ~= BLANK then
+      -- The same letter again is seldom worth as much as a different one
+      total = total - 3 * (seen[tile] - 1)
+    end
+    vowels = vowels + (VOWELS[tile] and 1 or 0)
+    hasU = hasU or tile == "U"
+  end
+  if seen.Q and hasU then
+    total = total + 7
+  end
+  local consonants = #rack - vowels - (seen[BLANK] or 0)
+  return total - 2 * math.max(0, math.abs(vowels - consonants) - 1)
+end
+
+--- Every way to lay tiles from a rack along the lines of the board, as moves, each once. Or as
+--- many as it found before it had tried as many letters as its level lets it
+--- @param state WordsState
+--- @param seat number
+--- @param longest number The longest word to look for
+--- @param brain Brain
+--- @return string[]
+local function layings(state, seat, longest, brain)
+  local rack, board = state.racks[seat], state.board
+  local empty = next(board) == nil
+  local counts, letters = {}, {}
+  for _, tile in ipairs(rack) do
+    counts[tile] = (counts[tile] or 0) + 1
+  end
+  for tile in pairs(counts) do
+    if tile ~= BLANK then
+      letters[#letters + 1] = tile
+    end
+  end
+  table.sort(letters)
+  local named = {}
+  if state.rules.azeroth then
+    for _, word in ipairs(Lexicon.Named("warcraft")) do
+      named[#word] = named[#word] or {}
+      table.insert(named[#word], word)
+    end
+  end
+
+  -- Which letters may go on a square that has tiles beside it across the line, by square: only
+  -- those that make a word with them. Worked out once for each way the line runs
+  --- @type table<boolean, table<number, table<string, boolean>>>
+  local allowed = { [true] = {}, [false] = {} }
+  for _, across in ipairs({ true, false }) do
+    -- The word through a square runs the other way
+    local step = across and SIZE or 1
+    for square = 0, SIZE * SIZE - 1 do
+      if not board[square] then
+        local column, row = square % SIZE, math.floor(square / SIZE)
+        local function onBoard(at, by)
+          local to = at + by
+          if across then
+            return to >= 0 and to < SIZE * SIZE
+          end
+          return math.floor(to / SIZE) == row and to >= 0
+        end
+        local before, after = {}, {}
+        local at = square
+        while onBoard(at, -step) and board[at - step] do
+          at = at - step
+          table.insert(before, 1, board[at]:upper())
+        end
+        at = square
+        while onBoard(at, step) and board[at + step] do
+          at = at + step
+          after[#after + 1] = board[at]:upper()
+        end
+        if #before + #after > 0 then
+          local letters, head, tail = {}, table.concat(before), table.concat(after)
+          for code = 65, 90 do
+            local letter = string.char(code)
+            if isWord(state, head .. letter .. tail) then
+              letters[letter] = true
+            end
+          end
+          allowed[across][square] = letters
+          brain:Spend()
+        end
+        local _ = column
+      end
+    end
+  end
+
+  -- The same beginnings come up again and again, along every line, so where their words are is
+  -- remembered. A beginning there are no words of is remembered as such
+  local spans = {}
+  --- @return number? from, number? to See Lexicon.Span
+  local function span(prefix, length, low, high)
+    local key = length .. prefix
+    local known = spans[key]
+    if known == nil then
+      local from, to = Lexicon.Span("english", prefix, length, low, high)
+      known = from and { from, to } or false
+      spans[key] = known
+    end
+    if known then
+      return known[1], known[2]
+    end
+    return nil
+  end
+  --- @return boolean Whether a square is on the board and has a tile
+  local function taken(column, row)
+    return column >= 0 and column < SIZE and row >= 0 and row < SIZE and board[row * SIZE + column] ~= nil
+  end
+
+  local found, listed = {}, {}
+  local function add(across, square, parts, first, last)
+    local move = (across and "a" or "d") .. nameOf(square) .. "." .. table.concat(parts, "", first, last)
+    if not listed[move] then
+      listed[move] = true
+      found[#found + 1] = move
+    end
+  end
+
+  local budget = brain.level.budget
+  for _, line in ipairs(LINES_OUTWARD) do
+    for _, across in ipairs({ true, false }) do
+      if brain.spent >= budget and #found > 0 then
+        return found
+      end
+      for start = 0, SIZE - 2 do
+        local function at(place)
+          local along = start + place - 1
+          if across then
+            return along, line
+          end
+          return line, along
+        end
+        if not taken(at(0)) then
+          -- The stretch grows a square at a time, what is on it worked out as it does
+          local fixed, open, joined = {}, 0, false
+          for length = 1, math.min(longest, SIZE - start) do
+            local column, row = at(length)
+            local tile = board[row * SIZE + column]
+            if tile then
+              fixed[length], joined = tile:upper(), true
+            else
+              open = open + 1
+              local besideA, besideB
+              if across then
+                besideA, besideB = taken(column, row - 1), taken(column, row + 1)
+              else
+                besideA, besideB = taken(column - 1, row), taken(column + 1, row)
+              end
+              joined = joined or besideA or besideB or (empty and row * SIZE + column == CENTRE)
+            end
+            if open > #rack then
+              break
+            end
+            if length >= 2 and open > 0 and joined and not taken(at(length + 1)) then
+              local parts, spent = {}, {}
+              local first, last
+              --- @param place number The square of the stretch to lay something on next
+              --- @param prefix string What the word is so far
+              --- @param low number? Where the words that begin that way are, see Lexicon.Span
+              --- @param high number?
+              local function extend(place, prefix, low, high)
+                if place > length then
+                  -- Every letter of it there, the words that begin that way are the word
+                  local fromColumn, fromRow = at(first)
+                  add(across, fromRow * SIZE + fromColumn, parts, first, last)
+                  return
+                end
+                brain.spent = brain.spent + 1
+                brain:Spend()
+                if fixed[place] then
+                  local further = prefix .. fixed[place]
+                  parts[place] = BLANK
+                  local from, to = span(further, length, low, high)
+                  if from then
+                    extend(place + 1, further, from, to)
+                  end
+                  return
+                end
+                local column, row = at(place)
+                local fits = allowed[across][row * SIZE + column]
+                local wasFirst, wasLast = first, last
+                first, last = first or place, place
+                for _, letter in ipairs(letters) do
+                  if (spent[letter] or 0) < counts[letter] and (not fits or fits[letter]) then
+                    local further = prefix .. letter
+                    local from, to = span(further, length, low, high)
+                    if from then
+                      parts[place], spent[letter] = letter, (spent[letter] or 0) + 1
+                      extend(place + 1, further, from, to)
+                      spent[letter] = spent[letter] - 1
+                    end
+                  end
+                end
+                -- A blank, as any letter at all
+                if (spent[BLANK] or 0) < (counts[BLANK] or 0) then
+                  for code = 65, 90 do
+                    local letter = string.char(code)
+                    local further = prefix .. letter
+                    local from, to = nil, nil
+                    if not fits or fits[letter] then
+                      from, to = span(further, length, low, high)
+                    end
+                    if from then
+                      parts[place], spent[BLANK] = letter:lower(), (spent[BLANK] or 0) + 1
+                      extend(place + 1, further, from, to)
+                      spent[BLANK] = spent[BLANK] - 1
+                    end
+                  end
+                end
+                parts[place] = nil
+                first, last = wasFirst, wasLast
+              end
+              extend(1, "")
+              -- And the words from Azeroth of that length, which are few enough to try every one
+              for _, name in ipairs(named[length] or {}) do
+                local tiles, from = fill(name, fixed, counts)
+                if tiles then
+                  local fromColumn, fromRow = at(from)
+                  local move = (across and "a" or "d") .. nameOf(fromRow * SIZE + fromColumn) .. "." .. tiles
+                  if not listed[move] then
+                    listed[move] = true
+                    found[#found + 1] = move
+                  end
+                end
+                brain:Spend()
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return found
+end
+
+local COMPUTER = {
+  think = function(seen, seat, brain)
+    local level, rack = brain.level, seen.racks[seat]
+    local scored = {}
+    for _, move in ipairs(layings(seen, seat, level.longest or SIZE, brain)) do
+      local placed, across, used = layOut(seen, move)
+      local left = placed and without(rack, used)
+      if left then
+        local words, score = measure(seen, placed, across)
+        if words then
+          -- Out with the bag empty, what everyone else holds comes on top
+          local worth = score + (level.leave and #seen.bag > 0 and leaveWorth(left) or 0)
+          scored[#scored + 1] = { move = move, score = worth, rank = score, index = #scored + 1 }
+        end
+      end
+      brain:Spend()
+    end
+    if #scored == 0 then
+      if #seen.bag >= RACK and #rack > 0 then
+        local all = { unpack(rack) }
+        table.sort(all)
+        return "x." .. table.concat(all)
+      end
+      return PASS
+    end
+    table.sort(scored, function(a, b)
+      if a.score ~= b.score then
+        return a.score > b.score
+      end
+      return a.index < b.index
+    end)
+    return brain:Pick(scored).move
+  end,
+  levels = {
+    easy = { longest = LONGEST_BY_LEVEL.easy, budget = 20000, slip = 0.5, among = 8 },
+    medium = { longest = LONGEST_BY_LEVEL.medium, budget = 60000, slip = 0.1, among = 3 },
+    hard = { longest = LONGEST_BY_LEVEL.hard, budget = 150000, leave = true },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- The board in a window that zooms (GUI/Viewport.lua), the player's tiles in a rack under it
@@ -2432,6 +2764,7 @@ private.Games.Register({
   end,
   drop = drop,
   visible = visible,
+  computer = COMPUTER,
   createView = createView,
   history = true,
 })

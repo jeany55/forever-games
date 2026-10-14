@@ -93,6 +93,69 @@ function Lexicon.Has(list, word)
   return false
 end
 
+--- Where the words of a length that begin with some letters are in a list. For a game whose
+--- computer puts words together a letter at a time: each letter more only narrows down where
+--- the words with the letters before it are, so it hands that on to look within. Names aren't
+--- asked about, there are few enough of them to try every one, see Lexicon.Named
+--- @param list string
+--- @param prefix string
+--- @param length number How long the words are
+--- @param low number? Where to look from, the first of them if left out
+--- @param high number? And up to, the last if left out
+--- @return number? first Nil if there are none
+--- @return number? last
+function Lexicon.Span(list, prefix, length, low, high)
+  local from = lists[list]
+  local packed = from and from.packed[length]
+  local size = #prefix
+  if not packed or size > length then
+    return nil
+  end
+  low, high = low or 1, high or #packed / length
+  --- The beginning of the word at an index, as long as the prefix
+  local function beginning(index)
+    local start = (index - 1) * length + 1
+    return packed:sub(start, start + size - 1)
+  end
+  -- The words are in order, and so are the beginnings of them: the first that isn't before it
+  local bottom, top = low, high + 1
+  while bottom < top do
+    local middle = math.floor((bottom + top) / 2)
+    if beginning(middle) < prefix then
+      bottom = middle + 1
+    else
+      top = middle
+    end
+  end
+  if bottom > high or beginning(bottom) ~= prefix then
+    return nil
+  end
+  local first = bottom
+  -- And the first after it that is
+  top = high + 1
+  while bottom < top do
+    local middle = math.floor((bottom + top) / 2)
+    if beginning(middle) <= prefix then
+      bottom = middle + 1
+    else
+      top = middle
+    end
+  end
+  return first, bottom - 1
+end
+
+--- Every word of a list that was added as a name, in order
+--- @param list string
+--- @return string[]
+function Lexicon.Named(list)
+  local from, words = lists[list], {}
+  for word in pairs(from and from.named or {}) do
+    words[#words + 1] = word
+  end
+  table.sort(words)
+  return words
+end
+
 --- What is known about a word that was added as a name
 --- @param list string
 --- @param word string

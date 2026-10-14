@@ -26,6 +26,11 @@
 --
 -- A match of one is a game the player plays alone. Its log never leaves the client, which is
 -- what lets a move be taken back: the log is cut short by an entry (Match.Truncate).
+--
+-- So is a match against the computer, which plays every seat but the player's (`computers`, see
+-- Engine/Computer.lua). Its moves are made on the player's client and go in the log like anyone
+-- else's, and nothing about the match is ever sent: it is the player's own, the same as a game
+-- for one.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -57,6 +62,9 @@ local _, private = ...
 --- @field hidden boolean? Kept only to answer repeated messages, not shown to the player
 --- @field played number? Seconds a game for one has been played for, where the game is timed
 --- @field bests table<string, boolean>? The records this match set, by key (GameRecord)
+--- @field computers table<number, string>? The seats the computer plays, with the level it plays them at. Its name in `players` is Match.COMPUTER
+--- @field tallied boolean? A game against the computer that is over and counted, see Session:Tally
+--- @field beaten boolean? A game against the computer the player was put out of by the computer, which is over for them (GameDefinition.beaten)
 
 --- @class MatchResult
 --- @field winner number Seat of the winner, 0 for a draw
@@ -89,6 +97,8 @@ private.Match = Match
 
 local ENGINE_ENTRY = "^!([rda])(%d)$"
 Match.START = "!s"
+-- What the computer's seats are down as in `players`. No player can be called that
+Match.COMPUTER = "*"
 
 -- Replayed states, kept out of the match table so they don't end up in SavedVariables
 local cache = setmetatable({}, { __mode = "k" })
@@ -128,6 +138,44 @@ function Match.Upgrade(match)
     match.seen = { [match.me == 1 and 2 or 1] = match.peerSeen or 0 }
     match.peerSeen = nil
   end
+end
+
+--- Whether the computer plays a seat
+--- @param match Match
+--- @param seat number
+--- @return boolean
+function Match.IsComputer(match, seat)
+  return match.computers ~= nil and match.computers[seat] ~= nil
+end
+
+--- How well the computer plays a match against it
+--- @param match Match
+--- @return string? nil if it doesn't play in it
+function Match.Level(match)
+  for _, level in pairs(match.computers or {}) do
+    return level
+  end
+  return nil
+end
+
+--- Whether the match is against the computer
+--- @param match Match
+--- @return boolean
+function Match.IsComputerMatch(match)
+  return match.computers ~= nil and next(match.computers) ~= nil
+end
+
+--- Whether the match is the local player's alone, with nobody else to tell about it: a game for
+--- one, or against the computer
+--- @param match Match
+--- @return boolean
+function Match.IsLocal(match)
+  for seat = 1, #match.players do
+    if seat ~= match.me and not Match.IsComputer(match, seat) then
+      return false
+    end
+  end
+  return true
 end
 
 --- Seats of everyone but the local player, in seat order

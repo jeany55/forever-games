@@ -516,6 +516,201 @@ local function pips(state, seat)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- A turn is the whole roll played, so the computer has every way of playing it to choose from
+-- and plays each out to see where it leaves the checkers. It judges that by how far each side
+-- has to go, which is all that matters once they have got past each other, and until then by
+-- what is at risk: a checker on its own that the other side could hit, with as many of the 36
+-- rolls as would hit it, costs what it would have to come round again. Points made with two
+-- or more count, in the home board most, all the more in a row that is hard to get past, and
+-- so do points held at the back of the other side's board, to come in on.
+--
+-- At its best it doesn't take the position after its turn for what it is: for the few turns
+-- that look best it goes through all 21 rolls the other side could throw, how likely each is,
+-- and what the other side would do with it, and plays whichever turn stands up best to that.
+-- What the dice will really do it doesn't know, any more than anyone.
+
+-- How many of the 36 rolls hit a checker so many points away, with one checker to hit it with
+local SHOTS = { 11, 12, 14, 15, 15, 17, 6, 6, 5, 3, 2, 3, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 1 }
+-- What being hit costs on top of the points it has to come round again, what each point made is
+-- worth at home and at the back of the other side's board, what each checker on the bar costs,
+-- and what a row of points made is worth by how long it is, squared
+local HIT, HOME_POINT, ANCHOR, ON_BAR, PRIME = 10, 8, 10, 12, 3
+-- The other side's checkers on their own count for less: they get to move before they can be hit
+local THEIR_BLOTS = 0.5
+-- What a game that is won is worth here, well short of the engine's win but more than anything else
+local WON = 100000
+
+--- Plays a turn on a position, without rolling for the next
+--- @param position BackgammonState
+--- @param seat number
+--- @param move string
+local function playTurn(position, seat, move)
+  for _, made in ipairs(parse(move)) do
+    step(position, seat, made.from, made.to)
+  end
+end
+
+--- What a seat's checkers on their own stand to lose to the other side's
+--- @param state BackgammonState
+--- @param seat number Whose checkers are at risk
+--- @return number
+local function exposure(state, seat)
+  local foe = other(seat)
+  local mine, theirs = state.points[seat], state.points[foe]
+  local risk = 0
+  for point = 1, POINTS do
+    if mine[point] == 1 then
+      -- The point in the other side's numbers, which they move down towards
+      local at = BAR - point
+      local shots = 0
+      for from = at + 1, BAR do
+        local count = from == BAR and state.bar[foe] or theirs[from]
+        if count > 0 then
+          shots = shots + (SHOTS[from - at] or 0)
+        end
+      end
+      risk = risk + math.min(shots, 36) / 36 * (HIT + BAR - point)
+    end
+  end
+  return risk
+end
+
+--- The point of a seat's checker furthest back, in its own numbers. 0 when they are all off
+--- @param state BackgammonState
+--- @param seat number
+--- @return number
+local function furthestBack(state, seat)
+  if state.bar[seat] > 0 then
+    return BAR
+  end
+  for point = POINTS, 1, -1 do
+    if state.points[seat][point] > 0 then
+      return point
+    end
+  end
+  return 0
+end
+
+--- How well a seat stands
+--- @param state BackgammonState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local foe = other(seat)
+  if state.off[seat] == CHECKERS then
+    return WON
+  elseif state.off[foe] == CHECKERS then
+    return -WON
+  end
+  local score = pips(state, foe) - pips(state, seat)
+  -- Got past each other: it is a race and nothing else
+  if furthestBack(state, seat) + furthestBack(state, foe) <= BAR then
+    return score
+  end
+
+  score = score - exposure(state, seat) + THEIR_BLOTS * exposure(state, foe)
+  score = score + ON_BAR * (state.bar[foe] - state.bar[seat])
+  for _, side in ipairs({ seat, foe }) do
+    local points, worth, run, best = state.points[side], 0, 0, 0
+    for point = 1, POINTS do
+      local made = points[point] >= 2
+      if made and point <= HOME then
+        worth = worth + HOME_POINT
+      elseif made and point > POINTS - HOME then
+        worth = worth + ANCHOR
+      end
+      run = made and run + 1 or 0
+      best = math.max(best, run)
+    end
+    worth = worth + PRIME * best * best
+    score = score + (side == seat and worth or -worth)
+  end
+  return score
+end
+
+--- How a position after the computer's turn stands up to every roll the other side could throw,
+--- each played as well as the other side can
+--- @param after BackgammonState
+--- @param seat number The computer's
+--- @param brain Brain
+--- @return number
+local function lookAhead(after, seat, brain)
+  if after.off[seat] == CHECKERS then
+    return WON
+  end
+  local foe, total = other(seat), 0
+  for high = 1, 6 do
+    for low = 1, high do
+      local position = scratch(after)
+      position.turn, position.dice = foe, { high, low }
+      assess(position)
+      local worst = nil
+      if position.playable == 0 then
+        worst = standing(position, seat)
+      else
+        for _, reply in ipairs(everyTurn(position, foe)) do
+          local answered = scratch(position)
+          playTurn(answered, foe, reply)
+          local worth = standing(answered, seat)
+          worst = worst and math.min(worst, worth) or worth
+          brain:Spend()
+        end
+      end
+      -- Doubles come up one way, the rest two
+      total = total + worst * (high == low and 1 or 2)
+    end
+  end
+  return total / 36
+end
+
+local COMPUTER = {
+  -- Trying another turn after seeing the dice the other side was given for it would be trying
+  -- for better dice
+  takeback = false,
+  -- The dice have to land before the checkers move
+  pause = 1,
+  think = function(seen, seat, brain)
+    local turns = everyTurn(seen, seat)
+    if #turns == 1 then
+      return turns[1]
+    end
+    local scored = {}
+    for index, turn in ipairs(turns) do
+      local after = scratch(seen)
+      playTurn(after, seat, turn)
+      scored[index] = { move = turn, score = standing(after, seat), rank = 0, index = index, after = after }
+      brain:Spend()
+    end
+    local function best(a, b)
+      if a.score ~= b.score then
+        return a.score > b.score
+      end
+      return a.index < b.index
+    end
+    table.sort(scored, best)
+    local level = brain.level
+    if level.depth >= 2 then
+      -- Only the most promising are worth looking further into
+      local kept = {}
+      for index = 1, math.min(level.consider or 4, #scored) do
+        kept[index] = scored[index]
+        kept[index].score = lookAhead(kept[index].after, seat, brain)
+      end
+      scored = kept
+      table.sort(scored, best)
+    end
+    return brain:Pick(scored).move
+  end,
+  levels = {
+    easy = { depth = 1, slip = 0.4, among = 4 },
+    medium = { depth = 1, slip = 0.1 },
+    hard = { depth = 2, consider = 6 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- The table is a board with a layout (GUI/Board.lua): every place a checker can be drawn is a
@@ -1079,6 +1274,7 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return seat == WHITE and L["backgammon_white"] or L["backgammon_red"]

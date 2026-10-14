@@ -16,6 +16,14 @@
 -- game ends, it has to end in a way the window can say. And the log it leaves has to replay to
 -- the same position, from scratch, on a client that never saw it played, and at every point
 -- along the way.
+--
+-- A game the computer plays (GameDefinition.computer) has it decide on moves at some of the
+-- positions those games pass through, at every level: what it decides on has to be a move the
+-- game takes, the same one every time from the same position, and deciding must never change
+-- what it was shown. What the game tells it is held to account too: what it guesses at a hidden
+-- position has to look from the seat exactly like what the seat sees, a copy has to be a copy,
+-- and how good a position is has to be a number well short of a win. And it has to be able to
+-- play a whole game against itself.
 
 local MAX_PLIES = 300
 local SEEDS = 3
@@ -23,6 +31,8 @@ local SEEDS = 3
 local SAMPLE = 30
 -- In a crowd one in so many plies is somebody resigning instead
 local RESIGN_ODDS = 40
+-- How long a game the computer plays against itself may go on for
+local COMPUTER_PLIES = 80
 
 --- Writes a value out the same way every time, keys in order, so two can be compared
 --- @param value any
@@ -38,9 +48,17 @@ local function serialize(value, path, out)
   if kind == "table" then
     assert(not path[value], "a table that contains itself")
     path[value] = true
-    local keys = {}
-    for key in pairs(value) do
-      keys[#keys + 1] = key
+    -- What a table reads as, what it reads through to included (Computer.Over)
+    local keys, seen, from = {}, {}, value
+    while type(from) == "table" do
+      for key in pairs(from) do
+        if not seen[key] then
+          seen[key] = true
+          keys[#keys + 1] = key
+        end
+      end
+      local meta = getmetatable(from)
+      from = meta and meta.__index
     end
     table.sort(keys, function(a, b)
       local ta, tb = type(a), type(b)
@@ -314,6 +332,93 @@ local function checkResult(private, game, match, keys)
   end
 end
 
+--- Checks what a game tells the computer, in a position, and has it decide on a move there
+--- @param private table
+--- @param game GameDefinition
+--- @param state table
+--- @param seat number Whose move it is
+--- @param level string
+--- @param seed number
+local function checkComputer(private, game, state, seat, level, seed)
+  local Computer, computer = private.Computer, game.computer
+  local before = serialize(state)
+  local seen = game.visible and game.visible(state, seat) or Computer.Copy(state)
+  local shown = serialize(seen)
+
+  if game.visible and computer.guess then
+    for try = 1, 3 do
+      local world = computer.guess(seen, seat, private.Random.New(seed + try))
+      assert(type(world) == "table" and world ~= seen, "guess gave no whole position of its own")
+      assert(serialize(seen) == shown, "guessing changed what the seat sees")
+      local looks = serialize(game.visible(world, seat))
+      assert(looks == shown, "what it guessed doesn't look like what the seat sees:\n" .. looks .. "\n" .. shown)
+      local again = computer.guess(seen, seat, private.Random.New(seed + try))
+      assert(serialize(again) == serialize(world), "guessed something else from the same dice")
+    end
+  end
+  if computer.copy then
+    local list = game.moves(state, seat)
+    local copy = computer.copy(state)
+    assert(serialize(copy) == before, "a copy isn't the same as the position")
+    game.apply(copy, seat, list[1], private.Random.New(seed))
+    assert(serialize(state) == before, "a move on a copy changed the position it was copied from")
+  end
+  if computer.evaluate and not game.visible then
+    local worth = computer.evaluate(state, seat)
+    assert(type(worth) == "number" and worth == worth and math.abs(worth) < Computer.WIN / 4, "evaluate said " .. tostring(worth))
+    assert(serialize(state) == before, "evaluate changed the position")
+  end
+  if computer.key and not game.visible then
+    assert(type(computer.key(state)) == "string", "key gave no string")
+    assert(computer.key(Computer.Copy(state)) == computer.key(state), "a copy of the position goes by another key")
+  end
+
+  local thinker = Computer.Think(game, seen, seat, level, seed)
+  local move = thinker:Finish()
+  assert(not thinker.failed, "it failed: " .. tostring(thinker.failed))
+  assert(type(move) == "string", "it decided on " .. tostring(move))
+  assert(serialize(seen) == shown, "deciding changed what it was shown")
+  assert(serialize(state) == before, "deciding changed the position")
+  local ok, err = game.validate(state, seat, move)
+  assert(ok, "it decided on " .. move .. ", which the game refuses: " .. tostring(err))
+  local shownAgain = game.visible and game.visible(state, seat) or Computer.Copy(state)
+  local again = Computer.Think(game, shownAgain, seat, level, seed):Finish()
+  assert(again == move, "it decided on " .. move .. " and then on " .. tostring(again) .. " from the same position")
+end
+
+--- Has the computer play every seat of a game at its easiest, as a match, until it is over
+--- @param private table
+--- @param game GameDefinition
+--- @param seats number
+--- @param keys table<string, boolean>
+local function playItself(private, game, seats, keys)
+  local Match, Computer = private.Match, private.Computer
+  local id = string.format("%x%06x", 1800000000 + seats, seats)
+  local match = newMatch(private, game, id, seats, {})
+  for ply = 1, COMPUTER_PLIES do
+    if Match.Result(match) then
+      break
+    end
+    local seat = Match.Turn(match)
+    local state = Match.State(match)
+    local seen = Computer.Copy(game.visible and game.visible(state, seat) or state)
+    local thinker = Computer.Think(game, seen, seat, "easy", ply)
+    local move = thinker:Finish()
+    if thinker.failed or type(move) ~= "string" then
+      error(string.format("%d players, ply %d: the computer failed: %s", seats, ply, tostring(thinker.failed or move)), 0)
+    end
+    local ok, err = Match.Append(match, move)
+    if not ok then
+      local log = table.concat(match.log, " ")
+      error(string.format("%d players, ply %d: the computer played %s, which was refused: %s\nlog: %s", seats, ply, move, tostring(err), log), 0)
+    end
+  end
+  local ok, err = pcall(checkResult, private, game, match, keys)
+  if not ok then
+    error(string.format("%d players, against itself: %s", seats, tostring(err)), 0)
+  end
+end
+
 --- Plays one game out at random, checking every position on the way
 --- @param private table
 --- @param game GameDefinition
@@ -321,7 +426,8 @@ end
 --- @param seed number
 --- @param keys table<string, boolean>
 --- @param loadEngine fun(): table
-local function playOut(private, game, seats, seed, keys, loadEngine)
+--- @param looks table[] Where to put the positions for the computer to decide in, see checkComputer
+local function playOut(private, game, seats, seed, keys, loadEngine, looks)
   local Games, Match, Codec, Random = private.Games, private.Match, private.Codec, private.Random
   local dice = Random.New(Random.Seed(game.id .. ":" .. seats .. ":" .. seed))
 
@@ -343,6 +449,10 @@ local function playOut(private, game, seats, seed, keys, loadEngine)
   for _ = 1, 3 do
     marks[dice:Roll(MAX_PLIES)] = true
   end
+  -- And one for the computer to decide on a move in, at a level for each game played out: any
+  -- of the positions the game goes through, each as likely as the next however long it lasts
+  local look = nil
+  local level = private.Computer.LEVELS[(seed - 1) % #private.Computer.LEVELS + 1]
 
   local function fail(ply, text)
     local rules = Games.EncodeOptions(game, match.options) or "usual"
@@ -414,6 +524,15 @@ local function playOut(private, game, seats, seed, keys, loadEngine)
     if serialize(state) ~= before then
       fail(ply, "asking about moves changed the state")
     end
+    if game.computer and not game.together and dice:Roll(ply) == 1 then
+      look = {
+        state = private.Computer.Copy(state),
+        seat = seat,
+        level = level,
+        seed = seed * 1000 + ply,
+        where = string.format("%d players, seed %d, ply %d", seats, seed, ply),
+      }
+    end
 
     local entry
     local out = 0
@@ -458,6 +577,7 @@ local function playOut(private, game, seats, seed, keys, loadEngine)
   if not ok then
     fail(#match.log, err)
   end
+  looks[#looks + 1] = look
 
   -- From scratch, here and on another client, it all comes out the same
   local final = serialize(Match.State(match))
@@ -493,16 +613,36 @@ end
 --- @param loadEngine fun(): table Another client, with the game registered too
 local function checkGame(private, game, keys, loadEngine)
   checkNames(private, game, keys)
+  local looks = {}
   sandboxed(not private.Games.IsSolo(game), function()
     checkDeals(private, game, keys)
     if game.moves then
       for _, seats in ipairs(private.Games.SeatCounts(game)) do
         for seed = 1, SEEDS do
-          playOut(private, game, seats, seed, keys, loadEngine)
+          playOut(private, game, seats, seed, keys, loadEngine, looks)
         end
       end
     end
   end)
+  if game.computer then
+    -- The computer thinks on one client only, but it has to be as good as its word: the same
+    -- move from the same position, which takes the client's own dice and clock away from it too
+    sandboxed(false, function()
+      for _, look in ipairs(looks) do
+        local ok, err = pcall(checkComputer, private, game, look.state, look.seat, look.level, look.seed)
+        if not ok then
+          error(look.where .. ", the computer at " .. look.level .. ": " .. tostring(err), 0)
+        end
+      end
+      -- The fewest it can be played by against the computer, and the most
+      local counts = private.Games.SeatCounts(game)
+      local fewest, most = counts[1] > 1 and counts[1] or counts[2], counts[#counts]
+      playItself(private, game, fewest, keys)
+      if most ~= fewest then
+        playItself(private, game, most, keys)
+      end
+    end)
+  end
 end
 
 -----------------------------
@@ -631,6 +771,71 @@ local FAULTS = {
     "the state itself",
   },
   NotInTheLocale = { { name = "game_faulty" }, "the locale doesn't have" },
+  ComputerThatPlays = { { computer = {} }, nil },
+  ComputerPlaysWhatIsntAMove = {
+    {
+      computer = {
+        think = function()
+          return "3"
+        end,
+      },
+    },
+    "which the game refuses",
+  },
+  ComputerWithDiceOfItsOwn = {
+    {
+      computer = {
+        think = function()
+          return math.random(2) == 1 and "1" or "2"
+        end,
+      },
+    },
+    "math.random",
+  },
+  ComputerChangesWhatItIsShown = {
+    {
+      computer = {
+        think = function(state)
+          state.total = state.total + 1
+          return "1"
+        end,
+      },
+    },
+    "changed what it was shown",
+  },
+  ComputerCopyThatIsNone = {
+    {
+      computer = {
+        copy = function(state)
+          return state
+        end,
+      },
+    },
+    "changed the position it was copied from",
+  },
+  ComputerThinksTooMuchOfAPosition = {
+    {
+      computer = {
+        evaluate = function()
+          return 1e12
+        end,
+      },
+    },
+    "evaluate said",
+  },
+  ComputerGuessesWhatIsntThere = {
+    {
+      visible = function(state)
+        return { total = state.total, turn = state.turn }
+      end,
+      computer = {
+        guess = function(seen)
+          return { total = seen.total + 1, turn = seen.turn }
+        end,
+      },
+    },
+    "doesn't look like what the seat sees",
+  },
   EndsUnsaid = {
     {
       result = function(state)

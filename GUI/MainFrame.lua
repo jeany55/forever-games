@@ -9,6 +9,9 @@
 -- status line, resigning and draw offers, the list of moves and stepping back through them. A
 -- game the player plays alone has no opponent to name and nobody to wait for: it can be given
 -- up or started again at any time, and a move can be taken back where the game allows it.
+-- A game against the computer is played out here too: while it is on screen the computer
+-- thinks a little every frame, and makes its move once it has looked as though it thought about
+-- it and the game is done showing the move before.
 --
 -- The window can be resized. The stage is given whatever room there is and the game's view
 -- lays itself out in it.
@@ -16,6 +19,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Computer = private.Computer
 local Games = private.Games
 local Match = private.Match
 local Transport = private.Transport
@@ -113,6 +117,8 @@ local SPINNER_SIZE, SPINNER_LIGHTS, SPINNER_LAP = 20, 8, 0.9
 local SPINNER_DOT = 4
 -- How long the front page says it is looking after a refresh
 local LOOKING_FOR = 6
+-- How many milliseconds of a frame the computer may think for
+local THINK_MS = 8
 
 local DECLINE_REASONS = {
   off = "status_declined_off",
@@ -148,14 +154,47 @@ local function settings()
   return ForeverGames.db.profile.window
 end
 
+--- @param level string
+--- @return string
+local function levelName(level)
+  return L["computer_level_" .. level]
+end
+
+--- What a player of a match is called: their name, or what the computer is called in that seat.
+--- The computer alone is the computer at its level, among others of its own it has a number
+--- @param match Match
+--- @param seat number
+--- @return string
+function MainFrame.PlayerName(match, seat)
+  if not Match.IsComputer(match, seat) then
+    return Transport.DisplayName(match.players[seat])
+  end
+  local number, count = 0, 0
+  for other = 1, #match.players do
+    if Match.IsComputer(match, other) then
+      count = count + 1
+      number = other <= seat and count or number
+    end
+  end
+  if count == 1 then
+    return L["computer_named"]:format(levelName(match.computers[seat]))
+  end
+  return L["computer_numbered"]:format(number)
+end
+
 --- Players of a match the way a sentence lists them: "Ann", "Ann and Bob", "Ann, Bob and Cy"
 --- @param match Match
 --- @param seats number[]? Everyone but the local player if left out
 --- @return string
 function MainFrame.Names(match, seats)
+  local others = Match.Others(match)
+  if not seats and #others > 1 and Match.IsLocal(match) then
+    -- A whole table of them is said in one go
+    return L["computers_counted"]:format(#others, levelName(Match.Level(match)))
+  end
   local names = {}
-  for index, seat in ipairs(seats or Match.Others(match)) do
-    names[index] = Transport.DisplayName(match.players[seat])
+  for index, seat in ipairs(seats or others) do
+    names[index] = MainFrame.PlayerName(match, seat)
   end
   if #names < 2 then
     return names[1] or ""
@@ -186,6 +225,11 @@ function MainFrame.Describe(match)
       return progress and L["status_solo_lost_with"]:format(progress) or L["status_solo_lost"]
     end
     return progress and L["status_won_with"]:format(progress) or L["status_won"]
+  end
+
+  if Match.IsComputerMatch(match) and match.status == "finished" and not Match.Result(match) then
+    -- Out of a table of the computer's, which doesn't play on without the player
+    return L[match.beaten and "status_lost" or "status_you_resigned"]
   end
 
   if match.status == "incoming" then
@@ -246,6 +290,9 @@ function MainFrame.Describe(match)
     return L["status_draw_coming"]:format(opponent)
   end
   local turn = Match.Turn(match)
+  if turn and Match.IsComputer(match, turn) then
+    return L["status_computer_thinking"]:format(MainFrame.Names(match, { turn }))
+  end
   return L["status_their_turn"]:format(turn and MainFrame.Names(match, { turn }) or opponent)
 end
 
@@ -253,8 +300,9 @@ end
 --- @param match Match
 --- @return boolean
 local function waitingOnMe(match)
-  -- A game played alone is always the player's to move in, and waits on nobody
-  return match.status == "incoming" or (Match.IsMyTurn(match) and not Match.IsSolo(match))
+  -- A game played alone is always the player's to move in, and one against the computer is
+  -- there to be picked up whenever: neither waits on anybody
+  return match.status == "incoming" or (Match.IsMyTurn(match) and not Match.IsLocal(match))
 end
 
 --- @param err string? Error code from the session
@@ -275,6 +323,26 @@ end
 
 --- @param match Match
 local function rematch(match)
+  local game = Games.Get(match.game)
+  -- A game that was played alone before the computer was the engine's is played against it now,
+  local outgrown = Match.IsSolo(match) and game ~= nil and not Games.CanSeat(game, 1) and Computer.Plays(game)
+  if Match.IsComputerMatch(match) or outgrown then
+    -- The same again, and between two the other way round
+    -- as many of the computer's as there were, as good as they were
+    local options = match.options or {}
+    local count = outgrown and (Games.CanSeat(game, (options.bots or 1) + 1) and options.bots or 1) or #match.players - 1
+    local level = Match.Level(match) or (Computer.IsLevel(options.skill) and options.skill) or Computer.DEFAULT_LEVEL
+    local setup = {
+      options = match.options,
+      computer = { level = level, count = count },
+      seat = (count == 1 and not outgrown) and 3 - match.me or nil,
+    }
+    local newMatch, err = private.session:Invite({}, match.game, setup)
+    if not newMatch then
+      return report(err)
+    end
+    return MainFrame.Select(newMatch.id)
+  end
   local others = {}
   for index, seat in ipairs(Match.Others(match)) do
     others[index] = match.players[seat]
@@ -364,13 +432,73 @@ local function soloActionsFor(match)
   return actions
 end
 
+--- Buttons offered for a game against the computer, in display order
+--- @param match Match
+--- @return { text: string, onClick: fun(), disabled: boolean?, tip: string? }[]
+local function computerActionsFor(match)
+  local session, id = private.session, match.id
+  local game = Games.Get(match.game)
+  if match.status ~= "active" then
+    return {
+      {
+        text = L["play_again"],
+        onClick = function()
+          rematch(match)
+        end,
+      },
+      {
+        text = L["remove"],
+        onClick = function()
+          session:Forget(id)
+        end,
+      },
+    }
+  end
+
+  local actions = {
+    {
+      text = L["resign"],
+      onClick = function()
+        if session:CanForget(match) then
+          -- Nothing played yet, nothing to lose: it is only called off
+          session:Forget(id)
+        else
+          StaticPopup_Show("FOREVERGAMES_RESIGN", MainFrame.Names(match), nil, id)
+        end
+      end,
+    },
+  }
+  if game and Computer.TakesBack(game) then
+    actions[#actions + 1] = {
+      text = L["take_back"],
+      tip = L["take_back_tip"],
+      disabled = not session:CanUndo(match),
+      onClick = function()
+        session:Undo(id)
+      end,
+    }
+  end
+  if Match.CanOfferDraw(match) then
+    actions[#actions + 1] = {
+      text = L["offer_draw"],
+      onClick = function()
+        session:OfferDraw(id)
+      end,
+    }
+  end
+  return actions
+end
+
 --- Buttons offered for a match, in display order
 --- @param match Match
---- @return { text: string, onClick: fun(), disabled: boolean? }[]
+--- @return { text: string, onClick: fun(), disabled: boolean?, tip: string? }[]
 local function actionsFor(match)
   local session, id = private.session, match.id
   if Match.IsSolo(match) then
     return soloActionsFor(match)
+  end
+  if Match.IsComputerMatch(match) then
+    return computerActionsFor(match)
   end
 
   local function accept()
@@ -1045,6 +1173,16 @@ local function createDetailPanel(body)
   for index = 1, 3 do
     local button = Widgets.Button(detail, "", 110, 26)
     button:SetPoint("BOTTOMRIGHT", -12 - (index - 1) * 116, 12)
+    -- What a button does, where that needs saying
+    button:SetScript("OnEnter", function(self)
+      if self.tip then
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(self:GetText())
+        GameTooltip:AddLine(self.tip, 1, 1, 1, true)
+        GameTooltip:Show()
+      end
+    end)
+    button:SetScript("OnLeave", GameTooltip_Hide)
     detail.buttons[index] = button
   end
   return detail
@@ -1147,14 +1285,15 @@ local function refreshDetail(match, fresh)
     entry.shown = { id = match.id, ply = ply }
 
     local names = {}
-    for seat, name in ipairs(match.players) do
-      names[seat] = Transport.DisplayName(name)
+    for seat = 1, #match.players do
+      names[seat] = MainFrame.PlayerName(match, seat)
     end
     entry.view:Update({
       match = match,
       state = Match.Visible(match, ply),
       seat = match.me,
       names = names,
+      computers = match.computers,
       canMove = live and Match.CanMove(match),
       submit = function(move)
         local ok, err = private.session:Move(match.id, move)
@@ -1185,8 +1324,35 @@ local function refreshDetail(match, fresh)
     button:SetText(action.text)
     button:SetScript("OnClick", action.onClick)
     button:SetEnabled(not action.disabled)
+    button.tip = action.tip
     button:Show()
   end
+end
+
+-- The computer's move that is being waited for: in which match, after how many log entries,
+-- and for how many seconds so far
+--- @type { id: string, ply: number, waited: number }?
+local pondering
+
+--- Lets the computer think about its move, in the game against it on screen. It waits with the
+--- move until it has seemed to think for long enough and the game has finished showing the
+--- move before, whatever that takes
+--- @param elapsed number Seconds since the last frame
+local function ponder(elapsed)
+  local session = private.session
+  local match = selectedId and session:Get(selectedId)
+  if not match or not session:ComputerTurn(match) then
+    pondering = nil
+    return
+  end
+  if not pondering or pondering.id ~= match.id or pondering.ply ~= #match.log then
+    pondering = { id = match.id, ply = #match.log, waited = 0 }
+  end
+  pondering.waited = pondering.waited + elapsed
+  local game = Games.Get(match.game)
+  local entry = views[game.id]
+  local busy = entry ~= nil and entry.view.Busy ~= nil and entry.view:Busy()
+  session:Think(match.id, THINK_MS, pondering.waited >= Computer.Pause(game) and not busy)
 end
 
 -----------------------------
@@ -1793,10 +1959,12 @@ local function create()
   frame.body:SetPoint("BOTTOMRIGHT", -INSET, INSET)
   frame.detail = createDetailPanel(frame.body)
   frame.home = createHomePanel(frame.body)
-  -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend
+  -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend, and
+  -- the computer plays only while its game is
   frame.detail:SetScript("OnUpdate", function(_, elapsed)
     if selectedId and not review and not Wizard.IsOpen() then
       private.session:Spend(selectedId, elapsed)
+      ponder(elapsed)
     end
   end)
   createResizeGrip()

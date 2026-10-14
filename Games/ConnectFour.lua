@@ -129,6 +129,129 @@ local function result(state)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- It judges a rack by every four squares in a line there are. Four that only one player has
+-- discs in could still be theirs, and are worth more to them the more of it they have filled;
+-- four that both have a disc in are no use to anyone. Discs in the middle column are in more of
+-- them than any other, so it looks at the middle first, and the edges last.
+--
+-- An empty square that would finish four for a player is a threat, and worth more than anything
+-- else on the board. Which row it is on matters as much as that it is there: as the rack fills
+-- up, whoever moves first is made to play into the odd rows and the other into the even ones,
+-- counted from the bottom, so the first player's threats in an odd row and the second player's
+-- in an even one are the ones that come good in the end.
+
+-- Every four squares in a line, by square
+--- @type number[][]
+local WINDOWS = {}
+for row = 0, ROWS - 1 do
+  for column = 0, COLUMNS - 1 do
+    for _, direction in ipairs(DIRECTIONS) do
+      local lastColumn, lastRow = column + direction[1] * (LINE - 1), row + direction[2] * (LINE - 1)
+      if lastColumn >= 0 and lastColumn < COLUMNS and lastRow >= 0 and lastRow < ROWS then
+        local window = {}
+        for step = 0, LINE - 1 do
+          window[step + 1] = (row + direction[2] * step) * COLUMNS + column + direction[1] * step
+        end
+        WINDOWS[#WINDOWS + 1] = window
+      end
+    end
+  end
+end
+-- What four with so many of one player's discs and none of the other's are worth to them
+local FILLED = { 1, 8, 0 }
+-- A square that would finish four, and one that is in a row that falls to its player
+local THREAT, GOOD_ROW = 40, 40
+local MIDDLE_DISC = 3
+-- The columns from the middle out
+local ORDER = { [4] = 7, [3] = 6, [5] = 6, [2] = 5, [6] = 5, [1] = 4, [7] = 4 }
+
+--- @param state ConnectFourState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local board, score = state.board, 0
+  -- The squares that would finish four, by whose they would be. A square counts once however
+  -- many lines it finishes
+  local threats = {}
+  for _, window in ipairs(WINDOWS) do
+    local mine, theirs, empty = 0, 0, nil
+    for index = 1, LINE do
+      local owner = board[window[index]]
+      if owner == seat then
+        mine = mine + 1
+      elseif owner then
+        theirs = theirs + 1
+      else
+        empty = window[index]
+      end
+    end
+    if theirs == 0 and mine > 0 then
+      score = score + FILLED[mine]
+    elseif mine == 0 and theirs > 0 then
+      score = score - FILLED[theirs]
+    end
+    if mine == LINE - 1 and theirs == 0 then
+      threats[empty] = seat
+    elseif theirs == LINE - 1 and mine == 0 and threats[empty] ~= seat then
+      threats[empty] = board[window[1]] or board[window[2]]
+    end
+  end
+  for square, owner in pairs(threats) do
+    -- Rows from the bottom, counted from one: the first player's are the odd ones
+    local odd = math.floor(square / COLUMNS) % 2 == 0
+    local worth = THREAT + ((odd == (owner == 1)) and GOOD_ROW or 0)
+    score = score + (owner == seat and worth or -worth)
+  end
+  local middle = math.floor(COLUMNS / 2)
+  for row = 0, ROWS - 1 do
+    local owner = board[row * COLUMNS + middle]
+    if owner then
+      score = score + (owner == seat and MIDDLE_DISC or -MIDDLE_DISC)
+    end
+  end
+  return score
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  priority = function(_, move)
+    return ORDER[tonumber(move)]
+  end,
+  key = function(state)
+    local squares = {}
+    for square = 0, COLUMNS * ROWS - 1 do
+      squares[square + 1] = state.board[square] or 0
+    end
+    return table.concat(squares)
+  end,
+  copy = function(state)
+    local board, heights = {}, {}
+    for square, seat in pairs(state.board) do
+      board[square] = seat
+    end
+    for column = 1, COLUMNS do
+      heights[column] = state.heights[column]
+    end
+    return {
+      board = board,
+      heights = heights,
+      turn = state.turn,
+      count = state.count,
+      last = state.last,
+      winner = state.winner,
+      line = state.line,
+    }
+  end,
+  levels = {
+    easy = { depth = 2, slip = 0.35, among = 3 },
+    medium = { depth = 4, budget = 4000, slip = 0.1 },
+    hard = { depth = 14, budget = 40000 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- A blue rack with a hole for every square, on the shared board (GUI/Board.lua). The player
@@ -233,6 +356,7 @@ private.Games.Register({
   apply = apply,
   moves = moves,
   result = result,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return seat == 1 and L["connectfour_red"] or L["connectfour_yellow"]

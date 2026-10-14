@@ -15,6 +15,7 @@ Init.lua
 Engine\Codec.lua
 Engine\Random.lua
 Engine\Games.lua
+Engine\Computer.lua
 Engine\Lexicon.lua
 Engine\Match.lua
 Engine\Session.lua

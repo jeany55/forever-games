@@ -29,6 +29,10 @@
 -- match, and the game is handed all of it when the state is made: see Games/Words.lua. Only what
 -- isn't the default is ever sent or kept, so a game without any is a game by the usual rules.
 --
+-- A game for two or more can be played against the computer (`computer`), which takes the seats
+-- of everyone but the player: see Engine/Computer.lua. Given nothing but the moves there are, it
+-- plays the game, and the more the game tells it the better it plays.
+--
 -- A game needn't have turns at all (`together`): everyone moves whenever they like, as when a
 -- puzzle is solved between them. It has no `turn`, and it has to take its moves in whatever order
 -- they happen to arrive: what two players did at the same moment is put one after the other, and
@@ -98,6 +102,7 @@ local _, private = ...
 --- @field visible (fun(state: table, seat: number): table)? For games where players don't all know the same: what a seat may see of a position. Returns a copy with the rest blanked out, shaped like the state itself so the view has only one thing to draw. Views are never shown anything else while the game is on. This is good manners rather than a secret kept: the log every player holds has all of it
 --- @field result fun(state: table): { winner: number, detail: string?, all: boolean? }? nil while in progress, winner 0 for a draw. Winner 0 and `all` where the players were on the same side and made it together. detail names how it ended and is shown as L["result_" .. detail]
 --- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two, unless they are played together. The engine ends the game itself once only one player is left
+--- @field beaten (fun(state: table, seat: number): boolean)? For a game for more than two where a player can be put out of it by the others while they play on: whether a seat has been. A game against the computer is over for the player once they are, the computer doesn't play on among itself
 --- @field moves (fun(state: table, seat: number): string[])? The moves a seat could make, each of them legal and none twice. All of them where that is practical; where there are far too many (every word that could be laid) enough of them for a game played with nothing else to get somewhere. Asked only while the game is on, of a seat that may move: the one whose turn it is, or anyone still in a game played together. The tests play every game that has it out at random to see that its rules hold together (Tests/EveryGame.lua)
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
@@ -107,6 +112,7 @@ local _, private = ...
 --- @field progress (fun(state: table): string?)? For a game for one or one played together: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
 --- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
 --- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
+--- @field computer GameComputer? The game can be played against the computer, and this is what it knows about playing it (Engine/Computer.lua). `{}` will do for a game with `moves`
 
 --- @class Games
 local Games = {}
@@ -136,6 +142,14 @@ end
 function Games.IsSolo(game)
   local counts = Games.SeatCounts(game)
   return counts[#counts] == 1
+end
+
+--- Whether a game can be played by the player on their own: a game for one, or one the computer
+--- plays the others' seats of
+--- @param game GameDefinition
+--- @return boolean
+function Games.PlaysAlone(game)
+  return Games.CanSeat(game, 1) or game.computer ~= nil
 end
 
 --- @param game GameDefinition
@@ -335,6 +349,8 @@ function Games.Register(definition)
   end
   assert(definition.together or type(definition.turn) == "function", "Game " .. definition.id .. " is missing turn")
   assert(definition.moves == nil or type(definition.moves) == "function", "Game " .. definition.id .. " has moves that aren't a function")
+  local problem = private.Computer.Problem(definition)
+  assert(not problem, "Game " .. definition.id .. " " .. tostring(problem))
   local seen = {}
   for _, option in ipairs(definition.options or {}) do
     local named = type(option.id) == "string" and option.id:match("^%w+$") ~= nil and not seen[option.id]

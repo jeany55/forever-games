@@ -14,10 +14,14 @@
 -- then played with whoever clicks the link first.
 -- A game that can be played alone or with others has the players to pick like any other, and is
 -- played alone when nobody is.
+-- A game the computer plays has it at the top of the players, always there. Picked, it takes
+-- every seat but the player's, and how well it plays and how many seats it takes join the rules.
+-- What the player picked last time is picked again for them, the computer included.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Computer = private.Computer
 local Games = private.Games
 local Rooms = private.Rooms
 local Transport = private.Transport
@@ -81,6 +85,9 @@ local chosenRules = {}
 -- The seat the player asked for in a game of two, nil to leave it to chance
 --- @type number?
 local chosenSeat
+-- Whether the game is to be played against the computer, how well it is to play and how many
+-- seats it takes
+local chosenComputer, chosenLevel, chosenCount = false, Computer.DEFAULT_LEVEL, 1
 
 local refresh
 --- @type fun(): string[]
@@ -100,6 +107,33 @@ end
 local function paint(button, on)
   button:SetBackdropBorderColor(1, on and 0.82 or 1, on and 0 or 1, on and 0.9 or 0.1)
   button.label:SetTextColor(1, on and 0.82 or 1, on and 0 or 1)
+end
+
+--- How the player last set up each game against the computer, by game id. Remembered between
+--- sessions
+--- @return table<string, { level: string?, count: number?, seat: number?, chosen: boolean? }>
+local function rememberedComputer()
+  local profile = ForeverGames.db.profile
+  profile.computer = profile.computer or {}
+  return profile.computer
+end
+
+--- @param level string
+--- @return string
+local function levelName(level)
+  return L["computer_level_" .. level]
+end
+
+--- How the player's games against the computer went at a level, in a few words
+--- @param gameId string
+--- @param level string
+--- @return string
+local function tallyText(gameId, level)
+  local tally = private.session:Versus(gameId, level)
+  if tally.won + tally.drawn + tally.lost == 0 then
+    return L["computer_tally_none"]
+  end
+  return L["computer_tally"]:format(tally.won, tally.drawn, tally.lost)
 end
 
 --- The games the player starred, by id. Remembered between sessions
@@ -146,6 +180,8 @@ end
 --- Picks a player, or for a game of more than two unpicks one that is picked already
 --- @param name string
 local function choose(name)
+  -- The computer plays on its own: anybody else is instead of it
+  chosenComputer = false
   if mostOpponents() == 1 then
     -- Where the game can be played alone, picking them again lets them go
     local again = chosenPlayers[1] == name and Games.CanSeat(chosenGame, 1)
@@ -168,12 +204,15 @@ local function playersText(game)
     return L["players_party"]
   end
   local counts = Games.SeatCounts(game)
+  local text
   if Games.IsSolo(game) then
     return L["players_solo"]
   elseif #counts == 1 then
-    return L["players_exactly"]:format(counts[1])
+    text = L["players_exactly"]:format(counts[1])
+  else
+    text = L["players_choice"]:format(table.concat(counts, ", ", 1, #counts - 1), counts[#counts])
   end
-  return L["players_choice"]:format(table.concat(counts, ", ", 1, #counts - 1), counts[#counts])
+  return Computer.Plays(game) and L["players_or_computer"]:format(text) or text
 end
 
 --- @param names string[] Full names
@@ -200,13 +239,25 @@ end
 
 local function send()
   local others = Games.IsSolo(chosenGame) and {} or opponents()
-  local options = Games.ForPlayers(chosenGame, chosenRules, #others + 1)
-  local match, err = private.session:Invite(others, chosenGame.id, { options = options, seat = chosenSeat })
+  local players = chosenComputer and chosenCount + 1 or #others + 1
+  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, players), seat = chosenSeat }
+  if chosenComputer then
+    setup.computer = { level = chosenLevel, count = chosenCount }
+  end
+  local match, err = private.session:Invite(others, chosenGame.id, setup)
   if not match then
     panel.error:SetText(L["err_" .. err])
     return
   end
   remembered()[chosenGame.id] = Games.Chosen(chosenGame, chosenRules)
+  if Computer.Plays(chosenGame) then
+    rememberedComputer()[chosenGame.id] = {
+      level = chosenLevel,
+      count = chosenCount,
+      seat = chosenComputer and chosenSeat or nil,
+      chosen = chosenComputer,
+    }
+  end
   Wizard.Close(match.id)
 end
 
@@ -242,6 +293,14 @@ local function pick(game)
   chosenGame = game
   chosenPlayers, chosenGroup, chosenSeat = {}, nil, nil
   chosenRules = Games.Rules(game.options, remembered()[game.id])
+  -- Against the computer again if that is how it was played last, and the same way
+  local last = rememberedComputer()[game.id] or {}
+  chosenComputer = Computer.Plays(game) and last.chosen == true
+  chosenLevel = Computer.IsLevel(last.level) and last.level or Computer.DEFAULT_LEVEL
+  chosenCount = (last.count and Games.CanSeat(game, last.count + 1)) and last.count or 1
+  if chosenComputer then
+    chosenSeat = last.seat
+  end
   panel.nameBox:SetText("")
   refresh()
 end
@@ -580,6 +639,7 @@ end
 --- @field online boolean?
 --- @field ago number? Seconds since their last game with the player was touched
 --- @field note string? What to say about them instead of how they are known
+--- @field computer boolean? The line is the computer, not a player
 
 --- @param text string
 --- @return string
@@ -663,9 +723,16 @@ local function listing()
       items[#items + 1] = { header = title }
       for _, player in ipairs(players) do
         items[#items + 1] = player
-        listed[player.name] = true
+        if player.name then
+          listed[player.name] = true
+        end
       end
     end
+  end
+
+  -- The computer first, there whenever the players aren't narrowed down to some of them
+  if Computer.Plays(chosenGame) and not chosenGroup and L["computer"]:lower():sub(1, #text) == text then
+    section(L["wizard_computer"], { { computer = true } })
   end
 
   -- Whoever is picked can always be seen, and unpicked
@@ -701,6 +768,9 @@ end
 --- a game of two the box wins over the list selection
 --- @return string[]
 opponents = function()
+  if chosenComputer then
+    return {}
+  end
   local _, typed = listing()
   if not typed then
     return chosenPlayers
@@ -747,6 +817,13 @@ local function createPlayerRow(content)
   row.rule:SetPoint("BOTTOMRIGHT", -8, 1)
 
   row:SetScript("OnClick", function(self)
+    if self.computer then
+      chosenComputer, chosenPlayers = not chosenComputer, {}
+      panel.nameBox:SetText("")
+      panel.nameBox:ClearFocus()
+      refresh()
+      return
+    end
     if not self.player then
       return
     end
@@ -763,7 +840,7 @@ end
 --- @param typed string? Who the box over the list stands for
 local function fillPlayerRow(row, item, typed)
   local isPlayer = item.header == nil
-  row.player = item.name
+  row.player, row.computer = item.name, item.computer
   row:EnableMouse(isPlayer)
   row.hover:SetShown(isPlayer)
   row.dot:SetShown(isPlayer)
@@ -774,6 +851,16 @@ local function fillPlayerRow(row, item, typed)
   if not isPlayer then
     row.header:SetText(item.header)
     row.selected:Hide()
+    return
+  end
+
+  if item.computer then
+    row.selected:SetShown(chosenComputer)
+    row.dot:SetColorTexture(unpack(Widgets.GOLD))
+    row.name:SetTextColor(1, 1, 1)
+    row.name:SetText(L["computer"])
+    -- How it went the last times, at the level it is set to
+    row.source:SetText(chosenComputer and tallyText(chosenGame.id, chosenLevel) or L["wizard_computer_note"])
     return
   end
 
@@ -815,6 +902,15 @@ local function createChoice(parent)
     self.pick()
     refresh()
   end)
+  choice:SetScript("OnEnter", function(self)
+    if self.tip then
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText(self.label:GetText())
+      GameTooltip:AddLine(self.tip, 1, 1, 1, true)
+      GameTooltip:Show()
+    end
+  end)
+  choice:SetScript("OnLeave", GameTooltip_Hide)
   return choice
 end
 
@@ -822,8 +918,9 @@ end
 --- @param text string
 --- @param on boolean Whether it is what is chosen
 --- @param pick fun()
-local function fillChoice(choice, text, on, pick)
-  choice.pick, choice.picked = pick, on
+--- @param tip string? What it means, for the tooltip
+local function fillChoice(choice, text, on, pick, tip)
+  choice.pick, choice.picked, choice.tip = pick, on, tip
   choice.label:SetText(text)
   choice:SetSize(choice.label:GetStringWidth() + CHOICE_PADDING, FILTER_HEIGHT)
   paint(choice, on)
@@ -877,6 +974,45 @@ local function seatLine()
   return line
 end
 
+--- How well the computer is to play, with how the player fared against each level
+--- @return table A line of the rules, see refreshRules
+local function levelLine()
+  local line = { name = L["wizard_level"], tip = L["wizard_level_tip"], choices = {} }
+  for _, level in ipairs(Computer.LEVELS) do
+    line.choices[#line.choices + 1] = {
+      text = levelName(level),
+      on = chosenLevel == level,
+      tip = L["computer_level_" .. level .. "_tip"] .. "\n\n" .. tallyText(chosenGame.id, level),
+      pick = function()
+        chosenLevel = level
+      end,
+    }
+  end
+  return line
+end
+
+--- How many seats the computer takes, in a game for more than two
+--- @return table? A line of the rules, nil where it can only be one
+local function countLine()
+  local line = { name = L["wizard_computers"], tip = L["wizard_computers_tip"], choices = {} }
+  for count = 1, mostOpponents() do
+    if Games.CanSeat(chosenGame, count + 1) then
+      line.choices[#line.choices + 1] = {
+        text = tostring(count),
+        on = chosenCount == count,
+        pick = function()
+          chosenCount = count
+          if count > 1 then
+            -- A crowd draws its seats
+            chosenSeat = nil
+          end
+        end,
+      }
+    end
+  end
+  return #line.choices > 1 and line or nil
+end
+
 --- Shows the game that was chosen and what its rules are set to
 local function refreshRules()
   local rules = panel.rules
@@ -888,11 +1024,20 @@ local function refreshRules()
   -- Seats are only for the asking between two, a crowd draws them
   -- and where there are no turns there is no going first either
   local seated = not Games.IsSolo(chosenGame) and not chosenGame.together and #opponents() <= 1 and Games.CanSeat(chosenGame, 2)
+  seated = seated and (not chosenComputer or chosenCount == 1)
   local lines = {}
-  if seated then
-    lines[1] = seatLine()
+  if chosenComputer then
+    lines[#lines + 1] = levelLine()
+    lines[#lines + 1] = countLine()
   end
-  local players = Games.IsSolo(chosenGame) and 1 or #opponents() + 1
+  if seated then
+    lines[#lines + 1] = seatLine()
+  end
+  -- What only matters alone isn't set up for a game that can't be played alone
+  local players = Games.IsSolo(chosenGame) and 1 or math.max(#opponents() + 1, Games.CanSeat(chosenGame, 1) and 1 or 2)
+  if chosenComputer then
+    players = chosenCount + 1
+  end
   for _, option in ipairs(Games.OptionsFor(chosenGame, chosenRules, players)) do
     local line = { name = option.name, tip = option.description, choices = {} }
     for _, value in ipairs(Games.Choices(option)) do
@@ -934,7 +1079,7 @@ local function refreshRules()
           choice:SetShown(spec ~= nil)
         end
         if spec then
-          fillChoice(choice, spec.text, spec.on, spec.pick)
+          fillChoice(choice, spec.text, spec.on, spec.pick, spec.tip)
           if x > first and x + choice:GetWidth() > room then
             x, y = first, y + FILTER_HEIGHT + FILTER_GAP
           end
@@ -959,6 +1104,8 @@ local function refreshRules()
   if Games.IsSolo(chosenGame) and Games.Chosen(chosenGame, chosenRules) then
     -- Nobody to challenge, nobody to be shown what was changed
     rules.note:SetText(L["wizard_solo_note"])
+  elseif chosenComputer then
+    rules.note:SetText(L["wizard_computer_rules"])
   end
   rules.note:SetShown(#lines > 0)
   rules.note:ClearAllPoints()
@@ -1048,6 +1195,10 @@ local function createOpponentStep(parent)
       if mostOpponents() == 1 then
         chosenPlayers = {}
       end
+      -- Typing a name is looking for somebody instead
+      if (panel.nameBox:GetText() or "") ~= "" then
+        chosenComputer = false
+      end
       refresh()
     end
   end)
@@ -1117,8 +1268,17 @@ local function refreshPlayers()
   panel.players:Update(items, function(row, item)
     fillPlayerRow(row, item, typed)
   end)
-  panel.nobody:SetShown(#items == 0)
+  -- Said under the computer, where it is there, when it is all there is
+  local players = 0
+  for _, item in ipairs(items) do
+    players = players + ((item.name and 1) or 0)
+  end
+  local above = players == 0 and #items or 0
+  panel.nobody:SetShown(players == 0)
   panel.nobody:SetText(L[chosenGroup and "wizard_nobody_group" or "wizard_nobody"])
+  panel.nobody:ClearAllPoints()
+  panel.nobody:SetPoint("TOPLEFT", 12, -PLAYERS_TOP - 8 - above * PLAYER_ROW_HEIGHT)
+  panel.nobody:SetPoint("TOPRIGHT", -12, -PLAYERS_TOP - 8 - above * PLAYER_ROW_HEIGHT)
 end
 
 -----------------------------
@@ -1161,6 +1321,16 @@ refresh = function()
 
   local names = opponents()
   local ready = Games.CanSeat(chosenGame, #names + 1)
+  if chosenComputer then
+    panel.sendButton:SetEnabled(true)
+    panel.sendButton:SetText(L["wizard_play"])
+    if chosenCount == 1 then
+      panel.summary:SetText(L["wizard_summary_computer"]:format(chosenGame.name, levelName(chosenLevel)))
+    else
+      panel.summary:SetText(L["wizard_summary_computers"]:format(chosenGame.name, chosenCount, levelName(chosenLevel)))
+    end
+    return
+  end
   panel.sendButton:SetEnabled(ready)
   if ready and #names == 0 then
     -- Nobody picked, and the game doesn't need anyone
@@ -1243,6 +1413,7 @@ end
 
 function Wizard.Open()
   chosenGame, chosenPlayers, chosenGroup, chosenSeat = nil, {}, nil, nil
+  chosenComputer, chosenLevel, chosenCount = false, Computer.DEFAULT_LEVEL, 1
   chosenGenre, chosenSeats, favouritesOnly = nil, nil, false
   panel.nameBox:SetText("")
   panel.searchBox:SetText("")

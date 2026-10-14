@@ -56,6 +56,10 @@ local defaults = {
     rules = {},
     -- The best the player ever did at the games played alone, by game id
     records = {},
+    -- How the player's games against the computer went, by game id and level
+    versus = {},
+    -- How the player last set up a game against the computer in the wizard, by game id
+    computer = {},
     -- Whether the window of the games for a room is small, and where each size of it was left
     party = { mini = false },
     -- The questions of Trivia this player asked as a host, and when, see Games/Trivia.lua
@@ -80,6 +84,7 @@ function ForeverGames:OnEnable()
     me = Transport.PlayerName(),
     matches = self.db.char.matches,
     records = self.db.profile.records,
+    versus = self.db.profile.versus,
     offers = self.db.char.offers,
     onRefused = function(host, gameId, reason)
       local game = Games.Get(gameId)
@@ -92,6 +97,8 @@ function ForeverGames:OnEnable()
     send = Transport.Send,
     now = time,
     random = math.random,
+    clock = debugprofilestop,
+    log = private.Log,
     notify = function(event, match)
       self:OnMatchEvent(event, match)
     end,
@@ -195,6 +202,10 @@ end
 --- @param match Match
 --- @return string?
 local function toastText(event, match)
+  -- A game against the computer goes on only while the player looks at it
+  if Match.IsComputerMatch(match) then
+    return nil
+  end
   local opponent = MainFrame.Names(match)
   if event == "invite" then
     return L["toast_invite"]:format(MainFrame.Names(match, { Match.Inviter(match) }), gameName(match))
@@ -397,16 +408,22 @@ function ForeverGames:HandleSlashCommand(input)
   elseif command == "log" then
     self:PrintLog(argument)
   elseif command == "play" then
-    -- A game to play alone: the one that is named, or the first there is
+    -- A game to play alone, against the computer if it is a game for more: the one that is
+    -- named, or the first there is
     local wanted, game = argument:lower(), nil
     for _, candidate in ipairs(Games.List()) do
       local named = wanted == "" or wanted == candidate.id or wanted == candidate.name:lower()
-      if not game and named and Games.CanSeat(candidate, 1) then
+      if not game and named and Games.PlaysAlone(candidate) then
         game = candidate
       end
     end
     -- Set up the way the player last set it up in the wizard
-    local match, err = private.session:Invite({}, game and game.id, { options = game and self.db.profile.rules[game.id] })
+    local setup = { options = game and self.db.profile.rules[game.id] }
+    if game and not Games.CanSeat(game, 1) then
+      local last = self.db.profile.computer[game.id] or {}
+      setup.computer, setup.seat = { level = last.level, count = last.count }, last.seat
+    end
+    local match, err = private.session:Invite({}, game and game.id, setup)
     if match then
       MainFrame.Open(match.id)
     else

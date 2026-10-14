@@ -9,6 +9,7 @@ local ENGINE_FILES = {
   "Engine/Codec.lua",
   "Engine/Random.lua",
   "Engine/Games.lua",
+  "Engine/Computer.lua",
   "Engine/Match.lua",
   "Engine/Session.lua",
   "Engine/Presence.lua",
@@ -1933,7 +1934,8 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  equal("yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,wormcraft", idsOf(Games.Search(nil, nil, 1)))
+  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein"
+  equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
   equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
@@ -3075,7 +3077,7 @@ function tests.WizardPicksSeveralPlayersForACrowd()
   for _, card in ipairs(Client.Find(function(widget)
     return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "chinesecheckers" and widget:IsVisible()
   end)) do
-    equal("players_choice", card.players.text)
+    equal("players_or_computer", card.players.text)
     card:Fire("OnClick")
   end
 
@@ -9171,7 +9173,7 @@ function tests.WizardOffersWhoWasPlayedLastFirst()
     for _, row in ipairs(Client.Find(function(widget)
       return widget.kind == "Button" and widget.header ~= nil and widget.source ~= nil and widget:IsVisible()
     end)) do
-      lines[#lines + 1] = row.player or ("[" .. row.header.text .. "]")
+      lines[#lines + 1] = row.player or (row.computer and "computer") or ("[" .. row.header.text .. "]")
     end
     return table.concat(lines, " ")
   end
@@ -9189,7 +9191,7 @@ function tests.WizardOffersWhoWasPlayedLastFirst()
   end
   local send = Client.Button("wizard_send")
 
-  equal("[wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+  equal("[wizard_computer] computer [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
   equal("source_guild  -  wizard_played_today", row("Carol-Realm").source.text)
   equal("wizard_played_days", row("Dave-Realm").source.text)
   equal(false, send.enabled)
@@ -9223,7 +9225,7 @@ function tests.WizardOffersWhoWasPlayedLastFirst()
     end
     return count
   end)(), "nothing was sent")
-  equal("[wizard_chosen_also] Frank-Realm [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+  equal("[wizard_computer] computer [wizard_chosen_also] Frank-Realm [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
 
   -- A click on someone else and it is them instead
   row("Bob-Realm"):Fire("OnClick")
@@ -14864,12 +14866,57 @@ function tests.WindowWritesDownOnlyWhatWormcraftFired()
   equal(2, alice.private.Match.State(alice.matches[id]).turn, "and the move was taken")
 end
 
-function tests.WormcraftIsPlayedAloneAgainstTheComputer()
+function tests.WormcraftIsPlayedAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session, Match = alice.session, alice.private.Match
+  local match = assert(session:Invite({}, "wormcraft", { computer = { level = "easy", count = 2 }, options = { squad = 2 } }))
+  equal(3, #match.players, "a squad of the player's and two of the computer's")
+  local me = match.me
+
+  -- Everyone picks a class in turn, the computer for its own squads
+  session:ThinkThrough(match.id)
+  equal(true, Match.State(match).picking)
+  assert(session:Move(match.id, "cPRIEST"))
+  session:ThinkThrough(match.id)
+  local state = Match.State(match)
+  equal(false, state.picking)
+  for seat = 1, 3 do
+    assert(state.teams[seat].class, "squad " .. seat .. " has a class")
+  end
+
+  -- Round to the player and back again, the computer's turns made by the computer
+  equal(me, state.turn)
+  assert(session:Move(match.id, state.teams[me].next .. "Frs"))
+  session:ThinkThrough(match.id)
+  state = Match.State(match)
+  equal(me, state.turn, "round to the player again")
+  equal(0, #world.queue, "and nothing was sent to anyone")
+
+  -- Put out of it, the player has lost, whoever of the computer's is left
+  for _, unit in ipairs(state.units) do
+    if unit.team == me then
+      unit.hp = 1
+      unit.alive = unit.slot == state.teams[me].next
+    end
+  end
+  state.wind = 0
+  -- Straight down, at their own feet
+  assert(session:Move(match.id, state.teams[me].next .. "Fgr.270.1.1"))
+  equal("finished", match.status)
+  equal(true, match.beaten)
+  equal(nil, Match.Result(match), "the others haven't finished it among themselves")
+  equal(1, session:Versus("wormcraft", "easy").lost)
+  equal(nil, session:ComputerTurn(match))
+end
+
+function tests.WormcraftPlayedAloneBeforeStillPlaysOut()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
   local Wormcraft, Match = alice.private.Wormcraft, alice.private.Match
   local game = alice.private.Games.Get("wormcraft")
-  local match = assert(alice.session:Invite({}, "wormcraft", { options = { bots = 2, skill = "easy" } }))
+  -- The way a game alone was set up before the computer was the engine's
+  local match = alice.session:startSolo(game, { bots = 2, skill = "easy" })
   equal(1, #match.players, "nobody else plays")
   local state = Match.State(match)
   equal(true, state.alone)
@@ -14916,8 +14963,10 @@ function tests.WormcraftIsPlayedAloneAgainstTheComputer()
   equal("finished", match.status)
   equal(0, Match.Result(match).winner)
   equal("beaten", Match.Result(match).detail)
-end
 
+  -- Another can't be started alone: the computer is asked for the way it is now
+  equal("no_target", select(2, alice.session:Invite({}, "wormcraft", { options = match.options })))
+end
 function tests.WormcraftComputerGetsBetterWithSkill()
   local private = loadEngine()
   local Wormcraft = private.Wormcraft
@@ -14926,20 +14975,21 @@ function tests.WormcraftComputerGetsBetterWithSkill()
   for _, skill in ipairs(Wormcraft.SKILL_ORDER) do
     dealt[skill] = 0
     for seed = 1, 6 do
-      local state = game.newState(1, private.Random.New(seed * 5), { bots = 1, skill = skill, squad = 2 })
+      local state = game.newState(2, private.Random.New(seed * 5), private.Games.Rules(game.options, { squad = 2 }))
       game.apply(state, 1, "cMAGE")
+      game.apply(state, 2, "cMAGE")
       game.apply(state, 1, "1Frs")
       equal(2, state.turn)
-      local brain = Wormcraft.Brain.New(state)
+      local brain = Wormcraft.Brain.New(state, skill)
       local move = brain:Decide()
       equal(nil, brain.failed, skill)
-      local ok, err = game.validate(state, 1, move)
+      local ok, err = game.validate(state, 2, move)
       equal(true, ok, skill .. " " .. move .. " " .. tostring(err))
       local before = 0
       for _, unit in ipairs(state.units) do
         before = before + (unit.team == 1 and unit.hp or 0)
       end
-      game.apply(state, 1, move)
+      game.apply(state, 2, move)
       local after = 0
       for _, unit in ipairs(state.units) do
         after = after + (unit.team == 1 and unit.hp or 0)
@@ -14956,23 +15006,26 @@ function tests.WormcraftComputerThinksAFrameAtATime()
   local private = loadEngine()
   local Wormcraft = private.Wormcraft
   local game = private.Games.Get("wormcraft")
-  local state = game.newState(1, private.Random.New(4), { bots = 1, skill = "hard" })
+  local state = game.newState(2, private.Random.New(4), private.Games.Rules(game.options))
   game.apply(state, 1, "cMAGE")
+  game.apply(state, 2, "cMAGE")
   game.apply(state, 1, "1Frs")
-  local brain = Wormcraft.Brain.New(state)
+  local brain = Wormcraft.Brain.New(state, "hard")
   local thoughts = 1
   while not brain:Think() do
     thoughts = thoughts + 1
   end
   assert(thoughts > 5, "it took a while, a bit at a time")
   equal(brain.move, brain:Think(), "and then it knows")
-  equal(brain.move, Wormcraft.Brain.New(state):Decide(), "the same every time it is asked")
+  equal(brain.move, Wormcraft.Brain.New(state, "hard"):Decide(), "the same every time it is asked")
 end
 
-function tests.WormcraftOffersTheComputerOnlyAlone()
+function tests.WormcraftKeepsWhatGamesPlayedAloneBeforeWereSetUpWith()
   local private = loadEngine()
   local Games = private.Games
   local game = Games.Get("wormcraft")
+  equal(false, Games.CanSeat(game, 1), "the computer plays in seats of its own now")
+  equal(true, Games.PlaysAlone(game))
   local rules = Games.Rules(game.options)
   local function ids(players)
     local found = {}
@@ -14981,27 +15034,31 @@ function tests.WormcraftOffersTheComputerOnlyAlone()
     end
     return table.concat(found, ",")
   end
-  equal("bots,skill,squad,health,time,sudden,map", ids(1))
   equal("squad,health,time,sudden,map", ids(2))
-  equal("bots,skill,squad,health,time,sudden,map", ids(nil), "everything where it isn't known")
+  equal("squad,health,time,sudden,map", ids(4))
+  -- A game alone from before still has them, to be played out with
+  equal("bots,skill,squad,health,time,sudden,map", ids(1))
   equal(2, #Games.DescribeOptions(game, { bots = 3, squad = 4 }, 1))
   equal(1, #Games.DescribeOptions(game, { bots = 3, squad = 4 }, 2), "nobody is told about a computer that isn't there")
   local kept = Games.ForPlayers(game, { bots = 3, skill = "hard", squad = 4 }, 3)
   equal(nil, kept.bots)
   equal(nil, kept.skill)
   equal(4, kept.squad)
-  equal(3, Games.ForPlayers(game, { bots = 3 }, 1).bots)
 end
-
 function tests.WizardWrapsWhatAnOptionCanBe()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
   world:AddPlayer("Bob-Realm")
   openWizard(alice)
   pickGame("wormcraft")
-  -- Alone, the computer is set up too
-  assert(says("wormcraft_option_bots"), "how many computer squads, with nobody picked")
-  assert(says("wormcraft_option_skill"))
+  -- The computer is the engine's, and set up the engine's way
+  equal(false, says("wormcraft_option_bots"), "no computer squads of the game's own")
+  equal(false, says("wormcraft_option_skill"))
+  Client.Find(function(widget)
+    return widget.kind == "Button" and widget.computer == true and widget:IsVisible()
+  end)[1]:Fire("OnClick")
+  assert(ruleChoices("wizard_computers")["3"], "up to three squads of the computer's")
+  assert(says("wizard_level"))
   local row = Client.Find(function(widget)
     return widget.choices ~= nil and widget.name ~= nil and widget.name.text == "wormcraft_option_map" and widget:IsVisible()
   end)[1]
@@ -15027,42 +15084,53 @@ function tests.WizardWrapsWhatAnOptionCanBe()
   box:SetText("Bob-Realm")
   box:Fire("OnTextChanged", true)
   equal(false, says("wormcraft_option_bots"))
-  equal(false, says("wormcraft_option_skill"))
+  equal(false, says("wizard_level"))
 end
 
 function tests.WindowPlaysWormcraftAgainstTheComputer()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
   local MainFrame = openWindow(alice)
-  local match = assert(alice.session:Invite({}, "wormcraft", { options = { bots = 1, skill = "easy" } }))
+  local Match = alice.private.Match
+  local match = assert(alice.session:Invite({}, "wormcraft", { computer = { level = "easy" }, seat = 1, options = { squad = 2 } }))
   MainFrame.Open(match.id)
   local view = Client.Find(function(widget)
     return widget.wormcraft ~= nil
   end)[1].wormcraft
+  local detail = Client.Find(function(widget)
+    return widget.buttons ~= nil and widget.scripts.OnUpdate ~= nil
+  end)[1]
+  --- Lets frames go by, the window's and the game's, until something is so
+  local function untilSo(done, label)
+    for _ = 1, 4000 do
+      if done() then
+        return
+      end
+      detail:Fire("OnUpdate", 1 / 30)
+      wormFrames(view, 1)
+    end
+    error("never: " .. label)
+  end
+
   view.picks.WARLOCK:Fire("OnClick")
+  untilSo(function()
+    return not Match.State(match).picking
+  end, "the computer picked its class too")
+  equal(1, Match.State(match).turn)
   MainFrame.Refresh()
   local live = assert(view.live, "her turn")
   view:pick("rs")
   view.ticker:Fire("OnKeyDown", "SPACE")
   view.ticker:Fire("OnKeyUp", "SPACE")
-  for _ = 1, 10 do
-    wormFrames(view, 1)
-    if live.submitted then
-      break
-    end
-  end
+  untilSo(function()
+    return live.submitted
+  end, "her turn made")
   MainFrame.Refresh()
-  equal(2, alice.private.Match.State(match).turn)
-  assert(view.brain, "the computer thinks about its turn")
-  equal(true, says("wormcraft_thinking"))
-  for _ = 1, 3000 do
-    if not view.brain then
-      break
-    end
-    wormFrames(view, 1)
-  end
-  equal(nil, view.brain, "and makes it")
-  equal(1, alice.private.Match.State(match).turn)
+  equal(2, Match.State(match).turn)
+  equal(true, says("wormcraft_thinking"), "the computer thinks about its turn")
+  untilSo(function()
+    return Match.State(match).turn == 1
+  end, "the computer made its turn")
   assert(view.replay, "which she sees played out")
   view.ticker:Fire("OnKeyDown", "SPACE")
   equal(nil, view.replay)
@@ -16568,6 +16636,630 @@ function tests.TriviaPageAnswersAndShowsTheRightOne()
   Client.combat = false
   Party.Refresh()
   equal(true, Party.IsOpen())
+end
+
+-----------------------------
+-- The computer
+-----------------------------
+-- A race the tests bring along, for the computer to play: in turn everyone adds one or two to a
+-- count, and whoever brings it to the goal wins. The one to move wins if they can leave the
+-- count a multiple of three short of the goal, so how well the computer plays can be told
+-- exactly. What else a test needs of it is set on the definition: draws, a brain that breaks,
+-- something hidden.
+
+do
+local RACE_GOAL = 10
+
+--- @param private table
+--- @param changes table? What to put in place of the usual, by field. `computer` too
+local function registerRace(private, changes)
+  local game = {
+    id = "race",
+    name = "Race",
+    version = 1,
+    seats = { 2, 3, 4 },
+    newState = function(seats)
+      return { count = 0, turn = 1, seats = seats, out = {} }
+    end,
+    turn = function(state)
+      return state.turn
+    end,
+    validate = function(state, seat, move)
+      if seat ~= state.turn then
+        return false, "not_your_turn"
+      end
+      return (move == "1" or move == "2") and state.count + tonumber(move) <= RACE_GOAL, "invalid_move"
+    end,
+    apply = function(state, seat, move)
+      state.count = state.count + tonumber(move)
+      state.last = seat
+      repeat
+        state.turn = state.turn % state.seats + 1
+      until not state.out[state.turn]
+      return { notation = move }
+    end,
+    moves = function(state)
+      return state.count + 2 <= RACE_GOAL and { "1", "2" } or { "1" }
+    end,
+    result = function(state)
+      return state.count == RACE_GOAL and { winner = state.last } or nil
+    end,
+    drop = function(state, seat)
+      state.out[seat] = true
+      if state.turn == seat then
+        repeat
+          state.turn = state.turn % state.seats + 1
+        until not state.out[state.turn]
+      end
+    end,
+    computer = {
+      evaluate = function(state, seat)
+        -- Whoever is to move is winning if the count isn't already a multiple of three short
+        local winning = (RACE_GOAL - state.count) % 3 ~= 0
+        return (state.turn == seat) == winning and 1 or -1
+      end,
+    },
+    createView = function() end,
+  }
+  for key, value in pairs(changes or {}) do
+    -- Taken out where it says false
+    if value == false then
+      game[key] = nil
+    else
+      game[key] = value
+    end
+  end
+  private.Games.Register(game)
+  return game
+end
+
+--- A player with nobody else around, and the race for them to play
+--- @param changes table? See registerRace
+--- @return World, table player
+local function raceWorld(changes)
+  local world = World.New()
+  world.prepare = function(private)
+    registerRace(private, changes)
+  end
+  return world, world:AddPlayer("Alice-Realm")
+end
+
+--- What the computer would play in a position, thinking it right through
+--- @param private table
+--- @param gameId string
+--- @param state table
+--- @param seat number
+--- @param level string
+--- @param seed number?
+--- @return string
+local function computerMove(private, gameId, state, seat, level, seed)
+  local game = private.Games.Get(gameId)
+  return private.Computer.Think(game, private.Computer.Copy(state), seat, level, seed or 1):Finish()
+end
+
+function tests.ComputerPlaysTheRaceWithoutFault()
+  local private = loadEngine()
+  registerRace(private)
+  local game = private.Games.Get("race")
+  -- From every count where there is a right move, hard finds it
+  for count = 0, RACE_GOAL - 1 do
+    local state = game.newState(2)
+    state.count = count
+    local move = computerMove(private, "race", state, 1, "hard", count)
+    local winning = (RACE_GOAL - count) % 3 ~= 0
+    if winning then
+      equal(0, (RACE_GOAL - count - tonumber(move)) % 3, "hard leaves a multiple of three from " .. count)
+    end
+  end
+end
+
+function tests.ComputerTakesTheWinAndBlocksTheLoss()
+  local private = loadEngine()
+  local game = private.Games.Get("tictactoe")
+  local function after(moves)
+    local state = game.newState(2)
+    for _, move in ipairs(moves) do
+      game.apply(state, state.turn, move)
+    end
+    return state
+  end
+  for _, level in ipairs({ "medium", "hard" }) do
+    for seed = 1, 5 do
+      -- O to move, with three in a row there for the taking at 6, and X threatening 3 as well
+      equal("6", computerMove(private, "tictactoe", after({ "1", "4", "2", "5", "9" }), 2, level, seed), level .. " takes the win")
+      -- X threatens 1-2-3, O has nothing of its own
+      equal("3", computerMove(private, "tictactoe", after({ "1", "5", "2" }), 2, level, seed), level .. " blocks")
+    end
+  end
+end
+
+function tests.ComputerOpensTicTacToeInTheMiddle()
+  local private = loadEngine()
+  local state = private.Games.Get("tictactoe").newState(2)
+  for seed = 1, 5 do
+    equal("5", computerMove(private, "tictactoe", state, 1, "hard", seed))
+  end
+end
+
+--- Plays a game between two levels of the computer from scratch, nobody else involved
+--- @param private table
+--- @param gameId string
+--- @param levels string[] By seat
+--- @param seed number
+--- @return number winner
+local function computerAgainstItself(private, gameId, levels, seed)
+  local game = private.Games.Get(gameId)
+  local Random = private.Random
+  local chance = Random.Seed("versus" .. seed)
+  local state = game.newState(#levels, Random.New(chance), private.Games.Rules(game.options))
+  for ply = 1, 400 do
+    local outcome = game.result(state)
+    if outcome then
+      return outcome.winner
+    end
+    local seat = game.turn(state)
+    local seen = game.visible and game.visible(state, seat) or state
+    local move = assert(computerMove(private, gameId, seen, seat, levels[seat], Random.Stir(chance, "brain")))
+    assert(game.validate(state, seat, move), levels[seat] .. " played " .. move .. ", which isn't legal")
+    chance = Random.Stir(chance, move)
+    game.apply(state, seat, move, Random.New(chance))
+  end
+  error("the game didn't end")
+end
+
+function tests.ComputerDrawsAgainstItselfAtTicTacToe()
+  local private = loadEngine()
+  for seed = 1, 6 do
+    equal(0, computerAgainstItself(private, "tictactoe", { "hard", "hard" }, seed), "seed " .. seed)
+  end
+end
+
+function tests.ComputerGetsBetterLevelByLevel()
+  local private = loadEngine()
+  local beaten = { easy = 0, medium = 0 }
+  for _, weaker in ipairs({ "easy", "medium" }) do
+    for seed = 1, 20 do
+      local seats = seed % 2 == 0 and { "hard", weaker } or { weaker, "hard" }
+      local winner = computerAgainstItself(private, "tictactoe", seats, seed)
+      assert(winner == 0 or seats[winner] == "hard", weaker .. " beat hard, seed " .. seed)
+      if winner ~= 0 then
+        beaten[weaker] = beaten[weaker] + 1
+      end
+    end
+  end
+  assert(beaten.easy > beaten.medium, string.format("easy lost %d times to hard, medium %d", beaten.easy, beaten.medium))
+  assert(beaten.easy >= 6, "easy only lost " .. beaten.easy .. " of 20")
+end
+
+function tests.ComputerDecidesTheSameAFrameAtATime()
+  local private = loadEngine()
+  local game = private.Games.Get("tictactoe")
+  local state = game.newState(2)
+  game.apply(state, 1, "1")
+  local whole = computerMove(private, "tictactoe", state, 2, "hard", 42)
+
+  -- A clock that moves on a millisecond every time it is looked at
+  local now = 0
+  local function clock()
+    now = now + 1
+    return now
+  end
+  local thinker = private.Computer.Think(game, private.Computer.Copy(state), 2, "hard", 42)
+  local frames = 1
+  while not thinker:Run(5, clock) do
+    frames = frames + 1
+    assert(frames < 100000, "never done")
+  end
+  assert(frames > 5, "it thought it all through in " .. frames .. " frames")
+  equal(whole, thinker.move, "the move")
+end
+
+function tests.ComputerNeverChangesThePositionItIsShown()
+  local private = loadEngine()
+  local game = private.Games.Get("tictactoe")
+  local state = game.newState(2)
+  game.apply(state, 1, "5")
+  local before = private.Computer.Copy(state)
+  local thinker = private.Computer.Think(game, state, 2, "hard", 3)
+  thinker:Finish()
+  for cell = 1, 9 do
+    equal(before.board[cell], state.board[cell], "cell " .. cell)
+  end
+  equal(before.turn, state.turn, "turn")
+end
+
+function tests.ComputerMatchIsPlayedOutWithoutSendingAnything()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session = alice.session
+  local Match = alice.private.Match
+  local match = assert(session:Invite({}, "tictactoe", { computer = { level = "hard" }, seat = 2 }))
+  equal("active", match.status)
+  equal(2, match.me)
+  equal(true, Match.IsComputer(match, 1))
+  equal(true, Match.IsLocal(match))
+  equal("hard", Match.Level(match))
+
+  -- The computer goes first, and waits for nothing to
+  equal(1, session:ComputerTurn(match))
+  session:ThinkThrough(match.id)
+  equal(1, #match.log)
+  equal(true, Match.IsMyTurn(match))
+  equal(false, session:NeedsAttention(match), "a game against the computer waits on nobody")
+
+  local moves = alice.private.Games.Get("tictactoe").moves
+  while match.status == "active" do
+    assert(session:Move(match.id, moves(Match.State(match))[1]))
+    session:ThinkThrough(match.id)
+  end
+  local result = Match.Result(match)
+  assert(result.winner ~= 2, "the player won against hard")
+  world:Tick(3600)
+  world:Tick(3600)
+  equal(0, #world.sent, "messages sent")
+  equal(0, #session:Opponents(), "the computer is nobody to play again")
+end
+
+function tests.ComputerWaitsToBeLetMove()
+  local world = World.New()
+  local session = world:AddPlayer("Alice-Realm").session
+  local match = assert(session:Invite({}, "tictactoe", { computer = {}, seat = 2 }))
+  equal("medium", match.computers[1], "the level when none is asked for")
+  equal(true, session:Think(match.id, nil, false))
+  equal(true, session:ComputerReady(match))
+  equal(0, #match.log, "it knows its move, and keeps it")
+  equal(false, session:Think(match.id, nil, true))
+  equal(1, #match.log)
+  equal(false, session:Think(match.id, nil, true), "nothing to do on the player's turn")
+end
+
+function tests.ComputerAnswerIsTakenBackWithTheMove()
+  local world = World.New()
+  local session = world:AddPlayer("Alice-Realm").session
+  local match = assert(session:Invite({}, "tictactoe", { computer = { level = "easy" }, seat = 1 }))
+  equal(false, session:CanUndo(match), "nothing to take back")
+  equal(true, session:CanForget(match), "nothing played, nothing to lose")
+  assert(session:Move(match.id, "5"))
+  session:ThinkThrough(match.id)
+  assert(session:Move(match.id, match.log[2] == "1" and "9" or "1"))
+  session:ThinkThrough(match.id)
+  equal(4, #match.log)
+  equal(false, session:CanForget(match), "walking away would be a way of never losing")
+
+  assert(session:Undo(match.id))
+  equal(2, #match.log, "the player's move and the computer's answer")
+  assert(session:Undo(match.id))
+  equal(0, #match.log)
+  equal(false, session:CanUndo(match))
+
+  -- Taken back while it is thinking, it thinks again about the position it is back to
+  assert(session:Move(match.id, "1"))
+  equal(true, session:Think(match.id, nil, false))
+  assert(session:Undo(match.id))
+  equal(false, session:Think(match.id, nil, true))
+  equal(0, #match.log)
+end
+
+function tests.ComputerMatchCarriesOnAfterARelog()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Invite({}, "tictactoe", { computer = { level = "hard" }, seat = 1 }))
+  assert(alice.session:Move(match.id, "5"))
+  alice.session:Think(match.id, nil, false)
+
+  local again = world:Relog(alice)
+  local saved = again.matches[match.id]
+  equal(1, #saved.log, "what it hadn't played yet isn't kept")
+  again.session:ThinkThrough(match.id)
+  equal(2, #saved.log)
+  equal(true, again.private.Match.IsMyTurn(saved))
+end
+
+function tests.ComputerGamesAreTalliedOnce()
+  local world, alice = raceWorld()
+  local session = alice.session
+  for game = 1, 3 do
+    local match = assert(session:Invite({}, "race", { computer = { level = "hard" }, seat = 1 }))
+    if game == 3 then
+      assert(session:Resign(match.id))
+    else
+      -- Seated first the player can win it: three, then whatever leaves a multiple of three
+      local Match = alice.private.Match
+      assert(session:Move(match.id, "1"))
+      session:ThinkThrough(match.id)
+      while match.status == "active" do
+        local count = Match.State(match).count
+        local move = (RACE_GOAL - count - 1) % 3 == 0 and "1" or "2"
+        assert(session:Move(match.id, move))
+        session:ThinkThrough(match.id)
+      end
+      equal(1, Match.Result(match).winner, "the player")
+    end
+    session:Tally(match)
+  end
+  local tally = session:Versus("race", "hard")
+  equal(2, tally.won)
+  equal(1, tally.lost)
+  equal(0, tally.drawn)
+  equal(0, session:Versus("race", "easy").won)
+end
+
+function tests.ComputerAcceptsADrawOnlyWhenItIsNoBetterOff()
+  for _, case in ipairs({ { standing = -1, accepts = true }, { standing = 0, accepts = true }, { standing = 1, accepts = false } }) do
+    local world, alice = raceWorld({
+      seats = 2,
+      draws = true,
+      computer = {
+        evaluate = function()
+          return case.standing
+        end,
+        levels = { hard = { depth = 1 } },
+      },
+    })
+    local session, Match = alice.session, alice.private.Match
+    local match = assert(session:Invite({}, "race", { computer = { level = "hard" }, seat = 1 }))
+    assert(session:OfferDraw(match.id))
+    assert(session:Move(match.id, "1"))
+    session:ThinkThrough(match.id)
+    local result = Match.Result(match)
+    if case.accepts then
+      equal("agreement", result and result.detail, "standing " .. case.standing)
+      equal("finished", match.status)
+      equal(1, session:Versus("race", "hard").drawn)
+    else
+      equal(nil, result, "standing " .. case.standing)
+      equal(3, #match.log, "turned down by playing on")
+      equal(nil, Match.DrawOffer(match))
+    end
+  end
+end
+
+function tests.ComputerSeatsAsManyAsAreAskedFor()
+  local world, alice = raceWorld()
+  local session, Match = alice.session, alice.private.Match
+  equal(nil, select(1, session:Invite({}, "race", { computer = { count = 4 } })), "five can't play")
+  equal("player_count", select(2, session:Invite({}, "race", { computer = { count = 4 } })))
+  equal("player_count", select(2, session:Invite({}, "race", { computer = { level = "genius" } })))
+
+  local match = assert(session:Invite({}, "race", { computer = { level = "easy", count = 3 } }))
+  equal(4, #match.players)
+  local computers = 0
+  for seat = 1, 4 do
+    if Match.IsComputer(match, seat) then
+      computers = computers + 1
+      equal(Match.COMPUTER, match.players[seat])
+    else
+      equal("Alice-Realm", match.players[seat])
+    end
+  end
+  equal(3, computers)
+  equal(true, Match.Started(match), "everyone is there already")
+  session:ThinkThrough(match.id)
+  equal(true, Match.IsMyTurn(match))
+
+  -- Out of it, the player has lost, and the computers don't play on among themselves
+  assert(session:Resign(match.id))
+  equal("finished", match.status)
+  equal(nil, session:ComputerTurn(match))
+  equal(1, session:Versus("race", "easy").lost)
+  equal(0, #world.sent)
+end
+
+function tests.ComputerThatBreaksStillMoves()
+  local logged = {}
+  local world, alice = raceWorld({
+    seats = 2,
+    computer = {
+      think = function()
+        error("lost the thread")
+      end,
+    },
+  })
+  alice.session.env.log = function(...)
+    logged[#logged + 1] = table.concat({ ... }, " ")
+  end
+  local match = assert(alice.session:Invite({}, "race", { computer = {}, seat = 2 }))
+  alice.session:ThinkThrough(match.id)
+  equal(1, #match.log, "the game goes on")
+  equal("1", match.log[1], "with the first move there was")
+  assert(logged[1] and logged[1]:find("lost the thread", 1, true), "what went wrong is said")
+end
+
+function tests.ComputerThatPlaysWhatIsNotAMoveIsPutRight()
+  local world, alice = raceWorld({
+    seats = 2,
+    computer = {
+      think = function()
+        return "7"
+      end,
+    },
+  })
+  local match = assert(alice.session:Invite({}, "race", { computer = {}, seat = 2 }))
+  alice.session:ThinkThrough(match.id)
+  equal("1", match.log[1])
+end
+
+function tests.ComputerOnlySeesWhatItsSeatMay()
+  local shown
+  local world, alice = raceWorld({
+    seats = 2,
+    newState = function(seats)
+      return { count = 0, turn = 1, seats = seats, out = {}, secrets = { "mine", "yours" } }
+    end,
+    visible = function(state, seat)
+      local seen = { count = state.count, turn = state.turn, seats = state.seats, out = state.out, secrets = {} }
+      seen.secrets[seat] = state.secrets[seat]
+      return seen
+    end,
+    computer = {
+      think = function(state, seat, brain)
+        shown = state
+        return (brain:Search(state, { "1", "2" }))
+      end,
+      guess = function(state, seat)
+        local world = { count = state.count, turn = state.turn, seats = state.seats, out = {}, secrets = { "?", "?" } }
+        world.secrets[seat] = state.secrets[seat]
+        return world
+      end,
+    },
+  })
+  local match = assert(alice.session:Invite({}, "race", { computer = {}, seat = 1 }))
+  assert(alice.session:Move(match.id, "1"))
+  alice.session:ThinkThrough(match.id)
+  equal("yours", shown.secrets[2])
+  equal(nil, shown.secrets[1], "the player's secret")
+  equal(2, #match.log)
+end
+
+--- The computer's line in the wizard's list of players
+--- @return table?
+local function computerRow()
+  return Client.Find(function(widget)
+    return widget.kind == "Button" and widget.computer == true and widget:IsVisible()
+  end)[1]
+end
+
+function tests.WizardStartsAGameAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local wizard = openWizard(alice)
+  pickGame("tictactoe")
+  local row = assert(computerRow(), "the computer is there to play")
+  equal(false, says("wizard_level"), "nothing to set about it until it is picked")
+  equal("wizard_computer_note", row.source.text)
+
+  row:Fire("OnClick")
+  local levels, on = ruleChoices("wizard_level")
+  equal("computer_level_medium", on)
+  assert(levels["computer_level_easy"] and levels["computer_level_hard"])
+  equal(false, says("wizard_computers"), "a game for two has one seat to give it")
+  equal("computer_tally_none", row.source.text, "nothing played against it yet")
+  levels["computer_level_hard"]:Fire("OnClick")
+  ruleChoices("wizard_seat")["O"]:Fire("OnClick")
+  equal(true, says("wizard_summary_computer"))
+  local play = Client.Button("wizard_play")
+  equal(true, play.enabled)
+  play:Fire("OnClick")
+  equal(false, wizard.IsOpen())
+
+  local started = select(2, next(alice.matches))
+  equal("tictactoe", started.game)
+  equal(2, started.me)
+  equal("hard", started.computers[1])
+  equal(0, #world.sent)
+
+  -- Next time it is picked already, set the same way
+  wizard.Open()
+  pickGame("tictactoe")
+  equal(true, computerRow().selected.shown)
+  equal("computer_level_hard", select(2, ruleChoices("wizard_level")))
+  equal("O", select(2, ruleChoices("wizard_seat")))
+
+  -- Typing a name is looking for somebody else instead
+  local name = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnTextChanged and widget:IsVisible()
+  end)[1]
+  name:SetText("Bob-Realm")
+  name:Fire("OnTextChanged", true)
+  equal(false, says("wizard_level"))
+  equal(true, Client.Button("wizard_send").enabled)
+
+  -- A game the computer can't play doesn't offer it
+  wizard.Open()
+  pickGame("fourtiles")
+  equal(nil, computerRow())
+end
+
+function tests.WizardSetsHowManySeatsTheComputerTakes()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  registerRace(alice.private)
+  openWizard(alice)
+  pickGame("race")
+  computerRow():Fire("OnClick")
+  local counts, on = ruleChoices("wizard_computers")
+  equal("1", on)
+  assert(counts["2"] and counts["3"] and not counts["4"], "up to three others")
+  equal(true, says("wizard_turn"), "between two there is a turn to choose")
+  counts["3"]:Fire("OnClick")
+  equal(false, says("wizard_turn"), "a crowd draws its seats")
+  equal(true, says("wizard_summary_computers"))
+  ruleChoices("wizard_level")["computer_level_easy"]:Fire("OnClick")
+  Client.Button("wizard_play"):Fire("OnClick")
+  local started = select(2, next(alice.matches))
+  equal(4, #started.players)
+  equal("easy", alice.private.Match.Level(started))
+end
+
+function tests.WindowPlaysTicTacToeAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session = alice.session
+  local match = assert(session:Invite({}, "tictactoe", { computer = { level = "easy" }, seat = 1 }))
+  local MainFrame = openWindow(alice)
+  MainFrame.Open(match.id)
+  equal(true, says("versus"))
+  equal(true, says("status_your_turn"))
+  equal(false, Client.Button("take_back").enabled, "nothing to take back yet")
+
+  local board = shownBoard()
+  clickSquare(board, 1, 1, 3)
+  equal("5", logOf(alice, match.id))
+  equal(true, says("status_computer_thinking"))
+  local detail = Client.Find(function(widget)
+    return widget.buttons ~= nil and widget.scripts.OnUpdate ~= nil
+  end)[1]
+
+  -- It looks as though it thinks for a moment before it moves
+  detail:Fire("OnUpdate", 0.1)
+  equal(1, #match.log, "not on the spot")
+  for _ = 1, 10 do
+    detail:Fire("OnUpdate", 0.1)
+  end
+  equal(2, #match.log, "the computer answered")
+  equal(true, says("status_your_turn"))
+
+  -- Taken back, the computer's answer goes too
+  local takeBack = Client.Button("take_back")
+  equal(true, takeBack.enabled)
+  takeBack:Fire("OnClick")
+  equal(0, #match.log)
+  equal(0, #world.sent)
+
+  -- Played out, it can be played again, the other way round
+  local moves = alice.private.Games.Get("tictactoe").moves
+  while match.status == "active" do
+    if alice.private.Match.IsMyTurn(match) then
+      assert(session:Move(match.id, moves(alice.private.Match.State(match))[1]))
+    end
+    detail:Fire("OnUpdate", 1)
+  end
+  Client.Button("play_again"):Fire("OnClick")
+  local again
+  for _, other in pairs(alice.matches) do
+    again = other ~= match and other or again
+  end
+  equal(2, again.me)
+  equal("easy", again.computers[1])
+end
+
+function tests.RegistryRefusesAComputerItCantUse()
+  local cases = {
+    { { visible = function(state)
+      return state
+    end }, "guesses" },
+    { { computer = { levels = { impossible = {} } } }, "no such thing" },
+    { { computer = { evaluate = 3 } }, "evaluate isn't a function" },
+    { { seats = 1 }, "no seat for the computer" },
+    { { moves = false }, "neither moves nor think" },
+  }
+  for _, case in ipairs(cases) do
+    local private = loadEngine()
+    local ok, err = pcall(registerRace, private, case[1])
+    assert(not ok, "registered all the same: " .. case[2])
+    assert(tostring(err):find(case[2], 1, true), "said " .. tostring(err) .. ", not " .. case[2])
+  end
+end
 end
 
 -- The checks every game is put through, a test for each

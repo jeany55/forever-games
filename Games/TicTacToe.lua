@@ -96,6 +96,67 @@ local function result(state)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- There are few enough positions that it looks all the way to the end, and from there it can't
+-- be beaten. Easier levels don't look as far, and go by the lines still open to each player when
+-- they stop looking: they can be caught out by a fork, and the easiest by a line it didn't see
+-- coming. They slip now and then too.
+
+--- @param state TicTacToeState
+--- @return string
+local function positionKey(state)
+  local cells = {}
+  for cell = 1, 9 do
+    cells[cell] = state.board[cell] or 0
+  end
+  return table.concat(cells)
+end
+
+--- The lines a seat could still make, against the ones the other could
+--- @param state TicTacToeState
+--- @param seat number
+--- @return number
+local function openLines(state, seat)
+  local score = 0
+  for _, line in ipairs(LINES) do
+    local mine, theirs = 0, 0
+    for _, cell in ipairs(line) do
+      local owner = state.board[cell]
+      if owner == seat then
+        mine = mine + 1
+      elseif owner then
+        theirs = theirs + 1
+      end
+    end
+    if theirs == 0 then
+      score = score + mine + 1
+    elseif mine == 0 then
+      score = score - theirs - 1
+    end
+  end
+  return score
+end
+
+-- The middle is in four lines, a corner in three and an edge in two
+local CELL_LINES = { 3, 2, 3, 2, 4, 2, 3, 2, 3 }
+
+local COMPUTER = {
+  evaluate = openLines,
+  priority = function(_, move)
+    return CELL_LINES[tonumber(move)]
+  end,
+  key = positionKey,
+  levels = {
+    -- Sees a line it can finish, not always one it has to stop
+    easy = { depth = 1, slip = 0.5, among = 4 },
+    -- Stops every line, and walks into two at once
+    medium = { depth = 2, slip = 0.25, among = 3 },
+    hard = { depth = 9 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- Nine squares of the shared board (GUI/Board.lua) with a line between them, and a nought or a
@@ -215,6 +276,7 @@ private.Games.Register({
   apply = apply,
   moves = moves,
   result = result,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat)
     return MARKS[seat]

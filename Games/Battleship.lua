@@ -304,6 +304,155 @@ local function visible(state, seat)
 end
 
 -----------------------------
+-- The computer
+-----------------------------
+-- It hides its fleet somewhere new every game, at its better levels with no two ships touching,
+-- so that finding one gives nothing away about the next.
+--
+-- Firing, it only knows what anybody would: where it missed, where it hit, and which ships went
+-- down where. From that it counts every way each ship still afloat could lie, and fires where
+-- the most of them overlap. A hit that hasn't sunk anything yet means a ship lies across it,
+-- and then only the ways through that hit count. At its best, while it has nothing to go on,
+-- it only fires at every other square, or every third once only longer ships are left: no ship
+-- can lie between them. Below its best it fires anywhere until it hits something.
+
+--- A fleet laid out at random, the ships kept apart from each other if asked
+--- @param random Random
+--- @param apart boolean
+--- @return string move
+local function hideFleet(random, apart)
+  while true do
+    local ships, taken, placed = {}, {}, true
+    for index, kind in ipairs(SHIPS) do
+      local cells
+      for _ = 1, 200 do
+        local vertical = random:Roll(2) == 1
+        cells = cellsOf(kind.size, random:Roll(SIZE * SIZE) - 1, vertical)
+        local free = cells ~= nil
+        for _, cell in ipairs(cells or {}) do
+          free = free and not taken[cell]
+        end
+        if free then
+          ships[index] = { square = cells[1], vertical = vertical }
+          break
+        end
+        cells = nil
+      end
+      if not cells then
+        placed = false
+        break
+      end
+      for _, cell in ipairs(cells) do
+        taken[cell] = true
+        if apart then
+          -- And the squares around it, for the ships still to come
+          local column, row = cell % SIZE, math.floor(cell / SIZE)
+          for _, beside in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+            local nextColumn, nextRow = column + beside[1], row + beside[2]
+            if nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE then
+              taken[nextRow * SIZE + nextColumn] = true
+            end
+          end
+        end
+      end
+    end
+    if placed then
+      return fleetMove(ships)
+    end
+  end
+end
+
+--- How many ways the ships afloat could lie across each square that hasn't been fired at
+--- @param seen BattleshipState
+--- @param foe number Whose sea
+--- @param parity boolean Leave out the squares no ship needs to be looked for on
+--- @return table<number, number> ways By square
+--- @return boolean hunting Nothing hit is still afloat
+local function heat(seen, foe, parity)
+  local shots, sunk = seen.shots[foe], seen.decks[foe]
+  -- Hits that belong to no ship that went down: a ship still afloat lies across each
+  local open, hunting = {}, true
+  for square, shot in pairs(shots) do
+    if shot == HIT and not sunk[square] then
+      open[square], hunting = true, false
+    end
+  end
+  local ways, shortest = {}, SIZE
+  for _, ship in ipairs(seen.fleets[foe]) do
+    if not ship.sunk then
+      shortest = math.min(shortest, ship.size)
+      for square = 0, SIZE * SIZE - 1 do
+        for _, vertical in ipairs({ false, true }) do
+          local cells = cellsOf(ship.size, square, vertical)
+          local fits, through = cells ~= nil, 0
+          for _, cell in ipairs(cells or {}) do
+            if open[cell] then
+              through = through + 1
+            elseif shots[cell] or sunk[cell] then
+              fits = false
+              break
+            end
+          end
+          -- With something hit, only the ways through it are worth anything
+          if fits and (hunting or through > 0) then
+            local worth = hunting and 1 or through * through
+            for _, cell in ipairs(cells) do
+              if not shots[cell] then
+                ways[cell] = (ways[cell] or 0) + worth
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  if parity and hunting then
+    for square in pairs(ways) do
+      if (square % SIZE + math.floor(square / SIZE)) % shortest ~= 0 then
+        ways[square] = nil
+      end
+    end
+  end
+  return ways, hunting
+end
+
+local COMPUTER = {
+  think = function(seen, seat, brain)
+    local level = brain.level
+    if not seen.placed[seat] then
+      return hideFleet(brain.random, level.apart)
+    end
+    local foe = other(seat)
+    local ways, hunting = heat(seen, foe, level.parity)
+    local scored = {}
+    for square = 0, SIZE * SIZE - 1 do
+      if not seen.shots[foe][square] then
+        local worth = ways[square] or 0
+        if hunting and level.blind then
+          worth = 0
+        end
+        scored[#scored + 1] = { move = squareName(square), score = worth, rank = 0, index = square }
+        brain:Spend()
+      end
+    end
+    table.sort(scored, function(a, b)
+      if a.score ~= b.score then
+        return a.score > b.score
+      end
+      return a.index < b.index
+    end)
+    return brain:Pick(scored).move
+  end,
+  levels = {
+    -- Fires anywhere until it hits something, and isn't sure what to do then
+    easy = { blind = true, slip = 0.6, among = 10, careless = true },
+    -- Fires anywhere until it hits something, and then sinks it
+    medium = { apart = true, blind = true, slip = 0 },
+    hard = { apart = true, parity = true, slip = 0 },
+  },
+}
+
+-----------------------------
 -- View
 -----------------------------
 -- Two seas on the shared board (GUI/Board.lua): the player's own with their fleet on it, and
@@ -907,5 +1056,6 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  computer = COMPUTER,
   createView = createView,
 })

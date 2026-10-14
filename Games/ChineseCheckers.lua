@@ -304,6 +304,100 @@ local function drop(state, seat)
   end
 end
 
+-----------------------------
+-- The computer
+-----------------------------
+-- It is a race, and the computer runs it by how far each marble still has to go: the holes
+-- between it and the tip of the point it is headed for, which the marbles fill from the back.
+-- A marble left far behind the others counts for more than its distance, it holds up the end.
+-- It looks first at the moves that get furthest, hops along a line of marbles most of all. Against
+-- one other player it looks ahead and counts how the other gets on against its own; with more
+-- at the table it runs its own race as well as it can.
+
+-- How many holes each hole is from the tip of each point, by point
+--- @type table<number, table<number, number>>
+local TO_TIP = {}
+for point, list in pairs(pointHoles) do
+  -- The tip is the hole of the point furthest from the middle
+  local tip, furthest = nil, -1
+  for _, hole in ipairs(list) do
+    local at = holes[hole]
+    local out = math.max(math.abs(at.x), math.abs(at.z), math.abs(at.x + at.z))
+    if out > furthest then
+      tip, furthest = hole, out
+    end
+  end
+  TO_TIP[point] = {}
+  local from = holes[tip]
+  for number, at in ipairs(holes) do
+    local x, z = at.x - from.x, at.z - from.z
+    TO_TIP[point][number] = math.max(math.abs(x), math.abs(z), math.abs(x + z))
+  end
+end
+-- What the marble furthest back counts for, on top of its distance
+local STRAGGLER = 0.5
+
+--- How far a seat's marbles still have to go between them
+--- @param state ChineseCheckersState
+--- @param seat number
+--- @return number
+local function remaining(state, seat)
+  local distances, total, worst = TO_TIP[goalOf(state, seat)], 0, 0
+  for hole, owner in pairs(state.board) do
+    if owner == seat then
+      local distance = distances[hole]
+      total, worst = total + distance, math.max(worst, distance)
+    end
+  end
+  return total + STRAGGLER * worst
+end
+
+--- How well a seat stands: how far it has to go against the others still in it
+--- @param state ChineseCheckersState
+--- @param seat number
+--- @return number
+local function standing(state, seat)
+  local others, count = 0, 0
+  for other = 1, state.seats do
+    if other ~= seat and not state.out[other] then
+      others, count = others + remaining(state, other), count + 1
+    end
+  end
+  return (count > 0 and others / count or 0) - remaining(state, seat)
+end
+
+local COMPUTER = {
+  evaluate = standing,
+  priority = function(state, move, seat)
+    local from, to = parse(move)
+    local distances = TO_TIP[goalOf(state, seat)]
+    return distances[from] - distances[to]
+  end,
+  copy = function(state)
+    local board, out = {}, {}
+    for hole, owner in pairs(state.board) do
+      board[hole] = owner
+    end
+    for seat in pairs(state.out) do
+      out[seat] = true
+    end
+    return {
+      seats = state.seats,
+      points = state.points,
+      board = board,
+      turn = state.turn,
+      out = out,
+      last = state.last,
+      outcome = state.outcome,
+    }
+  end,
+  levels = {
+    easy = { depth = 1, slip = 0.4, among = 4 },
+    medium = { depth = 1, slip = 0.1, among = 2 },
+    hard = { depth = 3, budget = 10000 },
+  },
+}
+
 --- @param seat number
 --- @param seats number
 --- @return string
@@ -518,6 +612,7 @@ private.Games.Register({
     return state.outcome
   end,
   drop = drop,
+  computer = COMPUTER,
   createView = createView,
   seatLabel = function(seat, seats)
     return L["chinesecheckers_" .. colorOf(seat, seats)]
