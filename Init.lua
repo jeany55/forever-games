@@ -19,6 +19,9 @@ local _, private = ...
 --- @field Sketch Sketch
 --- @field SketchView SketchView
 --- @field SketchWords table<string, string[]> What Sketch gives to draw, see Lexicon/Sketch.lua
+--- @field Trivia Trivia
+--- @field TriviaView TriviaView
+--- @field TriviaQuestions table<string, string[][]> What Trivia asks, see Lexicon/Trivia.lua
 --- @field Canvas Canvas
 --- @field Party Party
 --- @field Widgets Widgets

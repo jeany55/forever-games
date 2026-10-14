@@ -200,7 +200,8 @@ end
 
 local function send()
   local others = Games.IsSolo(chosenGame) and {} or opponents()
-  local match, err = private.session:Invite(others, chosenGame.id, { options = chosenRules, seat = chosenSeat })
+  local options = Games.ForPlayers(chosenGame, chosenRules, #others + 1)
+  local match, err = private.session:Invite(others, chosenGame.id, { options = options, seat = chosenSeat })
   if not match then
     panel.error:SetText(L["err_" .. err])
     return
@@ -211,7 +212,7 @@ end
 
 --- Leaves the game open to whoever clicks a link to it, and hands the player the link to send
 local function link()
-  local game, err = private.session:Offer(chosenGame.id, { options = chosenRules, seat = chosenSeat })
+  local game, err = private.session:Offer(chosenGame.id, { options = Games.ForPlayers(chosenGame, chosenRules, 2), seat = chosenSeat })
   if not game then
     panel.error:SetText(L["err_" .. err])
     return
@@ -836,7 +837,7 @@ local function createOptionRow(parent)
   row:SetHeight(OPTION_ROW_HEIGHT)
   row:EnableMouse(true)
   row.name = Widgets.Label(row, "GameFontHighlight")
-  row.name:SetPoint("LEFT", 0, 0)
+  row.name:SetPoint("LEFT", row, "TOPLEFT", 0, -OPTION_ROW_HEIGHT / 2)
   row.name:SetWidth(OPTION_NAME_WIDTH)
   row.name:SetWordWrap(false)
   row.choices = {}
@@ -891,7 +892,8 @@ local function refreshRules()
   if seated then
     lines[1] = seatLine()
   end
-  for _, option in ipairs(Games.OptionsFor(chosenGame, chosenRules)) do
+  local players = Games.IsSolo(chosenGame) and 1 or #opponents() + 1
+  for _, option in ipairs(Games.OptionsFor(chosenGame, chosenRules, players)) do
     local line = { name = option.name, tip = option.description, choices = {} }
     for _, value in ipairs(Games.Choices(option)) do
       line.choices[#line.choices + 1] = {
@@ -905,12 +907,14 @@ local function refreshRules()
     lines[#lines + 1] = line
   end
 
+  -- Every line of the rules under the one before, as tall as it takes for its choices to fit
+  -- across: whatever doesn't fit next to the others goes on underneath them
+  local top, first, room = OPTIONS_TOP, OPTION_NAME_WIDTH + FILTER_GAP, RULES_WIDTH - 2 * RULES_INSET
+  local inset = (OPTION_ROW_HEIGHT - FILTER_HEIGHT) / 2
   for index = 1, math.max(#lines, #rules.rows) do
     local row, line = rules.rows[index], lines[index]
     if line and not row then
       row = createOptionRow(rules)
-      row:SetPoint("TOPLEFT", RULES_INSET, -OPTIONS_TOP - (index - 1) * OPTION_ROW_HEIGHT)
-      row:SetPoint("TOPRIGHT", -RULES_INSET, -OPTIONS_TOP - (index - 1) * OPTION_ROW_HEIGHT)
       rules.rows[index] = row
     end
     if row then
@@ -919,7 +923,7 @@ local function refreshRules()
     if line then
       row.tip = line.tip
       row.name:SetText(line.name)
-      local x = OPTION_NAME_WIDTH + FILTER_GAP
+      local x, y = first, inset
       for position = 1, math.max(#line.choices, #row.choices) do
         local choice, spec = row.choices[position], line.choices[position]
         if spec and not choice then
@@ -931,11 +935,20 @@ local function refreshRules()
         end
         if spec then
           fillChoice(choice, spec.text, spec.on, spec.pick)
+          if x > first and x + choice:GetWidth() > room then
+            x, y = first, y + FILTER_HEIGHT + FILTER_GAP
+          end
           choice:ClearAllPoints()
-          choice:SetPoint("LEFT", x, 0)
+          choice:SetPoint("TOPLEFT", x, -y)
           x = x + choice:GetWidth() + FILTER_GAP
         end
       end
+      local height = y + FILTER_HEIGHT + inset
+      row:ClearAllPoints()
+      row:SetPoint("TOPLEFT", RULES_INSET, -top)
+      row:SetPoint("TOPRIGHT", -RULES_INSET, -top)
+      row:SetHeight(height)
+      top = top + height
     end
   end
 
@@ -949,8 +962,8 @@ local function refreshRules()
   end
   rules.note:SetShown(#lines > 0)
   rules.note:ClearAllPoints()
-  rules.note:SetPoint("TOPLEFT", RULES_INSET, -OPTIONS_TOP - #lines * OPTION_ROW_HEIGHT - 8)
-  rules.note:SetPoint("TOPRIGHT", -RULES_INSET, -OPTIONS_TOP - #lines * OPTION_ROW_HEIGHT - 8)
+  rules.note:SetPoint("TOPLEFT", RULES_INSET, -top - 8)
+  rules.note:SetPoint("TOPRIGHT", -RULES_INSET, -top - 8)
 end
 
 --- Picks whoever the box over the list stands for

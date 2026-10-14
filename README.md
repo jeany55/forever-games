@@ -4,7 +4,8 @@ A World of Warcraft Forever addon for playing classic games against your friends
 your own pace. Make a move, go pull a boss, come back later.
 
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
-Chinese Checkers, which is for up to six, and Crazy Eights, which is too. And Solitaire, Minesweeper
+Chinese Checkers, which is for up to six, and Crazy Eights, which is too. Wormcraft, artillery for
+up to four the way Worms played it. And Solitaire, Minesweeper
 Sudoku, 2048 and Warcraftstein 3D, for when nobody is around. And Fourtiles, a word puzzle to
 solve on your own or the two of you together, both at once.
 
@@ -45,6 +46,23 @@ solve on your own or the two of you together, both at once.
 - **Sketch** is the first of them: one of you is given three things to pick from and draws one,
   everyone else types what they think it is. The sooner you get it the more it is worth, and
   whoever drew gets something for everyone who did
+- **Deathroll** is a tourney of the tavern gamble, for a raid between pulls. The host starts it
+  and everyone in the room is drawn into a bracket. Two of you take turns to **Roll**, the first
+  from 1 to 1000 and each after that from 1 to what the other just rolled, and whoever rolls a 1
+  is out. Every duel of a round is rolled at once and the winners meet in the next round until
+  one is left. Don't roll in time and it is rolled for you. What the rolls start from and how
+  long you have for each are set when the room is opened. The rolls are the addon's and are
+  shown in the room, never in chat
+- **Trivia** is a quiz the way Kahoot plays one, for a raid while it waits. The host asks and
+  everyone gets the same question at once, with two to four answers marked by raid icons. Click
+  one, or press 1 to 4 with the cursor over the game. A right answer is worth up to 1000, less
+  the longer you took, and a little more for every right answer in a row before it. Once the time
+  is up, or everyone answered, the right one lights up with how many picked each. Which questions
+  (General, Warcraft from the Third War to the Lich King, or both), how many and how long you
+  have for each are set when the room is opened. The quiz stops whenever the host goes into
+  combat, and the question that was up counts for nothing; it goes on by itself a few seconds
+  after the fight, and the host can **Pause** and **Go On** by hand too. Made small, its window
+  hides while you fight. The host doesn't ask what it asked lately, from one night to the next
 - A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`.
   One with something to set up, like how hard Minesweeper is, asks for that first, and
   `/fg play` goes by what you said last.
@@ -83,6 +101,23 @@ solve on your own or the two of you together, both at once.
   while you wait for the other fleet. After that click a square of the other sea to fire at it:
   you are told what the shot did right away, whether your opponent is around or not. The sea
   you aren't playing on is shown small, click it for a closer look
+- Wormcraft is for up to four, each with a squad on an island. Play it alone (pick nobody, then
+  **Play Alone**) and you play against one to three squads of the computer's, Easy, Medium or
+  Hard: set how many and how good next to the rest of the rules. With others there is no
+  computer. Everybody picks a class first,
+  and every class has one thing of its own: a warrior's Charge, a mage's Blink, a priest's
+  Prayer of Healing. Then you take turns: walk one of your squad about with the arrow keys or A
+  and D, aim with up and down or W and S, and hold space to wind up a shot, longer for more
+  power. Enter jumps and Backspace flips backwards. Pick what to fire under the island, or with
+  Q and E: fireballs blow with the wind, grenades bounce until their fuse (1 to 5) burns down,
+  and a blizzard or a kodo comes down wherever you click. After firing you have three seconds to
+  run. Your turn is ready as soon as it is yours, and the clock only starts once you move:
+  Tab picks somebody else of your squad before that. Everybody is a level higher every round
+  and learns more to fire, crates fall from a zeppelin between turns with something rarer in
+  them, and from a round you pick when you set the game up the sea rises. The turns the others
+  had since you last looked are played out again for you when you open the game, space skips
+  them. The mouse wheel zooms in, and dragging moves the island about. A turn that isn't over
+  when you leave the game is begun again when you come back
 - Solitaire is Klondike, dealt out in front of you. Drag a card where it should go, with
   whatever lies on it, or just click it: it goes home if it can and to the first column that
   will have it if not, and a right click only ever sends it home. Click the stock to turn a
@@ -169,7 +204,9 @@ nothing: that catches mistakes in what the window does, not in how it looks.
   - `Rooms.lua` rooms for the games played by whoever turns up: who is in one, what is said in
     it on a guild or group channel, guests the host passes everything on to and from, and a
     queue that keeps it all under what the client lets an addon send. Nothing like a match:
-    no log, nothing sent again, nothing kept. `Games/Sketch.lua` is the game to copy from
+    no log, nothing sent again, nothing kept. `Games/Sketch.lua` is the game to copy from. A
+    game can stop for a fight (`fight`) and have its small window keep out of one (`calm`), see
+    `Games/Trivia.lua`, whose questions are in `Lexicon/Trivia.lua`
 - `Games/` one file per game: its rules and its view
 - `Transport.lua` addon messages, lockdown and online/offline detection
 - `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
@@ -247,7 +284,9 @@ A game can let whoever sets it up change some of its rules with `options`: each 
 `name`, a `default` and the `choices` it can be set to (leave those out for something that is on
 or off). `newState` is handed what they are all set to as its third argument, and keeps what the
 rules need of it in the state. The wizard, the challenge and the rematch are the engine's. See
-`Games/Words.lua`.
+`Games/Words.lua`. An option marked `alone` is only offered for a game played alone, of one that
+can be played with others too, and never sent with a challenge: how many computer players there
+are and how good, see `Games/Wormcraft.lua`.
 
 Give the game a `genre` so it can be found in the new game wizard: one that is there already
 (`strategy`, `casual`, `dice`, `cards`, `words`, `solo`) or a new one, with its name in the locale file as `genre_<name>`.
@@ -275,6 +314,9 @@ and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everythin
 game is put together again from its moves every time it is loaded, so `newState` runs often.
 `Games/Fourtiles.lua` is played alone or by two together, with no turns (`together`), and has
 its puzzles made ahead of time by a tool.
+`Games/Wormcraft.lua` has physics: a move is everything a player did in a turn, tick by tick,
+and every client plays it out again in whole numbers only, so that every grenade bounces the
+same everywhere. Its view plays the same turns out again, to show the others what happened.
 `Games/Warcraftstein.lua` isn't played in moves at all: its view walks the player through the
 monastery many times a second and draws what they see, walls a column at a time and floor and
 ceiling a row at a time, and the engine only ever hears who went in, and that the way out was
@@ -288,10 +330,11 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 (a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
-The puzzles of Fourtiles and its icon are made by `Tools/make_fourtiles.py`.
+The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`.
 The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
 ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
-`Tools/make_warcraftstein.py`.
+`Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
+are drawn by `Tools/make_wormcraft.py`.
 
 ## Credits
 
@@ -304,3 +347,7 @@ domain (CC0).
 
 The words the puzzles of Fourtiles are cut from were picked with the help of
 [SCOWL](http://wordlist.aspell.net) by Kevin Atkinson, whose lists say how common a word is.
+
+The tiles of Fourtiles and Words are written in [Lexend](https://github.com/googlefonts/lexend)
+by The Lexend Project Authors, used under the SIL Open Font License 1.1. See
+`Fonts/Lexend-OFL.txt`.

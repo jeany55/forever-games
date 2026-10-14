@@ -712,7 +712,9 @@ function Party.Refresh()
   end
 
   if small then
-    small:SetShown(isSmall and room ~= nil)
+    -- A game that keeps out of the way of a fight is back once it is over (Core.lua says when)
+    local hidden = game ~= nil and game.calm == true and InCombatLockdown()
+    small:SetShown(isSmall and room ~= nil and not hidden)
     if small:IsShown() then
       refreshSmall(room)
     end

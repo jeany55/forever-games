@@ -139,6 +139,14 @@ function methods:IsShown()
   return self.shown
 end
 
+function methods:SetParent(parent)
+  self.parent = parent
+end
+
+function methods:GetParent()
+  return self.parent
+end
+
 --- Whether the widget and everything it sits in is shown
 function methods:IsVisible()
   local widget = self

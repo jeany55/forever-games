@@ -21,6 +21,19 @@ Widgets.GREY = { 0.65, 0.65, 0.65 }
 Widgets.GOLD = { 1, 0.82, 0 }
 Widgets.RED = { 1, 0.3, 0.25 }
 
+-- A plain, round font the addon brings along, easy on the eyes in lower case (Fonts/)
+Widgets.LEXEND = "Interface\\AddOns\\ForeverGames\\Fonts\\Lexend-SemiBold.ttf"
+
+--- Writes a text in Lexend. The client's own font is set first: a text told to use a font the
+--- client can't find, as it can't one that was added while it was running, keeps the one it had
+--- @param text FontString
+--- @param size number
+--- @param flags string?
+function Widgets.Lexend(text, size, flags)
+  text:SetFont(STANDARD_TEXT_FONT, size, flags or "")
+  text:SetFont(Widgets.LEXEND, size, flags or "")
+end
+
 --- A slightly darker box with a hairline border, for grouping content
 --- @param parent Frame
 --- @param frameType string?
@@ -31,6 +44,88 @@ function Widgets.Panel(parent, frameType)
   panel:SetBackdropColor(0, 0, 0, 0.4)
   panel:SetBackdropBorderColor(1, 1, 1, 0.1)
   return panel
+end
+
+-- Where a picture cut in nine is cut, the same both ways: a quarter of it at each edge
+local CUTS = { 0, 0.25, 0.75, 1 }
+
+--- @class Slices
+--- @field pieces Texture[] The nine, row by row from the top left
+
+--- A picture cut in nine like a window pane and laid over a frame: its corners keep their size and
+--- the edges and the middle stretch, so something with round corners stays round however wide or
+--- tall the frame is. The picture keeps a quarter of its side at each edge from stretching
+--- @param frame Frame
+--- @param file string
+--- @param layer string? Draw layer, ARTWORK if left out
+--- @param sublevel number?
+--- @param options { x: number?, y: number?, grow: number? }? How far it is moved from the frame, and how much larger than it it is drawn all round
+--- @return Slices
+function Widgets.Slices(frame, file, layer, sublevel, options)
+  options = options or {}
+  local x, y, grow = options.x or 0, options.y or 0, options.grow or 0
+  local slices, pieces = {}, {}
+  for row = 1, 3 do
+    for column = 1, 3 do
+      local piece = frame:CreateTexture(nil, layer or "ARTWORK", nil, sublevel)
+      piece:SetTexture(file)
+      piece:SetTexCoord(CUTS[column], CUTS[column + 1], CUTS[row], CUTS[row + 1])
+      pieces[#pieces + 1] = piece
+    end
+  end
+  local topLeft, top, topRight, left, middle, right, bottomLeft, bottom, bottomRight = unpack(pieces)
+  topLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", x - grow, y + grow)
+  topRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", x + grow, y + grow)
+  bottomLeft:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x - grow, y - grow)
+  bottomRight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", x + grow, y - grow)
+  -- Each of the others fills what lies between two of the corners
+  for _, between in ipairs({
+    { top, topLeft, "TOPRIGHT", topRight, "BOTTOMLEFT" },
+    { left, topLeft, "BOTTOMLEFT", bottomLeft, "TOPRIGHT" },
+    { right, topRight, "BOTTOMLEFT", bottomRight, "TOPRIGHT" },
+    { bottom, bottomLeft, "TOPRIGHT", bottomRight, "BOTTOMLEFT" },
+    { middle, topLeft, "BOTTOMRIGHT", bottomRight, "TOPLEFT" },
+  }) do
+    local piece, from, fromPoint, to, toPoint = unpack(between)
+    piece:SetPoint("TOPLEFT", from, fromPoint)
+    piece:SetPoint("BOTTOMRIGHT", to, toPoint)
+  end
+  slices.pieces = pieces
+
+  --- How large the corners are drawn
+  --- @param size number
+  function slices:SetCorner(size)
+    for _, corner in ipairs({ topLeft, topRight, bottomLeft, bottomRight }) do
+      corner:SetSize(size, size)
+    end
+  end
+
+  --- @param red number
+  --- @param green number
+  --- @param blue number
+  --- @param alpha number?
+  function slices:SetVertexColor(red, green, blue, alpha)
+    for _, piece in ipairs(pieces) do
+      piece:SetVertexColor(red, green, blue, alpha or 1)
+    end
+  end
+
+  --- @param shown boolean
+  function slices:SetShown(shown)
+    for _, piece in ipairs(pieces) do
+      piece:SetShown(shown)
+    end
+  end
+
+  --- @param mode string
+  function slices:SetBlendMode(mode)
+    for _, piece in ipairs(pieces) do
+      piece:SetBlendMode(mode)
+    end
+  end
+
+  slices:SetCorner(8)
+  return slices
 end
 
 --- @param parent Frame

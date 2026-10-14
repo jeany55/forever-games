@@ -92,6 +92,8 @@ local _, private = ...
 --- @field busy (fun(room: Room): boolean)? Whether the game needs the player's whole attention right now: a window that was made small is made big for as long
 --- @field mark (fun(room: Room, member: RoomMember): string?, string?)? How a member stands out in the list of who is in the room: "gold" or "green", and a few characters to put next to what they have
 --- @field view (fun(parent: any): table)? Builds what shows it, see GUI/Party.lua
+--- @field fight (fun(room: Room, fighting: boolean))? The local player went into combat, or came out of it
+--- @field calm boolean? Keeps out of the way of a fight: its small window is hidden while the player is in combat
 
 --- @class Room
 --- @field id string
@@ -847,6 +849,16 @@ function Rooms:PeerOffline(name)
     if member then
       self:say(room, 1, "OUT", member.n)
     end
+  end
+end
+
+--- The local player went into combat, or came out of it
+--- @param fighting boolean
+function Rooms:Fighting(fighting)
+  local room = self.room
+  local game = room and games[room.game]
+  if game and game.fight then
+    game.fight(room, fighting)
   end
 end
 

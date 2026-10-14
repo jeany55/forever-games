@@ -209,7 +209,7 @@ local function apply(state, seat, move)
 
   local rank = rankOf(state.score)
   return {
-    notation = word,
+    notation = word:lower(),
     word = word,
     size = size,
     points = points,
@@ -247,11 +247,23 @@ local TILE_WIDEST, TILE_TALLEST = 150, 58
 local STAT_HEIGHT = 40
 local ROW_HEIGHT = 18
 local BUTTON_WIDTH = 96
+-- The tiles are white pictures with round corners, tinted (Tools/make_fourtiles.py)
+local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Fourtiles\\"
 -- How the tiles look: as they lie there, picked for the word being put together, and once the
 -- long word they were cut from is found
-local PLAIN = { 0.16, 0.17, 0.21 }
-local PICKED = { 0.42, 0.33, 0.06 }
-local SOLVED = { 0.12, 0.3, 0.17 }
+local PLAIN = { 0.21, 0.22, 0.27 }
+local PICKED = { 0.6, 0.45, 0.1 }
+local SOLVED = { 0.15, 0.37, 0.22 }
+-- What is written on them: a warm white, softer than white is on a dark tile
+local LETTERING = { 0.94, 0.92, 0.86 }
+-- How large the letters are and how round the corners, as fractions of a tile's height. A tile
+-- is never too narrow for four letters: they get smaller first
+local LETTERS, CORNERS = 0.44, 0.22
+-- How wide a letter is, as a fraction of its size
+local LETTER_WIDTH = 0.62
+-- How long a shuffle takes the tiles, how much later each sets off than the one before it, and
+-- how high they lift on the way
+local SHUFFLE_FOR, SHUFFLE_AFTER, SHUFFLE_LIFT = 0.4, 0.012, 8
 -- What each of two players found is written in
 local SEAT_COLORS = { { 0.52, 0.8, 1 }, { 1, 0.66, 0.84 } }
 local WHITE = { 1, 1, 1 }
@@ -278,29 +290,42 @@ local function createView(stage)
 
   -- The word being put together
   self.tray = Widgets.Panel(stage)
-  self.word = self.tray:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-  self.word:SetPoint("CENTER")
+  self.word = self.tray:CreateFontString(nil, "OVERLAY")
+  Widgets.Lexend(self.word, 24)
+  self.word:SetTextColor(unpack(Widgets.GOLD))
+  self.word:SetPoint("CENTER", 0, 1)
   self.hint = self.tray:CreateFontString(nil, "OVERLAY", "GameFontDisable")
   self.hint:SetPoint("CENTER")
   self.hint:SetText(L["fourtiles_hint"])
   self.says = stage:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   self.says:SetJustifyH("CENTER")
 
-  for place = 1, TILES do
-    local tile = Widgets.Panel(stage, "Button")
-    tile.place = place
-    tile.label = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    tile.label:SetPoint("CENTER")
+  -- A button for each tile, that goes wherever the tile is laid
+  for index = 1, TILES do
+    local tile = CreateFrame("Button", nil, stage)
+    tile.tile = index
+    -- A shadow under it, the tile, the light along its top and the line around it once picked
+    local shadow = Widgets.Slices(tile, IMAGES .. "body", "BACKGROUND", nil, { y = -2, grow = 1 })
+    shadow:SetVertexColor(0, 0, 0, 0.45)
+    tile.body = Widgets.Slices(tile, IMAGES .. "body", "BORDER")
+    local gloss = Widgets.Slices(tile, IMAGES .. "gloss", "ARTWORK")
+    tile.ring = Widgets.Slices(tile, IMAGES .. "ring", "ARTWORK", 1)
+    tile.ring:SetVertexColor(1, 0.82, 0, 0.95)
+    local hover = Widgets.Slices(tile, IMAGES .. "body", "HIGHLIGHT")
+    hover:SetVertexColor(1, 1, 1, 0.07)
+    tile.slices = { shadow, tile.body, gloss, tile.ring, hover }
+    tile.label = tile:CreateFontString(nil, "OVERLAY")
+    Widgets.Lexend(tile.label, 16)
+    tile.label:SetShadowColor(0, 0, 0, 0.6)
+    tile.label:SetShadowOffset(0, -1)
     -- Where it comes in the word, small in its corner
-    tile.number = tile:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    tile.number:SetPoint("TOPRIGHT", -5, -4)
-    local hover = tile:CreateTexture(nil, "HIGHLIGHT")
-    hover:SetAllPoints()
-    hover:SetColorTexture(1, 1, 1, 0.08)
+    tile.number = tile:CreateFontString(nil, "OVERLAY")
+    Widgets.Lexend(tile.number, 10)
+    tile.number:SetTextColor(unpack(Widgets.GOLD))
     tile:SetScript("OnClick", function()
-      self:pick(self.order[place])
+      self:pick(index)
     end)
-    self.tiles[place] = tile
+    self.tiles[index] = tile
   end
 
   self.buttons = {
@@ -341,8 +366,10 @@ local function createView(stage)
   self.found = Widgets.List(self.side, SIDE_MIN, ROW_HEIGHT, function(content)
     local row = CreateFrame("Frame", nil, content)
     row.word = Widgets.Label(row, "GameFontHighlightSmall")
+    Widgets.Lexend(row.word, 11)
     row.word:SetPoint("LEFT", 8, 0)
     row.points = Widgets.Label(row, "GameFontDisableSmall")
+    Widgets.Lexend(row.points, 10)
     row.points:SetPoint("RIGHT", -10, 0)
     return row
   end)
@@ -354,6 +381,8 @@ local function createView(stage)
   local keys = CreateFrame("Frame", nil, stage)
   keys:SetAllPoints()
   self.animator = Widgets.Animator(keys)
+  -- The tiles move on their own: what is said going away doesn't stop them
+  self.slide = Widgets.Animator(CreateFrame("Frame", nil, stage))
   Widgets.Keys(keys, function(key)
     return self:key(key)
   end)
@@ -417,11 +446,47 @@ function View:clear()
   self:draw()
 end
 
---- Lays the tiles out another way, which is how words get seen
+--- @param tile Button
+--- @param x number From the left of the stage
+--- @param y number Down from its top
+function View:put(tile, x, y)
+  tile:ClearAllPoints()
+  tile:SetPoint("TOPLEFT", self.stage, "TOPLEFT", x, -y)
+end
+
+--- Puts every tile where it lies, at once
+function View:place()
+  self.slide:Stop()
+  if not self.spots then
+    return
+  end
+  for place, index in ipairs(self.order) do
+    local spot = self.spots[place]
+    self:put(self.tiles[index], spot[1], spot[2])
+  end
+end
+
+--- Lays the tiles out another way, which is how words get seen. They slide there, lifting a little
+--- on the way, one just after the other
 function View:shuffle()
+  -- One that is still on its way from the last shuffle is where it was going
+  self.slide:Stop()
+  local was = {}
+  for place, index in ipairs(self.order) do
+    was[index] = self.spots and self.spots[place]
+  end
   for place = #self.order, 2, -1 do
     local other = math.random(place)
     self.order[place], self.order[other] = self.order[other], self.order[place]
+  end
+  for place, index in ipairs(self.order) do
+    local tile, from, to = self.tiles[index], was[index], self.spots and self.spots[place]
+    if from and from ~= to then
+      self.slide:Play(SHUFFLE_FOR, function(progress)
+        local lift = math.sin(progress * math.pi) * SHUFFLE_LIFT
+        self:put(tile, from[1] + (to[1] - from[1]) * progress, from[2] + (to[2] - from[2]) * progress - lift)
+      end, { ease = private.Widgets.Ease.inOut, delay = (place - 1) * SHUFFLE_AFTER })
+    end
   end
   private.Widgets.PlaySound(PICK_SOUND)
   self:draw()
@@ -448,9 +513,9 @@ function View:enter()
   if err == "fourtiles_found" then
     local find = state.found[word]
     local mine = state.seats == 1 or find.seat == view.seat
-    self:say(mine and L["fourtiles_found"]:format(word) or L["fourtiles_found_by"]:format(view.names[find.seat], word), Widgets.GREY)
+    self:say(mine and L["fourtiles_found"]:format(word:lower()) or L["fourtiles_found_by"]:format(view.names[find.seat], word:lower()), Widgets.GREY)
   else
-    self:say(L["fourtiles_not_word"]:format(word), Widgets.RED)
+    self:say(L["fourtiles_not_word"]:format(word:lower()), Widgets.RED)
   end
   self.effects:Jolt(self.tray)
   Widgets.PlaySound(REFUSE_SOUND)
@@ -517,12 +582,26 @@ function View:arrange()
   self.middleX, self.middleY = left + board / 2, top + TRAY_HEIGHT / 2
 
   local gridTop = top + TRAY_HEIGHT + SAYS_HEIGHT + GAP * 2
-  for place, tile in ipairs(self.tiles) do
+  self.spots = {}
+  for place = 1, TILES do
     local column, row = (place - 1) % COLUMNS, math.floor((place - 1) / COLUMNS)
-    tile:SetSize(tileWidth, tileHeight)
-    tile:ClearAllPoints()
-    tile:SetPoint("TOPLEFT", stage, "TOPLEFT", left + column * (tileWidth + GAP), -(gridTop + row * (tileHeight + GAP)))
+    self.spots[place] = { left + column * (tileWidth + GAP), gridTop + row * (tileHeight + GAP) }
   end
+  local corner = math.max(4, math.floor(math.min(tileWidth, tileHeight) * CORNERS))
+  local size = math.max(9, math.min(math.floor(tileHeight * LETTERS), math.floor((tileWidth - 10) / (4 * LETTER_WIDTH))))
+  for _, tile in ipairs(self.tiles) do
+    tile:SetSize(tileWidth, tileHeight)
+    for _, slices in ipairs(tile.slices) do
+      slices:SetCorner(corner)
+    end
+    if size ~= self.letterSize then
+      private.Widgets.Lexend(tile.label, size)
+    end
+    tile.number:ClearAllPoints()
+    tile.number:SetPoint("TOPRIGHT", -math.floor(corner * 0.6) - 1, -3)
+  end
+  self.letterSize = size
+  self:place()
 
   local buttonsTop = gridTop + tileHeight * ROWS + GAP * ROWS
   local buttons = self.buttons
@@ -603,7 +682,7 @@ function View:draw()
   -- The word so far, and where each of its tiles comes in it
   local at, parts = {}, {}
   for index, tile in ipairs(self.picked) do
-    at[tile], parts[index] = index, state.tiles[tile]
+    at[tile], parts[index] = index, state.tiles[tile]:lower()
   end
   self.word:SetText(table.concat(parts, "|cff808080·|r"))
   self.hint:SetShown(#parts == 0 and view.canMove)
@@ -619,14 +698,13 @@ function View:draw()
       end
     end
   end
-  for place, tile in ipairs(self.tiles) do
-    local index = self.order[place]
+  for index, tile in ipairs(self.tiles) do
     local color = at[index] and PICKED or (solved[state.of[index]] and SOLVED) or PLAIN
-    tile.tile = index
-    tile.label:SetText(state.tiles[index])
+    tile.label:SetText(state.tiles[index]:lower())
+    tile.label:SetTextColor(unpack(at[index] and WHITE or LETTERING))
     tile.number:SetText(at[index] and tostring(at[index]) or "")
-    tile:SetBackdropColor(color[1], color[2], color[3], 0.95)
-    tile:SetBackdropBorderColor(1, at[index] and 0.82 or 1, at[index] and 0 or 1, at[index] and 0.9 or 0.15)
+    tile.body:SetVertexColor(color[1], color[2], color[3])
+    tile.ring:SetShown(at[index] ~= nil)
     tile:SetEnabled(view.canMove)
     tile:SetAlpha(view.canMove and 1 or 0.7)
   end
@@ -660,7 +738,7 @@ function View:draw()
       row.word:SetTextColor(unpack(Widgets.GOLD))
       row.points:SetText(L["fourtiles_of"]:format(item.found, item.total))
     else
-      row.word:SetText("  " .. item.word)
+      row.word:SetText("  " .. item.word:lower())
       row.word:SetTextColor(unpack(shared and SEAT_COLORS[item.seat] or WHITE))
       row.points:SetText("")
     end
@@ -684,7 +762,8 @@ function View:play(event)
     local gained = "+" .. (event.points + (event.bonus and BONUS or 0))
     local theirs = event.seat ~= view.seat
     local color = event.size == MOST and Widgets.GOLD or Widgets.GREEN
-    self:say(theirs and L["fourtiles_they_found"]:format(view.names[event.seat], event.word, gained) or (event.word .. "  " .. gained), color)
+    local word = event.word:lower()
+    self:say(theirs and L["fourtiles_they_found"]:format(view.names[event.seat], word, gained) or (word .. "  " .. gained), color)
     effects:Float(gained, self.middleX, self.middleY, { color = color, size = event.size == MOST and 26 or 18 })
     if event.size == MOST then
       effects:Flash(Widgets.GOLD)
@@ -715,6 +794,7 @@ function View:Update(view)
     for place = 1, TILES do
       self.order[place] = place
     end
+    self:place()
     self.effects:Clear()
     self.says:SetText("")
   elseif not view.changed then

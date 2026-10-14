@@ -15,6 +15,9 @@ local ENGINE_FILES = {
   "Engine/Rooms.lua",
   "Lexicon/Sketch.lua",
   "Games/Sketch.lua",
+  "Games/Deathroll.lua",
+  "Lexicon/Trivia.lua",
+  "Games/Trivia.lua",
   "Games/TicTacToe.lua",
   "Games/Chess.lua",
   "Games/ConnectFour.lua",
@@ -35,6 +38,7 @@ local ENGINE_FILES = {
   "Lexicon/Fourtiles.lua",
   "Games/Fourtiles.lua",
   "Games/Warcraftstein.lua",
+  "Games/Wormcraft.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -1920,7 +1924,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,checkers,chinesecheckers,battleship", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
@@ -1928,10 +1932,10 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  equal("solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein", idsOf(Games.Search(nil, nil, 1)))
+  equal("solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,wormcraft", idsOf(Games.Search(nil, nil, 1)))
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
-  equal("chinesecheckers,crazyeights,words", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
-  equal("chinesecheckers", idsOf(Games.Search(nil, "strategy", 3)))
+  equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
 
   for _, game in ipairs(Games.List()) do
@@ -2027,9 +2031,9 @@ function tests.WizardNarrowsTheGamesDown()
   type("")
   equal(count, #offeredGames())
 
-  -- One of those is for any number but one, and isn't set up here: it has a window of its own
+  -- Those for any number but one aren't set up here: they have a window of their own
   clickGenre("genre_party")
-  equal("sketch", idsOf(offeredGames()))
+  equal("deathroll,sketch,trivia", idsOf(offeredGames()))
   clickGenre("genre_solo")
   equal(0, #offeredGames())
   clickGenre("wizard_all_games")
@@ -13624,6 +13628,966 @@ function tests.WarcraftsteinGetsRoundCorners()
 end
 
 -----------------------------
+-- Wormcraft
+-----------------------------
+
+--- Everything about a position that has to come out the same on every client
+--- @param state table
+--- @return string
+local function wormDigest(state)
+  local parts = {}
+  for _, spans in ipairs(state.columns) do
+    parts[#parts + 1] = table.concat(spans, ",")
+  end
+  for _, unit in ipairs(state.units) do
+    parts[#parts + 1] = table.concat({ unit.x, unit.y, unit.hp, tostring(unit.alive), unit.facing }, ",")
+  end
+  for _, body in ipairs(state.bodies) do
+    parts[#parts + 1] = body.kind .. body.x .. "," .. body.y .. (body.loot or "")
+  end
+  for seat, team in ipairs(state.teams) do
+    local ids = {}
+    for id, charges in pairs(team.arsenal) do
+      ids[#ids + 1] = id .. charges
+    end
+    table.sort(ids)
+    parts[#parts + 1] = seat .. tostring(team.out) .. team.next .. table.concat(ids)
+  end
+  parts[#parts + 1] = table.concat({ state.turn, state.turns, state.wind, state.round, state.level, state.sea }, "/")
+  return table.concat(parts, ";")
+end
+
+--- A game of Wormcraft on a flat island, with everybody's class picked: the first squad stands
+--- at 200 across, the second at 600, facing each other, and there is no wind
+--- @param private table
+--- @param level number? How far down the ground is, 300 if left out
+--- @param squad number?
+--- @return table state
+local function wormFlat(private, level, squad)
+  local Wormcraft = private.Wormcraft
+  level = level or 300
+  local state = Wormcraft.newState(2, private.Random.New(3), { squad = squad or 1 })
+  for column = 1, #state.columns do
+    state.columns[column] = { level, 512 }
+  end
+  for index, unit in ipairs(state.units) do
+    unit.x = ((index % 2 == 1 and 200 or 600) + math.floor((index - 1) / 2) * 40) * 256 + 128
+    unit.y = (level - 1) * 256 + 128
+    unit.facing = index % 2 == 1 and 1 or -1
+  end
+  Wormcraft.apply(state, 1, "cMAGE")
+  Wormcraft.apply(state, 2, "cWARRIOR")
+  state.wind = 0
+  return state
+end
+
+--- Plays a sim until the turn is over
+--- @param sim table
+--- @return number ticks
+local function wormSettle(sim)
+  local ticks = 0
+  while sim.phase ~= "done" and ticks < 3000 do
+    sim:Step(nil)
+    ticks = ticks + 1
+  end
+  equal("done", sim.phase, "the turn comes to an end")
+  return ticks
+end
+
+--- What a sim says happened, of one kind
+--- @param sim table
+--- @param kind string
+--- @return table[]
+local function wormHappened(sim, kind)
+  local found = {}
+  for _, what in ipairs(sim.happened) do
+    if what.kind == kind then
+      found[#found + 1] = what
+    end
+  end
+  return found
+end
+
+function tests.WormcraftRaisesAnIsland()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  for _, seats in ipairs({ 2, 3, 4 }) do
+    for seed = 1, 25 do
+      local state = Wormcraft.newState(seats, private.Random.New(seed), { squad = 4 })
+      equal(seats * 4, #state.units, "a squad for every player")
+      assert(state.theme == "elwynn" or state.theme == "durotar" or state.theme == "winterspring" or state.theme == "steppes")
+      equal(true, state.picking, "nobody has said who they are yet")
+      for _, spans in ipairs(state.columns) do
+        for index = 1, #spans, 2 do
+          assert(spans[index] < spans[index + 1], "every stretch of ground is some of it")
+          assert(index == 1 or spans[index - 1] < spans[index], "from the top down, apart")
+        end
+      end
+      for index, unit in ipairs(state.units) do
+        local x, y = math.floor(unit.x / 256), math.floor(unit.y / 256)
+        equal(true, Wormcraft.solid(state.columns, x, y + 1), "everybody stands on something")
+        equal(false, Wormcraft.solid(state.columns, x, y), "and not in it")
+        assert(y < state.sea - 20, "well out of the sea")
+        for other = index + 1, #state.units do
+          assert(math.abs(state.units[other].x - unit.x) >= 16 * 256, "nobody on top of anybody")
+        end
+        equal(100, unit.hp)
+      end
+    end
+  end
+  local one, other = Wormcraft.newState(2, private.Random.New(9), {}), Wormcraft.newState(2, private.Random.New(9), {})
+  equal(wormDigest(one), wormDigest(other), "the same island from the same seed")
+  equal("durotar", Wormcraft.newState(2, private.Random.New(9), { map = "durotar" }).theme)
+  equal(6, #Wormcraft.newState(2, private.Random.New(9), { squad = 3 }).units)
+end
+
+function tests.WormcraftPicksClassesInTurn()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local state = game.newState(3, private.Random.New(1), private.Games.Rules(game.options))
+  equal(1, game.turn(state))
+  equal(false, (game.validate(state, 1, "cGNOME")))
+  equal(false, (game.validate(state, 1, "1W10")), "nobody plays before everybody has said who they are")
+  equal(false, (game.validate(state, 2, "cMAGE")), "in seat order")
+  assert(game.validate(state, 1, "cMAGE"))
+  game.apply(state, 1, "cMAGE")
+  equal("MAGE", state.teams[1].class)
+  equal(3, state.teams[1].arsenal.bl, "with what their class can do")
+  equal(nil, state.teams[2].arsenal.bl)
+  equal(2, game.turn(state))
+  game.apply(state, 2, "cMAGE")
+  equal(3, game.turn(state), "two of the same is fine")
+  game.drop(state, 3)
+  equal(false, state.picking, "the one who left doesn't hold the others up")
+  equal(1, game.turn(state))
+  equal(nil, game.result(state))
+  for _, unit in ipairs(state.units) do
+    equal(unit.team ~= 3, unit.alive)
+  end
+  equal(-1, state.teams[1].arsenal.fb, "fireballs for as long as there are any")
+  equal(nil, state.teams[1].arsenal.sh, "but sheep only from the third level on")
+end
+
+function tests.WormcraftReadsMoves()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local slot, inputs = Wormcraft.decode("2R30JW12Ffb.45.80L20X")
+  equal(2, slot)
+  equal(6, #inputs)
+  equal("R", inputs[1][1])
+  equal(30, inputs[1][2])
+  equal("J", inputs[2][1])
+  equal(false, inputs[3][1], "standing still")
+  equal("fb", inputs[4][1].use)
+  equal("45,80", table.concat(inputs[4][1].args, ","))
+  equal(true, inputs[4][1].fire)
+  equal("X", inputs[6][1])
+  slot, inputs = Wormcraft.decode("1Ubl.300.-2")
+  equal(-2, inputs[1][1].args[2])
+  equal(false, inputs[1][1].fire)
+  for _, bad in ipairs({ "", "R10", "1R", "1R0", "1Fzz.1", "1Ffb.", "1Q", "1Ffbx", "1Ufb.10.10" }) do
+    equal(nil, (Wormcraft.decode(bad)), bad)
+  end
+  equal(nil, (Wormcraft.decode("1" .. string.rep("J", Wormcraft.LONGEST))), "too long to send")
+
+  local state = wormFlat(private)
+  local game = private.Games.Get("wormcraft")
+  assert(game.validate(state, 1, "1R30W10Ffb.45.80L30"))
+  assert(game.validate(state, 1, "1W1350"), "the whole turn spent standing about")
+  equal(false, (game.validate(state, 1, "1W1351")), "but no more than the whole turn")
+  equal(false, (game.validate(state, 1, "1Ffb.45.80L91")), "and only three seconds to run in after")
+  equal(false, (game.validate(state, 2, "1W10")), "only on your turn")
+  equal(false, (game.validate(state, 1, "2W10")), "with somebody of your own squad")
+  equal(false, (game.validate(state, 1, "1Ffb.45.80Fgr.45.80.3")), "firing once")
+  equal(false, (game.validate(state, 1, "1Ffb.45")), "aimed the way it is aimed")
+  equal(false, (game.validate(state, 1, "1Ffb.45.101")))
+  equal(false, (game.validate(state, 1, "1Fgr.45.50.6")))
+  equal(false, (game.validate(state, 1, "1Fsh")), "not before it is learned")
+  assert(game.validate(state, 1, "1Ubl.230.290Ubl.230.290Ubl.230.290W10"))
+  equal(false, (game.validate(state, 1, "1Ubl.230.290Ubl.230.290Ubl.230.290Ubl.230.290")), "as often as there are charges")
+  equal(false, (game.validate(state, 1, "1Uch")), "nor somebody else's class's")
+end
+
+function tests.WormcraftWalksJumpsAndFalls()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local state = wormFlat(private)
+  local sim = Wormcraft.Sim.New(state, 1, true)
+  local unit = sim.unit
+  for _ = 1, 30 do
+    sim:Step(nil)
+  end
+  equal(200 * 256 + 128, unit.x, "nobody moves who isn't moved")
+  for _ = 1, 40 do
+    sim:Step("R")
+  end
+  equal(240 * 256 + 128, unit.x, "a unit a tick")
+  for _ = 1, 10 do
+    sim:Step("L")
+  end
+  equal(-1, unit.facing)
+  equal(230 * 256 + 128, unit.x)
+  sim:Step("J")
+  equal(true, unit.air)
+  local ticks = 0
+  while unit.air and ticks < 100 do
+    sim:Step(nil)
+    ticks = ticks + 1
+  end
+  assert(unit.x < 230 * 256 - 20 * 256, "jumps go forwards")
+  equal(299 * 256 + 128, unit.y, "and come down again")
+  equal(100, unit.hp)
+  assert(state.units[1].x == 200 * 256 + 128, "the game's own state isn't changed by a sim")
+
+  -- Up a step, but not up a wall
+  state = wormFlat(private)
+  for column = 56, 57 do
+    state.columns[column] = { 295, 512 }
+  end
+  for column = 58, 62 do
+    state.columns[column] = { 270, 512 }
+  end
+  sim = Wormcraft.Sim.New(state, 1, true)
+  for _ = 1, 40 do
+    sim:Step("R")
+  end
+  equal(294 * 256 + 128, sim.unit.y, "up a step")
+  equal(227 * 256 + 128, sim.unit.x, "against the wall")
+
+  -- Off the edge of something high, and hurt by the fall
+  state = wormFlat(private, 400)
+  for column = 40, 55 do
+    state.columns[column] = { 150, 512 }
+  end
+  state.units[1].y = 149 * 256 + 128
+  sim = Wormcraft.Sim.New(state, 1, true)
+  ticks = 0
+  while sim.phase == "aim" and ticks < 200 do
+    sim:Step("R")
+    ticks = ticks + 1
+  end
+  equal("settle", sim.phase, "being hurt ends the turn")
+  wormSettle(sim)
+  local fallen = sim.state.units[1]
+  equal(399 * 256 + 128, fallen.y)
+  assert(fallen.hp < 100 and fallen.hp > 40, "a long way down hurts, got " .. fallen.hp)
+
+  -- And into the sea, where there is no island
+  state = wormFlat(private)
+  for column = 61, 139 do
+    state.columns[column] = {}
+  end
+  sim = Wormcraft.Sim.New(state, 1, true)
+  ticks = 0
+  while sim.phase ~= "done" and ticks < 600 do
+    sim:Step(sim.phase == "aim" and "R" or nil)
+    ticks = ticks + 1
+  end
+  equal(false, sim.state.units[1].alive)
+  equal(1, #wormHappened(sim, "drown"))
+  equal(0, #sim.state.bodies, "no grave for somebody the sea took")
+  equal(2, sim.state.outcome.winner)
+end
+
+function tests.WormcraftBlowsHolesInTheIsland()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local state = wormFlat(private)
+  state.units[2].x = 280 * 256 + 128
+  local sim = Wormcraft.Sim.New(state, 1, true)
+  sim:Step({ use = "fb", args = { 15, 40 }, fire = true })
+  equal("retreat", sim.phase)
+  equal(Wormcraft.RETREAT * Wormcraft.TPS - 1, sim.left, "the tick it was fired in is the first of the three seconds to run")
+  wormSettle(sim)
+  local booms = wormHappened(sim, "boom")
+  equal(1, #booms)
+  local target = sim.state.units[2]
+  assert(target.hp < 100 and target.hp >= 55, "hurt by it, got " .. target.hp)
+  assert(target.x ~= 280 * 256 + 128 or target.y ~= 299 * 256 + 128, "and thrown about by it")
+  equal(100, sim.state.units[1].hp, "the one who fired was far enough away")
+  local hole = false
+  for column = 1, #sim.state.columns do
+    hole = hole or sim.state.columns[column][1] > 300
+  end
+  equal(true, hole, "with a crater")
+  equal(2, sim.state.turn, "and it is the other one's turn")
+  equal(-1, sim.state.teams[1].arsenal.fb, "fireballs aren't used up")
+
+  -- A grenade bounces about and goes off when its fuse has burnt down
+  state = wormFlat(private)
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim:Step({ use = "gr", args = { 60, 30, 2 }, fire = true })
+  local ticks = 1
+  while #wormHappened(sim, "boom") == 0 and ticks < 200 do
+    sim:Step(nil)
+    ticks = ticks + 1
+  end
+  equal(2 * Wormcraft.TPS, ticks, "two seconds of fuse")
+
+  -- The wind blows a fireball along, but not a grenade
+  local function landing(id, wind)
+    local blown = wormFlat(private)
+    blown.units[2].x = 1000 * 256
+    blown.wind = wind
+    local shot = Wormcraft.Sim.New(blown, 1, true)
+    local args = id == "gr" and { 60, 50, 5 } or { 60, 50 }
+    shot:Step({ use = id, args = args, fire = true })
+    wormSettle(shot)
+    return wormHappened(shot, "boom")[1].x
+  end
+  assert(landing("fb", 10) > landing("fb", 0) + 30 * 256, "a fireball goes with the wind")
+  assert(landing("fb", -10) < landing("fb", 0) - 30 * 256)
+  equal(landing("gr", 0), landing("gr", 10), "a grenade doesn't")
+
+  -- A charge left behind goes off however far its owner ran
+  state = wormFlat(private)
+  sim = Wormcraft.Sim.New(state, 1, true)
+  local learned = sim.team.arsenal
+  learned.sc = 1
+  sim:Step({ use = "sc", args = {}, fire = true })
+  for _ = 1, 89 do
+    sim:Step("L")
+  end
+  wormSettle(sim)
+  equal(1, #wormHappened(sim, "boom"))
+  equal(0, sim.state.teams[1].arsenal.sc, "used up")
+  equal(100, sim.state.units[1].hp, "ran away in time")
+end
+
+function tests.WormcraftFiresEverything()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local classes = { ch = "WARRIOR", ds = "PALADIN", as = "HUNTER", bs = "ROGUE", ph = "PRIEST", cl = "SHAMAN", bl = "MAGE", dl = "WARLOCK", cf = "DRUID" }
+  for id, weapon in pairs(Wormcraft.WEAPONS) do
+    local state = wormFlat(private, 300, 2)
+    -- Somebody close enough to hit with anything
+    state.units[2].x = 214 * 256 + 128
+    state.units[2].facing = -1
+    local class = classes[id]
+    if class then
+      state.teams[1].class = class
+    end
+    state.teams[1].arsenal[id] = 1
+    local args = ({ none = {}, angle = { 0 }, power = { 10, 40 }, fuse = { 80, 10, 1 } })[weapon.aim]
+    if weapon.kind == "grenade" and weapon.aim == "power" then
+      -- Lobbed, so it doesn't bounce away before it goes off
+      args = { 80, 10 }
+    end
+    if weapon.aim == "target" then
+      args = weapon.kind == "teleport" and { 260, 290 } or { 214 }
+    end
+    local move = "1" .. (weapon.utility and "U" or "F") .. id .. (#args > 0 and "." .. table.concat(args, ".") or "")
+    if weapon.kind == "sheep" then
+      -- Set off as soon as it has got there
+      move = move .. "W10X"
+    end
+    local ok, err = game.validate(state, 1, move)
+    equal(true, ok, move .. " " .. tostring(err))
+    local before = Wormcraft.copy(state)
+    local event = game.apply(state, 1, move)
+    equal(2, state.turn, id .. " ends the turn, one way or another")
+    assert(event.before, "the turn can be played out again")
+    if id ~= "rs" then
+      equal(0, state.teams[1].arsenal[id], id .. " is used up")
+    end
+    local again = Wormcraft.copy(before)
+    game.apply(again, 1, move)
+    equal(wormDigest(state), wormDigest(again), id .. " comes out the same every time")
+    local hurt = state.units[2].hp < 100 or not state.units[2].alive
+    if weapon.kind ~= "teleport" and weapon.kind ~= "shield" and weapon.kind ~= "heal" and weapon.kind ~= "cat" and weapon.kind ~= "dig" and weapon.kind ~= "skip" and weapon.kind ~= "trap" and id ~= "inf" then
+      equal(true, hurt, id .. " hurts whoever it hits")
+    end
+  end
+end
+
+function tests.WormcraftClassesDoWhatTheyDo()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  -- Divine Shield: nothing hurts them until their next turn
+  local state = wormFlat(private)
+  state.units[2].x = 240 * 256 + 128
+  local sim = Wormcraft.Sim.New(state, 1, true)
+  sim.team.arsenal.ds = 1
+  sim:Step({ use = "ds", args = {}, fire = false })
+  equal(true, sim.unit.shield)
+  equal("aim", sim.phase, "and it is still their turn")
+  sim:Step({ use = "fb", args = { 0, 30 }, fire = true })
+  wormSettle(sim)
+  equal(100, sim.state.units[1].hp)
+  assert(sim.state.units[2].hp < 100)
+  equal(true, sim.state.units[1].shield, "while the others have their turn")
+
+  -- Blink: only as far as it reaches, and only where there is room
+  state = wormFlat(private)
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim:Step({ use = "bl", args = { 600, 200 }, fire = false })
+  equal(3, sim.team.arsenal.bl, "too far: not used")
+  sim:Step({ use = "bl", args = { 250, 350 }, fire = false })
+  equal(3, sim.team.arsenal.bl, "in the ground: not used either")
+  sim:Step({ use = "bl", args = { 300, 250 }, fire = false })
+  equal(2, sim.team.arsenal.bl)
+  equal(300, math.floor(sim.unit.x / 256))
+  wormSettle(sim)
+
+  -- Prayer of Healing, for everybody of the squad
+  state = wormFlat(private, 300, 2)
+  state.units[1].hp, state.units[3].hp = 40, 50
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim.team.arsenal.ph = 1
+  sim:Step({ use = "ph", args = {}, fire = false })
+  equal(65, sim.unit.hp)
+  equal(75, sim.state.units[3].hp)
+
+  -- Drain Life takes from the nearest of the others
+  state = wormFlat(private)
+  state.units[2].x = 300 * 256
+  state.units[1].hp = 50
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim.team.arsenal.dl = 1
+  sim:Step({ use = "dl", args = {}, fire = true })
+  equal(75, sim.unit.hp)
+  equal(75, sim.state.units[2].hp)
+
+  -- Cat Form: twice as quick
+  state = wormFlat(private)
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim.team.arsenal.cf = 1
+  sim:Step({ use = "cf", args = {}, fire = false })
+  for _ = 1, 20 do
+    sim:Step("R")
+  end
+  equal(240 * 256 + 128, sim.unit.x)
+
+  -- Charge runs into whoever is there, and throws them
+  state = wormFlat(private)
+  state.units[2].x = 260 * 256 + 128
+  sim = Wormcraft.Sim.New(state, 1, true)
+  sim.team.arsenal.ch = 1
+  sim:Step({ use = "ch", args = {}, fire = true })
+  wormSettle(sim)
+  equal(70, sim.state.units[2].hp)
+  assert(sim.state.units[2].x > 280 * 256, "thrown along")
+end
+
+function tests.WormcraftLevelsAndCrates()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local state = wormFlat(private)
+  equal(1, state.level)
+  game.apply(state, 1, "1Frs")
+  equal(1, state.level, "not before everybody has had a turn")
+  local event = game.apply(state, 2, "1Frs")
+  equal(2, state.round)
+  equal(2, state.level)
+  equal(2, event.passed.level)
+  for seat = 1, 2 do
+    equal(1, state.teams[seat].arsenal.tg, "learned at the second level")
+    equal(2, state.teams[seat].arsenal.et)
+  end
+  for _ = 1, 20 do
+    game.apply(state, state.turn, "1Frs")
+  end
+  equal(5, state.level, "up to the last level there is")
+  equal(1, state.teams[1].arsenal.kd)
+  local crates = 0
+  for _, body in ipairs(state.bodies) do
+    crates = crates + (body.kind == "crate" and 1 or 0)
+    assert(body.rarity, "a crate says how rare what is in it is")
+  end
+  assert(crates > 0, "crates come down between turns")
+
+  -- Walking into one takes it
+  state = wormFlat(private)
+  state.bodies = {
+    { kind = "crate", x = 220 * 256, y = 299 * 256 + 128, vx = 0, vy = 0, air = false, loot = "hg", rarity = "legendary" },
+    { kind = "crate", x = 240 * 256, y = 299 * 256 + 128, vx = 0, vy = 0, air = false, loot = "health", rarity = "health" },
+  }
+  state.units[1].hp = 50
+  local sim = Wormcraft.Sim.New(state, 1, true)
+  for _ = 1, 45 do
+    sim:Step("R")
+  end
+  equal(0, #sim.state.bodies)
+  equal(1, sim.team.arsenal.hg)
+  equal(80, sim.unit.hp)
+  equal(2, #wormHappened(sim, "take"))
+end
+
+function tests.WormcraftEndsInSuddenDeath()
+  local private = loadEngine()
+  local game = private.Games.Get("wormcraft")
+  local state = wormFlat(private, 400)
+  state.suddenDeath = 2
+  local seaBefore = state.sea
+  local turns = 0
+  while not state.outcome and turns < 200 do
+    game.apply(state, state.turn, "1Frs")
+    turns = turns + 1
+  end
+  assert(state.sea < seaBefore, "the sea rose")
+  equal(0, game.result(state).winner, "and took everybody at once")
+  equal("nobody", game.result(state).detail)
+  equal(false, (game.validate(state, state.turn, "1Frs")), "nothing after the end")
+end
+
+function tests.WormcraftTurnsComeOutTheSameEverywhere()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local dice = private.Random.New(5)
+  local state = game.newState(3, private.Random.New(11), { squad = 3 })
+  for seat = 1, 3 do
+    game.apply(state, seat, "c" .. Wormcraft.CLASS_ORDER[seat * 2])
+  end
+  local played = 0
+  while not state.outcome and played < 40 do
+    local team = state.teams[state.turn]
+    local ids = {}
+    for id, charges in pairs(team.arsenal) do
+      local weapon = Wormcraft.WEAPONS[id]
+      if charges ~= 0 and weapon.aim ~= "target" and not weapon.utility then
+        ids[#ids + 1] = id
+      end
+    end
+    table.sort(ids)
+    local weapon = Wormcraft.WEAPONS[ids[dice:Roll(#ids)]]
+    local args = ({ none = "", angle = "." .. dice:Roll(359), power = "." .. dice:Roll(359) .. "." .. dice:Roll(100), fuse = "." .. dice:Roll(359) .. "." .. dice:Roll(100) .. "." .. dice:Roll(5) })[weapon.aim]
+    local move = team.next .. (dice:Roll(2) == 1 and "R" or "L") .. dice:Roll(60) .. "JW" .. dice:Roll(20) .. "F" .. weapon.id .. args .. "L" .. dice:Roll(80)
+    assert(game.validate(state, state.turn, move))
+    local before = Wormcraft.copy(state)
+    local event = game.apply(state, state.turn, move)
+
+    -- The engine's, and the view's playing it out again tick by tick from what it was before
+    local sim = Wormcraft.Sim.New(event.before, event.slot, true)
+    for _, input in ipairs(event.inputs) do
+      for _ = 1, input[2] do
+        if sim.phase == "aim" or sim.phase == "retreat" then
+          sim:Step(input[1] or nil)
+        end
+      end
+    end
+    wormSettle(sim)
+    equal(wormDigest(state), wormDigest(sim.state), "played out again, it comes out the same")
+    game.apply(before, before.turn, move)
+    equal(wormDigest(state), wormDigest(before))
+    played = played + 1
+  end
+end
+
+function tests.WormcraftIsPlayedByThree()
+  local world, seated, id = startedCrowd(3, "wormcraft")
+  local function stateOf(player)
+    return player.private.Match.State(player.matches[id])
+  end
+  for seat, player in ipairs(seated) do
+    assert(player.session:Move(id, "c" .. ({ "MAGE", "HUNTER", "PRIEST" })[seat]))
+    world:Deliver()
+  end
+  for _, player in ipairs(seated) do
+    equal(false, stateOf(player).picking)
+  end
+  assert(seated[1].session:Move(id, "1R20W10Ffb.30.60L20"))
+  world:Deliver()
+  assert(seated[2].session:Move(id, "1L20Fgr.150.50.3R10"))
+  world:Deliver()
+  local digest = wormDigest(stateOf(seated[1]))
+  for _, player in ipairs(seated) do
+    equal(digest, wormDigest(stateOf(player)), "everybody has the same island")
+  end
+  assert(seated[3].session:Resign(id))
+  world:Deliver()
+  for _, player in ipairs(seated) do
+    equal(true, stateOf(player).teams[3].out)
+    equal("active", player.matches[id].status, "the other two play on")
+  end
+end
+
+--- Opens the window on a game of Wormcraft between Alice and Bob
+--- @return table world, table alice, table bob, string id, table view The game on screen
+local function wormcraftOnScreen()
+  local world, alice, bob, id = gameOnScreen("wormcraft")
+  local found = Client.Find(function(widget)
+    return widget.wormcraft ~= nil
+  end)
+  equal(1, #found, "islands on screen")
+  return world, alice, bob, id, found[1].wormcraft
+end
+
+--- Lets frames go by on the island
+--- @param view table
+--- @param frames number
+local function wormFrames(view, frames)
+  for _ = 1, frames do
+    view.ticker:Fire("OnUpdate", 1 / 30)
+  end
+end
+
+function tests.WindowPlaysWormcraft()
+  local world, alice, bob, id, view = wormcraftOnScreen()
+  local function stateOf(player)
+    return player.private.Match.State(player.matches[id])
+  end
+  equal(true, view.picker:IsShown(), "classes first")
+  view.picks.HUNTER:Fire("OnClick")
+  world:Deliver()
+  equal("HUNTER", stateOf(alice).teams[1].class)
+  equal(true, view.picker:IsShown(), "while the other one picks")
+  equal(false, view.picker.row:IsShown())
+  assert(bob.session:Move(id, "cDRUID"))
+  world:Deliver()
+  equal(false, view.picker:IsShown())
+
+  -- Alice's turn is ready, and waits for her to do something
+  local live = assert(view.live, "a turn to make")
+  equal(false, live.started)
+  equal(1, live.slot)
+  wormFrames(view, 30)
+  equal(0, live.sim.ticks, "the clock doesn't go before she does")
+  local ticker = view.ticker
+  ticker:Fire("OnKeyDown", "TAB")
+  equal(2, view.live.slot, "somebody else of the squad")
+  live = view.live
+
+  -- She walks, aims a little higher and fires
+  local x = live.sim.unit.x
+  ticker:Fire("OnKeyDown", "LEFT")
+  wormFrames(view, 20)
+  ticker:Fire("OnKeyUp", "LEFT")
+  equal(true, live.started)
+  assert(live.sim.unit.x ~= x or live.sim.unit.air, "she went somewhere")
+  local elevation = view:choice().elevation
+  ticker:Fire("OnKeyDown", "UP")
+  wormFrames(view, 10)
+  ticker:Fire("OnKeyUp", "UP")
+  assert(view:choice().elevation > elevation, "aimed higher")
+  ticker:Fire("OnKeyDown", "SPACE")
+  wormFrames(view, 15)
+  assert(live.charging and live.charging > 20, "winding it up")
+  ticker:Fire("OnKeyUp", "SPACE")
+  wormFrames(view, 2)
+  equal("retreat", live.sim.phase)
+  ticker:Fire("OnKeyDown", "RIGHT")
+  wormFrames(view, 40)
+  ticker:Fire("OnKeyUp", "RIGHT")
+  for _ = 1, 2000 do
+    if live.submitted then
+      break
+    end
+    wormFrames(view, 1)
+  end
+  equal(true, live.submitted, "the turn is over and sent")
+  world:Deliver()
+  local log = alice.matches[id].log
+  assert(log[#log]:match("^2L%d+W%d+Ffb%.%d+%.%d+W?%d*R%d+"), "what she did, written down: " .. log[#log])
+  equal(wormDigest(stateOf(alice)), wormDigest(stateOf(bob)), "and it came out the same for Bob")
+  equal(wormDigest(stateOf(alice)), wormDigest(live.sim.state), "as she saw it happen")
+  equal(nil, view.live, "it is Bob's turn")
+  equal(nil, view.replay, "her own turn isn't shown to her again")
+
+  -- Bob's turn is played out again for her, until she skips the rest of it
+  assert(bob.session:Move(id, stateOf(bob).teams[2].next .. "R10W5Fgr.60.40.3L20"))
+  world:Deliver()
+  assert(view.replay, "Bob's turn is shown")
+  wormFrames(view, 10)
+  ticker:Fire("OnKeyDown", "SPACE")
+  equal(nil, view.replay)
+  equal(wormDigest(stateOf(alice)), wormDigest(stateOf(bob)))
+  assert(view.live, "and then it is hers again")
+
+  -- What she has to fire is under the island: resting ends the turn
+  local rest = nil
+  for _, slot in ipairs(view.slots) do
+    if slot:IsShown() and slot.id == "rs" then
+      rest = slot
+    end
+  end
+  assert(rest, "resting is offered")
+  rest:Fire("OnClick")
+  equal("rs", view:choice().weapon)
+  ticker:Fire("OnKeyDown", "SPACE")
+  ticker:Fire("OnKeyUp", "SPACE")
+  wormFrames(view, 5)
+  world:Deliver()
+  equal(2, stateOf(alice).turn)
+  assert(alice.matches[id].log[#alice.matches[id].log]:match("Frs$"))
+end
+
+function tests.WindowAimsWormcraftAtAPlace()
+  local world, alice, bob, id, view = wormcraftOnScreen()
+  view.picks.MAGE:Fire("OnClick")
+  world:Deliver()
+  assert(bob.session:Move(id, "cWARRIOR"))
+  world:Deliver()
+  local live = assert(view.live)
+  local unit = live.sim.unit
+  view:pick("bl")
+  equal("bl", view:choice().weapon)
+
+  -- Blink goes where she clicks, if there is room there and it isn't too far
+  local function pointAt(x, y)
+    local viewport = view.viewport
+    Client.cursor = { viewport.x + x * view.scale * viewport.zoom, viewport.height - (viewport.y + y * view.scale * viewport.zoom) }
+  end
+  view.viewport.frame.height = view.viewport.height
+  pointAt(unit.x / 256, unit.y / 256 + 40)
+  view.world:Fire("OnMouseDown", "LeftButton")
+  wormFrames(view, 2)
+  equal(3, live.sim.team.arsenal.bl, "not into the ground")
+  local toX, toY = math.floor(unit.x / 256) + 30, math.floor(unit.y / 256) - 40
+  pointAt(toX + 0.5, toY + 0.5)
+  view.world:Fire("OnMouseDown", "LeftButton")
+  wormFrames(view, 2)
+  equal(2, live.sim.team.arsenal.bl)
+  equal("aim", live.sim.phase, "and her turn goes on")
+end
+
+function tests.WindowWritesDownOnlyWhatWormcraftFired()
+  local world, alice, bob, id, view = wormcraftOnScreen()
+  view.picks.HUNTER:Fire("OnClick")
+  world:Deliver()
+  assert(bob.session:Move(id, "cROGUE"))
+  world:Deliver()
+  local live = assert(view.live)
+  local ticker = view.ticker
+  view:pick("ms")
+  -- In the air nothing is fired, and nothing of it is written down
+  ticker:Fire("OnKeyDown", "ENTER")
+  wormFrames(view, 2)
+  equal(true, live.sim.unit.air)
+  ticker:Fire("OnKeyDown", "SPACE")
+  ticker:Fire("OnKeyUp", "SPACE")
+  wormFrames(view, 2)
+  equal("aim", live.sim.phase)
+  for _ = 1, 100 do
+    if not live.sim.unit.air then
+      break
+    end
+    wormFrames(view, 1)
+  end
+  -- Back on the ground it is
+  ticker:Fire("OnKeyDown", "SPACE")
+  ticker:Fire("OnKeyUp", "SPACE")
+  for _ = 1, 2000 do
+    if live.submitted then
+      break
+    end
+    wormFrames(view, 1)
+  end
+  world:Deliver()
+  local log = alice.matches[id].log
+  assert(log[#log]:match("^1JW%d+Fms%.%d+W%d+$"), "one shot: " .. log[#log])
+  equal(2, alice.private.Match.State(alice.matches[id]).turn, "and the move was taken")
+end
+
+function tests.WormcraftIsPlayedAloneAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local Wormcraft, Match = alice.private.Wormcraft, alice.private.Match
+  local game = alice.private.Games.Get("wormcraft")
+  local match = assert(alice.session:Invite({}, "wormcraft", { options = { bots = 2, skill = "easy" } }))
+  equal(1, #match.players, "nobody else plays")
+  local state = Match.State(match)
+  equal(true, state.alone)
+  equal(3, #state.teams, "a squad of the player's and two of the computer's")
+  equal(nil, state.teams[1].class)
+  for seat = 2, 3 do
+    equal(true, state.teams[seat].computer)
+    assert(state.teams[seat].class, "the computer knows who it is from the start")
+    assert(state.teams[seat].arsenal[Wormcraft.CLASSES[state.teams[seat].class].signature], "and what its class can do")
+  end
+  assert(alice.session:Move(match.id, "cPRIEST"))
+  state = Match.State(match)
+  equal(false, state.picking, "only the player has to say")
+  equal(1, state.turn)
+  assert(alice.session:Move(match.id, "1Frs"))
+  state = Match.State(match)
+  equal(2, state.turn, "the computer's turn")
+  equal(1, game.turn(state), "which the player's client makes")
+  equal(true, Match.CanMove(match))
+
+  -- Its moves are moves like any other
+  for _ = 1, 2 do
+    local brain = Wormcraft.Brain.New(Match.State(match))
+    local move = brain:Decide()
+    equal(nil, brain.failed)
+    assert(alice.session:Move(match.id, move))
+  end
+  state = Match.State(match)
+  equal(1, state.turn, "round to the player again")
+  equal(0, #world.queue, "and nothing was sent to anyone")
+
+  -- The game is lost with the player's squad, whoever of the computer's is left
+  for _, unit in ipairs(state.units) do
+    if unit.team == 1 then
+      unit.hp = 1
+    end
+  end
+  state.wind = 0
+  for _, unit in ipairs(state.units) do
+    unit.alive = unit.team ~= 1 or unit.slot == 1
+  end
+  -- Straight down, at their own feet
+  assert(alice.session:Move(match.id, "1Fgr.270.1.1"))
+  equal("finished", match.status)
+  equal(0, Match.Result(match).winner)
+  equal("beaten", Match.Result(match).detail)
+end
+
+function tests.WormcraftComputerGetsBetterWithSkill()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local dealt = {}
+  for _, skill in ipairs(Wormcraft.SKILL_ORDER) do
+    dealt[skill] = 0
+    for seed = 1, 6 do
+      local state = game.newState(1, private.Random.New(seed * 5), { bots = 1, skill = skill, squad = 2 })
+      game.apply(state, 1, "cMAGE")
+      game.apply(state, 1, "1Frs")
+      equal(2, state.turn)
+      local brain = Wormcraft.Brain.New(state)
+      local move = brain:Decide()
+      equal(nil, brain.failed, skill)
+      local ok, err = game.validate(state, 1, move)
+      equal(true, ok, skill .. " " .. move .. " " .. tostring(err))
+      local before = 0
+      for _, unit in ipairs(state.units) do
+        before = before + (unit.team == 1 and unit.hp or 0)
+      end
+      game.apply(state, 1, move)
+      local after = 0
+      for _, unit in ipairs(state.units) do
+        after = after + (unit.team == 1 and unit.hp or 0)
+      end
+      dealt[skill] = dealt[skill] + before - after
+    end
+  end
+  assert(dealt.hard > 0, "the best of it hurts somebody")
+  assert(dealt.hard >= dealt.easy, ("and more than the worst: %d against %d"):format(dealt.hard, dealt.easy))
+  assert(dealt.medium >= dealt.easy, ("medium %d, easy %d"):format(dealt.medium, dealt.easy))
+end
+
+function tests.WormcraftComputerThinksAFrameAtATime()
+  local private = loadEngine()
+  local Wormcraft = private.Wormcraft
+  local game = private.Games.Get("wormcraft")
+  local state = game.newState(1, private.Random.New(4), { bots = 1, skill = "hard" })
+  game.apply(state, 1, "cMAGE")
+  game.apply(state, 1, "1Frs")
+  local brain = Wormcraft.Brain.New(state)
+  local thoughts = 1
+  while not brain:Think() do
+    thoughts = thoughts + 1
+  end
+  assert(thoughts > 5, "it took a while, a bit at a time")
+  equal(brain.move, brain:Think(), "and then it knows")
+  equal(brain.move, Wormcraft.Brain.New(state):Decide(), "the same every time it is asked")
+end
+
+function tests.WormcraftOffersTheComputerOnlyAlone()
+  local private = loadEngine()
+  local Games = private.Games
+  local game = Games.Get("wormcraft")
+  local rules = Games.Rules(game.options)
+  local function ids(players)
+    local found = {}
+    for _, option in ipairs(Games.OptionsFor(game, rules, players)) do
+      found[#found + 1] = option.id
+    end
+    return table.concat(found, ",")
+  end
+  equal("bots,skill,squad,health,time,sudden,map", ids(1))
+  equal("squad,health,time,sudden,map", ids(2))
+  equal("bots,skill,squad,health,time,sudden,map", ids(nil), "everything where it isn't known")
+  equal(2, #Games.DescribeOptions(game, { bots = 3, squad = 4 }, 1))
+  equal(1, #Games.DescribeOptions(game, { bots = 3, squad = 4 }, 2), "nobody is told about a computer that isn't there")
+  local kept = Games.ForPlayers(game, { bots = 3, skill = "hard", squad = 4 }, 3)
+  equal(nil, kept.bots)
+  equal(nil, kept.skill)
+  equal(4, kept.squad)
+  equal(3, Games.ForPlayers(game, { bots = 3 }, 1).bots)
+end
+
+function tests.WizardWrapsWhatAnOptionCanBe()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  openWizard(alice)
+  pickGame("wormcraft")
+  -- Alone, the computer is set up too
+  assert(says("wormcraft_option_bots"), "how many computer squads, with nobody picked")
+  assert(says("wormcraft_option_skill"))
+  local row = Client.Find(function(widget)
+    return widget.choices ~= nil and widget.name ~= nil and widget.name.text == "wormcraft_option_map" and widget:IsVisible()
+  end)[1]
+  local lines, room = {}, 400 - 2 * 12
+  for _, choice in ipairs(row.choices) do
+    if choice:IsVisible() then
+      local x, y = choice.anchors[1][2], choice.anchors[1][3]
+      assert(x + choice.width <= room or x == 142 + 6, "every choice inside the rules, got " .. x + choice.width)
+      lines[y] = true
+    end
+  end
+  local count = 0
+  for _ in pairs(lines) do
+    count = count + 1
+  end
+  assert(count > 1, "what doesn't fit goes on the next line")
+  assert(row.height > 30, "and the line is as tall as it takes")
+
+  -- With somebody to play there is no computer
+  local box = Client.Find(function(widget)
+    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+  end)[1]
+  box:SetText("Bob-Realm")
+  box:Fire("OnTextChanged", true)
+  equal(false, says("wormcraft_option_bots"))
+  equal(false, says("wormcraft_option_skill"))
+end
+
+function tests.WindowPlaysWormcraftAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(alice)
+  local match = assert(alice.session:Invite({}, "wormcraft", { options = { bots = 1, skill = "easy" } }))
+  MainFrame.Open(match.id)
+  local view = Client.Find(function(widget)
+    return widget.wormcraft ~= nil
+  end)[1].wormcraft
+  view.picks.WARLOCK:Fire("OnClick")
+  MainFrame.Refresh()
+  local live = assert(view.live, "her turn")
+  view:pick("rs")
+  view.ticker:Fire("OnKeyDown", "SPACE")
+  view.ticker:Fire("OnKeyUp", "SPACE")
+  for _ = 1, 10 do
+    wormFrames(view, 1)
+    if live.submitted then
+      break
+    end
+  end
+  MainFrame.Refresh()
+  equal(2, alice.private.Match.State(match).turn)
+  assert(view.brain, "the computer thinks about its turn")
+  equal(true, says("wormcraft_thinking"))
+  for _ = 1, 3000 do
+    if not view.brain then
+      break
+    end
+    wormFrames(view, 1)
+  end
+  equal(nil, view.brain, "and makes it")
+  equal(1, alice.private.Match.State(match).turn)
+  assert(view.replay, "which she sees played out")
+  view.ticker:Fire("OnKeyDown", "SPACE")
+  equal(nil, view.replay)
+  assert(view.live, "and then it is her turn again")
+end
+
+-----------------------------
 -- Fourtiles
 -----------------------------
 
@@ -13767,7 +14731,7 @@ function tests.FourtilesScoresWordsByTheirTiles()
   assert(game.validate(state, 1, long))
   local event = game.apply(state, 1, long)
   equal(state.words[1], event.word)
-  equal(state.words[1], event.notation)
+  equal(state.words[1]:lower(), event.notation, "written down in lower case, as it is on the tiles")
   equal(4, event.size)
   equal(8, event.points)
   equal(nil, event.bonus)
@@ -13927,7 +14891,7 @@ function tests.WindowPlaysFourtiles()
   local state = first.private.Match.State(first.matches[id])
   local tiles = fourtilesOnScreen()
   equal(20, #tiles)
-  equal(state.tiles[7], tiles[7].label.text)
+  equal(state.tiles[7]:lower(), tiles[7].label.text, "written in lower case, which is easier to read")
   equal(true, says("status_together") or says("fourtiles_progress"))
   equal(false, Client.Button("fourtiles_enter").enabled == true, "nothing to enter yet")
 
@@ -13963,11 +14927,43 @@ function tests.WindowPlaysFourtiles()
     return widget.kind == "Button" and widget.text == "fourtiles_wrap_up" and widget:IsVisible()
   end), "the game can't be called done before the five are found and the top rank reached")
 
-  -- Shuffling moves the tiles about and loses none
+  -- Shuffling moves the tiles about and loses none. They slide to where they go, and none of
+  -- them is anywhere yet before the slide is over
+  local function spot(tile)
+    local anchor = tile.anchors[1]
+    return anchor[4] .. "," .. anchor[5]
+  end
+  local before, spots = {}, {}
+  for index, tile in ipairs(tiles) do
+    before[index] = spot(tile)
+    spots[before[index]] = true
+  end
   Client.Button("fourtiles_shuffle"):Fire("OnClick")
   local after = fourtilesOnScreen()
   for index = 1, 20 do
-    equal(state.tiles[index], after[index].label.text)
+    equal(state.tiles[index]:lower(), after[index].label.text)
+    equal(before[index], spot(after[index]), "it hasn't set off yet")
+  end
+  local slide = Client.Find(function(widget)
+    return widget.scripts.OnUpdate ~= nil and widget.parent == tiles[1].parent
+  end)
+  for _, frame in ipairs(slide) do
+    frame:Fire("OnUpdate", 0.2)
+  end
+  local moving = 0
+  for index = 1, 20 do
+    moving = moving + (spots[spot(after[index])] and 0 or 1)
+  end
+  assert(moving > 0, "halfway there, tiles are between the places")
+  for _, frame in ipairs(slide) do
+    frame:Fire("OnUpdate", 1)
+  end
+  local taken = {}
+  for index = 1, 20 do
+    local at = spot(after[index])
+    equal(true, spots[at], "every tile ends up in a place")
+    equal(nil, taken[at], "and no two in the same one")
+    taken[at] = true
   end
   MainFrame.Refresh()
 end
@@ -14031,6 +15027,8 @@ end
 function RoomWorld:Add(name, channels)
   local player = { name = name, channels = channels or {}, events = {}, online = true, private = loadEngine() }
   player.Sketch = player.private.Sketch
+  player.Deathroll = player.private.Deathroll
+  player.Trivia = player.private.Trivia
   player.rooms = player.private.Rooms.New({
     me = name,
     now = function()
@@ -14554,6 +15552,670 @@ function tests.PartyPagesSetUpARoomAndPlayIt()
   equal(nil, alice.rooms.room)
   equal(nil, bob.rooms.room)
   assert(Client.Button("party_open_room"), "back to setting one up")
+end
+
+--- A room of Deathroll that Alice opened for her guild, with as many more in it as are named
+--- @param names string[]
+--- @return RoomWorld, table[] players Alice first
+local function deathrollRoom(names)
+  local world = RoomWorld.New()
+  local guild = { GUILD = true }
+  local players = { world:Add("Alice-Realm", guild) }
+  for _, name in ipairs(names) do
+    players[#players + 1] = world:Add(name .. "-Realm", guild)
+  end
+  local room = assert(players[1].rooms:Open("deathroll", "GUILD", { start = 100, seconds = 5 }))
+  world:Run(1)
+  for index = 2, #players do
+    equal(room.id, players[index].heard.id, "heard of the room")
+    assert(players[index].rooms:Join(room.id))
+    world:Run(1)
+  end
+  -- Everyone who came in is told who else is, as fast as the client lets messages go
+  world:Run(15)
+  return world, players
+end
+
+--- Has everyone roll whenever it is their roll, until the tourney is over
+--- @param world RoomWorld
+--- @param players table[]
+--- @param skip table<table, boolean>? Players who never roll
+local function rollItOut(world, players, skip)
+  for _ = 1, 4000 do
+    for _, player in ipairs(players) do
+      local room = player.rooms.room
+      if room and player.online and not (skip and skip[player]) and player.Deathroll.MyRoll(room) then
+        player.Deathroll.Roll(room)
+      end
+    end
+    world:Run(0.25)
+    if players[1].rooms.room.state.phase == "idle" then
+      return
+    end
+  end
+  error("The tourney never ended")
+end
+
+function tests.DeathrollTourneyEndsWithAChampion()
+  local world, players = deathrollRoom({ "Bob", "Carol", "Dave", "Erin" })
+  local alice, bob = players[1], players[2]
+  local room = alice.rooms.room
+  equal(false, (bob.Deathroll.Start(bob.rooms.room)), "only the host starts")
+  equal(false, (bob.Deathroll.Roll(bob.rooms.room)), "nothing to roll yet")
+  assert(alice.Deathroll.Start(room))
+  world:Run(0.25)
+
+  -- Five fill a bracket of eight: three go through the first round without rolling
+  for _, player in ipairs(players) do
+    local state = player.rooms.room.state
+    equal("play", state.phase, player.name .. " knows the tourney began")
+    equal(4, #state.duels)
+    equal(100, state.start)
+    equal(5, state.seconds)
+    equal(5, player.Deathroll.Left(player.rooms.room))
+  end
+  local byes = 0
+  for _, duel in ipairs(room.state.duels) do
+    byes = byes + (duel.b and 0 or 1)
+  end
+  equal(3, byes)
+
+  -- Whoever's roll it isn't can't roll
+  local duel = room.state.duels[4]
+  local waiting
+  for _, player in ipairs(players) do
+    if player.rooms.room.me == duel.b then
+      waiting = player
+    end
+  end
+  equal(false, waiting.Deathroll.Roll(waiting.rooms.room))
+
+  rollItOut(world, players)
+  local champion = room.state.champion
+  assert(champion, "somebody won")
+  for _, player in ipairs(players) do
+    local state = player.rooms.room.state
+    equal("idle", state.phase)
+    equal(champion, state.champion, player.name .. " knows who won")
+    equal(scoresOf(alice), scoresOf(player), player.name .. " counted the same duels")
+  end
+  -- Three rounds: the first with one duel, two in the second and the final
+  equal(3, room.state.round)
+  local total = 0
+  for _, member in pairs(room.members) do
+    total = total + member.score
+  end
+  equal(4, total, "every duel was won by somebody")
+  equal(2, room.members[champion].score, "the champion won two")
+
+  -- And again, everyone with nothing
+  assert(alice.Deathroll.Start(room))
+  world:Run(0.25)
+  equal(1, bob.rooms.room.state.round)
+  equal("A0 B0 C0 D0 E0", scoresOf(bob))
+end
+
+function tests.DeathrollRollsAreFromWhatWasRolledLast()
+  local world, players = deathrollRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  assert(alice.Deathroll.Start(alice.rooms.room))
+  world:Run(0.25)
+  local duel = alice.rooms.room.state.duels[1]
+  local first = duel.a == 1 and alice or bob
+  local second = first == alice and bob or alice
+  assert(first.Deathroll.Roll(first.rooms.room))
+  equal(false, first.Deathroll.Roll(first.rooms.room), "one at a time")
+  world:Run(0.25)
+  local roll = duel.rolls[1]
+  equal(1, duel.k)
+  equal(100, roll.max)
+  equal(roll.value, second.rooms.room.state.duels[1].max, "the next is from what was rolled")
+  if roll.value > 1 then
+    equal(true, second.Deathroll.MyRoll(second.rooms.room))
+  end
+
+  -- Nobody rolls for somebody else, or from more than there is, or the same roll twice
+  local them = second.rooms.room
+  local k = them.state.duels[1].k
+  first.rooms:Handle(second.name, "1:ROOM:" .. them.id .. ":R:1:" .. (k + 1) .. ":100:1", "GUILD")
+  equal(k, them.state.duels[1].k, "from the wrong one of the two")
+  second.rooms:Handle(first.name, "1:ROOM:" .. them.id .. ":R:1:" .. (k + 2) .. ":5:9", "GUILD")
+  equal(k, them.state.duels[1].k, "more than it is from")
+end
+
+function tests.DeathrollRollsForWhoeverDoesNot()
+  local world, players = deathrollRoom({ "Bob" })
+  local alice = players[1]
+  assert(alice.Deathroll.Start(alice.rooms.room))
+  world:Run(4)
+  equal(0, alice.rooms.room.state.duels[1].k, "there is time to roll")
+  -- Nobody clicks a thing, the clients roll for them, five seconds a roll
+  for _ = 1, 400 do
+    world:Run(1)
+    if alice.rooms.room.state.phase == "idle" then
+      break
+    end
+  end
+  equal("idle", alice.rooms.room.state.phase)
+  assert(alice.rooms.room.state.champion)
+  equal(alice.rooms.room.state.champion, players[2].rooms.room.state.champion)
+end
+
+function tests.DeathrollGoesOnWithoutWhoeverIsGone()
+  local world, players = deathrollRoom({ "Bob", "Carol", "Dave" })
+  local alice, bob, carol, dave = players[1], players[2], players[3], players[4]
+  assert(alice.Deathroll.Start(alice.rooms.room))
+  world:Run(0.25)
+  equal(2, #alice.rooms.room.state.duels, "four make two duels and no byes")
+
+  -- Bob's client is gone without a word, Carol leaves
+  bob.online = false
+  carol.rooms:Leave()
+  world:Run(0.25)
+  local state = alice.rooms.room.state
+  local carolsDuel = state.duelOf[3]
+  equal(3, carolsDuel.forfeit, "whoever leaves is out")
+  equal(true, carolsDuel.winner ~= 3)
+  rollItOut(world, { alice, dave }, nil)
+  equal("idle", state.phase)
+  equal(state.champion, dave.rooms.room.state.champion)
+  equal(true, state.champion ~= 2 and state.champion ~= 3, "neither of them won")
+  equal(true, alice.rooms.room.members[2].away, "Bob never rolled")
+end
+
+function tests.DeathrollIsWatchedByWhoeverComesInLate()
+  local world, players = deathrollRoom({ "Bob", "Carol" })
+  local alice = players[1]
+  assert(alice.Deathroll.Start(alice.rooms.room))
+  world:Run(0.25)
+  local room = alice.rooms.room
+  -- A few rolls in
+  for _ = 1, 3 do
+    for _, player in ipairs(players) do
+      if player.Deathroll.MyRoll(player.rooms.room) then
+        player.Deathroll.Roll(player.rooms.room)
+      end
+    end
+    world:Run(0.25)
+  end
+  local frank = world:Add("Frank-Realm", { GUILD = true })
+  frank.rooms:Look()
+  world:Run(1)
+  assert(frank.rooms:Join(room.id))
+  world:Run(2)
+  local theirs = frank.rooms.room.state
+  equal("play", theirs.phase)
+  equal(#room.state.duels, #theirs.duels)
+  for index, duel in ipairs(room.state.duels) do
+    equal(duel.k, theirs.duels[index].k, "where duel " .. index .. " stands")
+    equal(duel.max, theirs.duels[index].max)
+    equal(duel.winner, theirs.duels[index].winner)
+  end
+  equal(scoresOf(alice), scoresOf(frank), "nobody has nothing because Frank came in")
+  equal(nil, frank.Deathroll.MyDuel(frank.rooms.room), "he watches this one")
+  equal("deathroll_watching", (frank.private.Rooms.Game("deathroll").status(frank.rooms.room)))
+  equal(false, frank.Deathroll.Roll(frank.rooms.room))
+
+  rollItOut(world, players)
+  equal(room.state.champion, frank.rooms.room.state.champion)
+  assert(alice.Deathroll.Start(room))
+  world:Run(0.25)
+  equal(2, #frank.rooms.room.state.duels, "four make two duels")
+  assert(frank.Deathroll.MyDuel(frank.rooms.room), "and he plays the next")
+end
+
+function tests.DeathrollPageRollsAndShowsTheBracket()
+  local world, players = deathrollRoom({ "Bob", "Carol" })
+  local alice = players[1]
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } }, printed = {} }
+  function ForeverGames:Print(text)
+    self.printed[#self.printed + 1] = text
+  end
+  local private = alice.private
+  private.ICON = "icon"
+  private.rooms = alice.rooms
+  private.Transport = {
+    DisplayName = function(name)
+      return (name:gsub("%-.*", ""))
+    end,
+  }
+  private.MainFrame = {
+    Open = function() end,
+    Hide = function() end,
+    IsShown = function()
+      return true
+    end,
+    Refresh = function()
+      private.Party.Refresh()
+    end,
+  }
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Party.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local Party = private.Party
+  Party.Init(UIParent)
+  Party.Open()
+  Party.Refresh()
+  local function shown(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+  equal(true, shown("game_deathroll"))
+  Client.Button("deathroll_start"):Fire("OnClick")
+  world:Run(0.25)
+  Party.Refresh()
+  equal("play", alice.rooms.room.state.phase)
+  equal(true, shown("deathroll_round"))
+
+  -- Roll whenever it is hers, from the page, until the tourney is over
+  for _ = 1, 2000 do
+    local room = alice.rooms.room
+    if alice.Deathroll.MyRoll(room) then
+      local button = Client.Button("deathroll_roll")
+      assert(button and button:IsVisible(), "the button to roll is there")
+      button:Fire("OnClick")
+    end
+    for _, player in ipairs(players) do
+      if player ~= alice and player.Deathroll.MyRoll(player.rooms.room) then
+        player.Deathroll.Roll(player.rooms.room)
+      end
+    end
+    world:Run(0.25)
+    Party.Refresh()
+    if room.state.phase == "idle" then
+      break
+    end
+  end
+  equal("idle", alice.rooms.room.state.phase)
+  equal(true, shown("deathroll_champion"))
+  assert(Client.Button("deathroll_again"))
+
+  -- Small, it is the duel and nothing else
+  Client.Button("party_small"):Fire("OnClick")
+  Party.Refresh()
+  equal(true, Party.IsOpen())
+  Client.Button("deathroll_again"):Fire("OnClick")
+  world:Run(0.25)
+  Party.Refresh()
+  equal("play", alice.rooms.room.state.phase)
+end
+
+--- Questions to ask in a test, whatever the real ones are
+local TRIVIA_BANK = {
+  g = {
+    { "What colour is the sky on a clear day?", "Blue", "Green", "Red", "Purple" },
+    { "Water boils at 100 degrees Celsius at sea level.", "True", "False" },
+    { "How many legs has a spider?", "Eight", "Six", "Ten", "Four" },
+  },
+  w = {
+    { "Who is the son of Durotan?", "Thrall", "Rexxar", "Garona", "Varok" },
+    { "What is the capital of the night elves?", "Darnassus", "Ironforge", "Stormwind", "Undercity" },
+    { "Arthas was a paladin before taking up Frostmourne.", "True", "False" },
+  },
+}
+
+--- A room of Trivia that Alice opened for her guild, with as many more in it as are named, and
+--- the questions above to ask
+--- @param names string[]
+--- @param rules table?
+--- @return RoomWorld, table[] players Alice first
+local function triviaRoom(names, rules)
+  local world = RoomWorld.New()
+  local guild = { GUILD = true }
+  local players = { world:Add("Alice-Realm", guild) }
+  players[1].private.TriviaQuestions = TRIVIA_BANK
+  for _, name in ipairs(names) do
+    players[#players + 1] = world:Add(name .. "-Realm", guild)
+  end
+  local room = assert(players[1].rooms:Open("trivia", "GUILD", rules or { pack = "m", count = 3, seconds = 10 }))
+  world:Run(1)
+  for index = 2, #players do
+    equal(room.id, players[index].heard.id, "heard of the room")
+    assert(players[index].rooms:Join(room.id))
+    world:Run(1)
+  end
+  world:Run(10)
+  return world, players
+end
+
+--- The player whose answer is the right one to the question that is up
+--- @param host table
+--- @return number
+local function rightAnswer(host)
+  return host.rooms.room.state.secret
+end
+
+--- Runs the clock until the question that is up can be answered
+--- @param world RoomWorld
+local function untilOpen(world)
+  world:Run(3)
+end
+
+function tests.TriviaQuizIsAskedAndScored()
+  local world, players = triviaRoom({ "Bob", "Carol" })
+  local alice, bob, carol = players[1], players[2], players[3]
+  local room = alice.rooms.room
+  equal(false, (bob.Trivia.Start(bob.rooms.room)), "only the host starts")
+  assert(alice.Trivia.Start(room))
+  world:Run(0.25)
+
+  -- Everybody has the same question, and nobody answers it before they could read it
+  local asked = room.state.question
+  for _, player in ipairs(players) do
+    local state = player.rooms.room.state
+    equal("ask", state.phase, player.name .. " was asked")
+    equal(1, state.k)
+    equal(3, state.total)
+    equal(asked, state.question)
+    equal(table.concat(room.state.answers, ","), table.concat(state.answers, ","))
+    equal(false, player.Trivia.CanAnswer(player.rooms.room), "still reading")
+  end
+  equal(nil, bob.rooms.room.state.secret, "only the host knows the answer")
+  local right = rightAnswer(alice)
+  local wrong = right == 1 and 2 or 1
+  equal(false, bob.Trivia.Answer(bob.rooms.room, right), "too soon")
+
+  -- Bob gets it in a second, Carol gets it wrong, Alice never answers
+  untilOpen(world)
+  world:Run(1)
+  assert(bob.Trivia.Answer(bob.rooms.room, right))
+  equal(false, bob.Trivia.Answer(bob.rooms.room, wrong), "one answer each")
+  assert(carol.Trivia.Answer(carol.rooms.room, wrong))
+  world:Run(0.25)
+  equal(2, (alice.Trivia.Answered(room)))
+  equal("ask", room.state.phase, "the host waits for Alice")
+  world:Run(11)
+  for _, player in ipairs(players) do
+    local state = player.rooms.room.state
+    equal("reveal", state.phase, player.name .. " was told the answer")
+    equal(right, state.right)
+    equal(scoresOf(alice), scoresOf(player), player.name .. " counted the same")
+  end
+  local points = bob.rooms.room.state.gained[2]
+  equal(true, points > 900 and points <= 1000, "quick is worth nearly all of it")
+  equal("A0 B" .. points .. " C0", scoresOf(alice))
+  equal(1, bob.rooms.room.state.streak)
+  equal(0, carol.rooms.room.state.streak)
+
+  -- Once everyone answered there is no use waiting
+  world:Run(6)
+  equal(2, room.state.k, "the next question")
+  untilOpen(world)
+  right = rightAnswer(alice)
+  for _, player in ipairs(players) do
+    assert(player.Trivia.Answer(player.rooms.room, right))
+  end
+  world:Run(0.5)
+  equal("reveal", carol.rooms.room.state.phase)
+  -- Bob had the last one right as well
+  equal(true, bob.rooms.room.state.gained[2] > alice.rooms.room.state.gained[1])
+  equal(scoresOf(alice), scoresOf(carol))
+
+  -- And the last, after which it is over
+  world:Run(6)
+  equal(3, room.state.k)
+  world:Run(25)
+  for _, player in ipairs(players) do
+    equal("over", player.rooms.room.state.phase, player.name .. " knows it is over")
+  end
+  equal("Bob-Realm", alice.Trivia.Standings(room)[1].name)
+
+  -- And again, everyone with nothing
+  assert(alice.Trivia.Start(room))
+  world:Run(0.25)
+  equal("A0 B0 C0", scoresOf(bob))
+  equal(0, bob.rooms.room.state.streak)
+end
+
+function tests.TriviaWorthLessTheLaterAndMoreInARow()
+  local Trivia = loadEngine().Trivia
+  equal(1000, Trivia.Points(0, 10, 0))
+  equal(750, Trivia.Points(5000, 10, 0))
+  equal(500, Trivia.Points(10000, 10, 0))
+  equal(500, Trivia.Points(60000, 10, 0), "never less than the least")
+  equal(1200, Trivia.Points(0, 10, 2))
+  equal(1500, Trivia.Points(0, 10, 9), "a streak is only worth so much")
+end
+
+function tests.TriviaQuestionTooLongForOneMessage()
+  local world, players = triviaRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  local long = ("A question that goes on and on "):rep(8) .. "and ends?"
+  alice.private.TriviaQuestions = { g = { { long, "Yes it does", "No", "Maybe", "Never" } } }
+  assert(alice.Trivia.Start(alice.rooms.room, { pack = "g", count = 5, seconds = 10 }))
+  world:Run(0.25)
+  local state = bob.rooms.room.state
+  equal("ask", state.phase)
+  equal(long, state.question)
+  equal(4, #state.answers)
+  equal(1, state.total, "there is only the one to ask")
+  local sent = 0
+  for _, line in ipairs(world.sent) do
+    sent = sent + (line:find(":Q:1:1:", 1, true) and 1 or 0)
+  end
+  equal(2, sent, "in two messages")
+end
+
+function tests.TriviaStopsForAFight()
+  local world, players = triviaRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  local room = alice.rooms.room
+  assert(alice.Trivia.Start(room))
+  untilOpen(world)
+  local first = room.state.question
+  assert(bob.Trivia.Answer(bob.rooms.room, rightAnswer(alice)))
+
+  -- The pull: the question that was up counts for nothing
+  alice.rooms:Fighting(true)
+  world:Run(0.25)
+  for _, player in ipairs(players) do
+    local state = player.rooms.room.state
+    equal("held", state.phase, player.name .. " knows it stopped")
+    equal(1, state.next)
+  end
+  equal("A0 B0", scoresOf(bob))
+  world:Run(30)
+  equal("held", bob.rooms.room.state.phase, "nothing is asked in a fight")
+  equal(false, (alice.Trivia.Start(room)), "nor is a quiz begun")
+
+  -- It goes on a little while after the fight, unless another one comes first
+  alice.rooms:Fighting(false)
+  world:Run(2)
+  alice.rooms:Fighting(true)
+  world:Run(10)
+  equal("held", bob.rooms.room.state.phase)
+  alice.rooms:Fighting(false)
+  world:Run(5.5)
+  local state = bob.rooms.room.state
+  equal("ask", state.phase)
+  equal(1, state.k, "the question that counted for nothing is asked again")
+  equal(true, state.question ~= first, "but another one")
+
+  -- Bob's fights are his own
+  bob.rooms:Fighting(true)
+  world:Run(0.25)
+  equal("ask", room.state.phase)
+
+  -- Paused by hand, it goes on by hand: the end of a fight doesn't
+  untilOpen(world)
+  assert(bob.Trivia.Answer(bob.rooms.room, rightAnswer(alice)))
+  assert(alice.Trivia.Answer(room, rightAnswer(alice)))
+  world:Run(0.5)
+  equal("reveal", room.state.phase)
+  assert(alice.Trivia.Pause(room))
+  world:Run(0.25)
+  equal(2, bob.rooms.room.state.next, "after the one that was answered")
+  equal(true, bob.rooms.room.members[2].score > 0, "which counted")
+  alice.rooms:Fighting(true)
+  alice.rooms:Fighting(false)
+  world:Run(10)
+  equal("held", bob.rooms.room.state.phase)
+  assert(alice.Trivia.Resume(room))
+  world:Run(0.25)
+  equal("ask", bob.rooms.room.state.phase)
+  equal(2, bob.rooms.room.state.k)
+end
+
+function tests.TriviaIsPlayedByWhoeverComesInLate()
+  local world, players = triviaRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  local room = alice.rooms.room
+  assert(alice.Trivia.Start(room))
+  untilOpen(world)
+  assert(bob.Trivia.Answer(bob.rooms.room, rightAnswer(alice)))
+  world:Run(0.25)
+
+  local frank = world:Add("Frank-Realm", { GUILD = true })
+  frank.rooms:Look()
+  world:Run(1)
+  assert(frank.rooms:Join(room.id))
+  world:Run(1)
+  local state = frank.rooms.room.state
+  equal("ask", state.phase)
+  equal(room.state.question, state.question)
+  assert(state.picks[2], "he knows Bob answered")
+  equal(true, frank.Trivia.CanAnswer(frank.rooms.room), "and answers himself")
+  assert(frank.Trivia.Answer(frank.rooms.room, rightAnswer(alice)))
+  assert(alice.Trivia.Answer(room, rightAnswer(alice)))
+  world:Run(0.5)
+  equal("reveal", state.phase)
+  equal(scoresOf(alice), scoresOf(frank))
+  equal(scoresOf(alice), scoresOf(bob))
+  equal(true, room.members[3].score > 0)
+end
+
+function tests.TriviaAsksWhatWasNotAskedLately()
+  local world, players = triviaRoom({ "Bob" }, { pack = "w", count = 3, seconds = 10 })
+  local alice = players[1]
+  local room = alice.rooms.room
+  local seen = {}
+  for game = 1, 2 do
+    assert(alice.Trivia.Start(room, game == 2 and { pack = "m", count = 3, seconds = 10 } or nil))
+    for _ = 1, 3 do
+      world:Run(0.25)
+      local question = room.state.question
+      equal(nil, seen[question], "asked once: " .. question)
+      seen[question] = true
+      world:Run(25)
+    end
+    equal("over", room.state.phase)
+  end
+  -- Three about Warcraft, then the three general ones nobody was asked yet
+  local general = 0
+  for _, entry in ipairs(TRIVIA_BANK.g) do
+    general = general + (seen[entry[1]] and 1 or 0)
+  end
+  equal(3, general)
+end
+
+function tests.TriviaQuestionsAreFitToAsk()
+  local bank = loadEngine().TriviaQuestions
+  local seen = {}
+  for _, pack in ipairs({ "g", "w" }) do
+    local questions = bank[pack]
+    equal(true, #questions >= 120, "enough questions in " .. pack .. ": " .. #questions)
+    for _, entry in ipairs(questions) do
+      local question = entry[1]
+      local label = pack .. ": " .. tostring(question)
+      equal(true, #entry == 3 or #entry == 5, "two or four answers to " .. label)
+      equal(nil, seen[question], "asked twice: " .. label)
+      seen[question] = true
+      equal(true, #question <= 110, "short enough: " .. label)
+      local answers = {}
+      for index, text in ipairs(entry) do
+        equal("string", type(text), label)
+        equal(nil, text:find("[^\32-\126]"), "plain ASCII: " .. text)
+        equal(nil, text:find("[:|]"), "no colons or bars: " .. text)
+        equal(text, text:gsub("^%s+", ""):gsub("%s+$", ""), "no blanks around: " .. text)
+        if index > 1 then
+          equal(true, #text <= 28 and #text > 0, "an answer short enough: " .. text)
+          equal(nil, answers[text:lower()], "the same answer twice in " .. label)
+          answers[text:lower()] = true
+        end
+      end
+      if #entry == 3 then
+        equal(true, answers["true"] and answers["false"], "True and False to " .. label)
+      end
+    end
+  end
+end
+
+function tests.TriviaPageAnswersAndShowsTheRightOne()
+  local world, players = triviaRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } }, printed = {} }
+  function ForeverGames:Print(text)
+    self.printed[#self.printed + 1] = text
+  end
+  local private = alice.private
+  private.ICON = "icon"
+  private.rooms = alice.rooms
+  private.Transport = {
+    DisplayName = function(name)
+      return (name:gsub("%-.*", ""))
+    end,
+  }
+  private.MainFrame = {
+    Open = function() end,
+    Hide = function() end,
+    IsShown = function()
+      return true
+    end,
+    Refresh = function()
+      private.Party.Refresh()
+    end,
+  }
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Party.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local Party = private.Party
+  Party.Init(UIParent)
+  Party.Open()
+  Party.Refresh()
+  local function shown(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+  local room = alice.rooms.room
+  equal(true, shown("trivia_rules_line"))
+  Client.Button("trivia_start"):Fire("OnClick")
+  world:Run(0.25)
+  Party.Refresh()
+  equal("ask", room.state.phase)
+  equal(true, shown(room.state.question))
+  equal(true, shown("trivia_get_ready"))
+
+  -- Click the right answer, after Bob gets it wrong
+  untilOpen(world)
+  Party.Refresh()
+  local right = rightAnswer(alice)
+  assert(bob.Trivia.Answer(bob.rooms.room, right == 1 and 2 or 1))
+  local buttons = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == nil and widget.index == right and widget:IsVisible()
+  end)
+  equal(1, #buttons, "the answer is there to click")
+  buttons[1]:Fire("OnClick")
+  world:Run(0.5)
+  Party.Refresh()
+  equal("reveal", room.state.phase)
+  equal(true, shown("trivia_right"))
+  equal(true, room.members[1].score > 0)
+  equal(true, shown("trivia_pause"), "the host can stop it")
+
+  -- Made small it stays out of the way of a fight
+  Client.Button("party_small"):Fire("OnClick")
+  Party.Refresh()
+  equal(true, Party.IsOpen())
+  Client.combat = true
+  Party.Refresh()
+  equal(false, Party.IsOpen())
+  Client.combat = false
+  Party.Refresh()
+  equal(true, Party.IsOpen())
 end
 
 -----------------------------

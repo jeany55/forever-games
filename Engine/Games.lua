@@ -67,6 +67,7 @@ local _, private = ...
 --- @field default number|string|boolean What it is unless somebody says otherwise. Changing it changes the rules: bump `version`
 --- @field label (fun(value: number|string): string)? How a choice is shown, the value itself if left out
 --- @field when (fun(rules: table<string, any>): boolean)? Whether it matters with the rest set the way it is. One that doesn't isn't offered
+--- @field alone boolean? Only matters in a game played alone, of one that can be played with others too: the computer players in it. It isn't offered for a game with others, nor sent with a challenge
 
 --- Something a game for one is played for: a score to beat, a time to get under
 --- @class GameRecord
@@ -202,6 +203,25 @@ function Games.Chosen(game, chosen)
   return kept
 end
 
+--- A choice of rules for a game of so many players: what only matters to a game played alone is
+--- left out of one with others
+--- @param game GameDefinition
+--- @param chosen table<string, any>?
+--- @param players number
+--- @return table<string, any>?
+function Games.ForPlayers(game, chosen, players)
+  if not chosen or players == 1 then
+    return chosen
+  end
+  local kept = {}
+  for _, option in ipairs(game.options or {}) do
+    if not option.alone then
+      kept[option.id] = chosen[option.id]
+    end
+  end
+  return kept
+end
+
 --- Writes a choice of rules down for a challenge: "lore=10+bingo=100"
 --- @param game GameDefinition
 --- @param chosen table<string, any>?
@@ -263,11 +283,13 @@ end
 --- The options that matter with the rules set the way they are
 --- @param game GameDefinition
 --- @param rules table<string, any> Everything set, see Games.Rules
+--- @param players number? How many are playing, if it is known
 --- @return GameOption[]
-function Games.OptionsFor(game, rules)
+function Games.OptionsFor(game, rules, players)
   local offered = {}
   for _, option in ipairs(game.options or {}) do
-    if not option.when or option.when(rules) then
+    local matters = not option.alone or not players or players == 1
+    if matters and (not option.when or option.when(rules)) then
       offered[#offered + 1] = option
     end
   end
@@ -278,10 +300,11 @@ end
 --- thing: "All seven tiles: +100"
 --- @param game GameDefinition
 --- @param chosen table<string, any>?
+--- @param players number? How many are playing, if it is known
 --- @return string[] Nothing for the usual rules
-function Games.DescribeOptions(game, chosen)
+function Games.DescribeOptions(game, chosen, players)
   local rules, lines = Games.Rules(game.options, chosen), {}
-  for _, option in ipairs(Games.OptionsFor(game, rules)) do
+  for _, option in ipairs(Games.OptionsFor(game, rules, players)) do
     if rules[option.id] ~= option.default then
       lines[#lines + 1] = private.L["option_line"]:format(option.name, Games.OptionLabel(option, rules[option.id]))
     end

@@ -58,6 +58,8 @@ local defaults = {
     records = {},
     -- Whether the window of the games for a room is small, and where each size of it was left
     party = { mini = false },
+    -- The questions of Trivia this player asked as a host, and when, see Games/Trivia.lua
+    trivia = { serial = 0, ids = {} },
   },
 }
 
@@ -107,6 +109,7 @@ function ForeverGames:OnEnable()
     end,
   })
 
+  private.Trivia.asked = self.db.profile.trivia
   private.rooms = Rooms.New({
     me = Transport.PlayerName(),
     now = GetTime,
@@ -144,6 +147,16 @@ function ForeverGames:OnEnable()
       private.rooms:PeerOffline(peer)
     end,
   })
+
+  -- A game for a room may stop for a fight, and keep out of its way
+  self:RegisterEvent("PLAYER_REGEN_DISABLED", function()
+    private.rooms:Fighting(true)
+    Party.Refresh()
+  end)
+  self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+    private.rooms:Fighting(false)
+    Party.Refresh()
+  end)
 
   Links.Init(function(host, gameId)
     self:OnLinkClicked(host, gameId)

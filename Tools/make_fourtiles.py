@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Makes the puzzles of Fourtiles (Games/Fourtiles.lua), and draws its icon.
+"""Makes the puzzles of Fourtiles (Games/Fourtiles.lua), and draws its icon and its tiles.
 
     python3 Tools/make_fourtiles.py puzzles enable1.txt scowl/final Lexicon/Fourtiles.lua
     python3 Tools/make_fourtiles.py icon .
+    python3 Tools/make_fourtiles.py tiles .
 
 A puzzle is five words cut into four tiles each, of two to four letters. Whatever a player can
 put together from one to four of the twenty tiles counts if it is a word, so the tool also
@@ -22,9 +23,14 @@ A puzzle is only kept if
 
 Whatever `puzzles` writes is part of the rules of the game. After running it again, give the
 game a new version: Tests/RunTests.lua won't pass until then. Only the standard library is used.
-For `icon`, pass a second folder to also get a PNG copy there.
+For `icon` and `tiles`, pass a second folder to also get PNG copies there.
+
+The tiles are three white pictures the game tints, cut in nine like a window pane so the corners
+stay round however wide or tall a tile is drawn (Widgets.Slices): body.tga, a tile darker towards
+its foot, gloss.tga, the light along its top, and ring.tga, the line around a picked one.
 """
 import itertools
+import math
 import random
 import re
 import struct
@@ -202,7 +208,7 @@ def colour_at(px, py):
 
 
 def write_tga(path, rows):
-    header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, SIZE, SIZE, 32, 8)
+    header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, len(rows), len(rows), 32, 8)
     body = bytearray()
     # Rows are written bottom up
     for row in reversed(rows):
@@ -217,7 +223,7 @@ def write_png(path, rows):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
     raw = b"".join(b"\x00" + bytes(value for pixel in row for value in pixel) for row in rows)
-    head = struct.pack(">IIBBBBB", SIZE, SIZE, 8, 6, 0, 0, 0)
+    head = struct.pack(">IIBBBBB", len(rows), len(rows), 8, 6, 0, 0, 0)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
@@ -243,10 +249,72 @@ def make_icon(target, preview=None):
     print("wrote the icon of Fourtiles")
 
 
+# ---------------------------------------------------------------- tiles
+
+PANE = 64
+# How round the corners are, inside the quarter of the picture at each edge that the game keeps
+# from stretching (Widgets.Slices)
+RADIUS = 14
+RING = 3
+
+
+def outside(px, py):
+    """How far a point is outside the tile, below zero inside it, in pixels of the picture"""
+    half = PANE / 2
+    dx, dy = abs(px - half) - half + RADIUS, abs(py - half) - half + RADIUS
+    return math.hypot(max(dx, 0), max(dy, 0)) + min(max(dx, dy), 0) - RADIUS
+
+
+def body(px, py, distance):
+    """Lighter at the top, and a darker lip along its foot"""
+    shade = 1 - 0.14 * py / PANE
+    if py > PANE / 2 and distance > -4:
+        shade *= 0.66
+    return shade, 1.0
+
+
+def gloss(px, py, distance):
+    """A bright rim along the top that fades down the sides, and a faint sheen over the top half"""
+    top = max(0.0, 1 - py / (PANE / 2))
+    alpha = 0.06 * top
+    if distance > -2.5:
+        alpha = max(alpha, 0.4 * top**1.5)
+    return 1.0, alpha
+
+
+def ring(px, py, distance):
+    return 1.0, 1.0 if distance > -RING else 0.0
+
+
+def make_tiles(target, preview=None):
+    for name, paint in (("body", body), ("gloss", gloss), ("ring", ring)):
+        rows = []
+        for y in range(PANE):
+            row = []
+            for x in range(PANE):
+                value = alpha = 0.0
+                for i in range(SAMPLES):
+                    for j in range(SAMPLES):
+                        px, py = x + (i + 0.5) / SAMPLES, y + (j + 0.5) / SAMPLES
+                        distance = outside(px, py)
+                        if distance <= 0:
+                            shade, a = paint(px, py, distance)
+                            value, alpha = value + shade * a, alpha + a
+                grey = round(255 * value / alpha) if alpha > 0 else 255
+                row.append((grey, grey, grey, round(255 * alpha / SAMPLES**2)))
+            rows.append(row)
+        write_tga(Path(target) / "Images" / "Fourtiles" / (name + ".tga"), rows)
+        if preview:
+            write_png(Path(preview) / ("fourtiles_" + name + ".png"), rows)
+    print("wrote the tiles of Fourtiles")
+
+
 if __name__ == "__main__":
     if len(sys.argv) >= 5 and sys.argv[1] == "puzzles":
         make_puzzles(*sys.argv[2:5])
     elif len(sys.argv) >= 3 and sys.argv[1] == "icon":
         make_icon(*sys.argv[2:4])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "tiles":
+        make_tiles(*sys.argv[2:4])
     else:
         raise SystemExit(__doc__)

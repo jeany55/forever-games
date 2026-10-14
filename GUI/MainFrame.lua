@@ -1096,7 +1096,7 @@ local function refreshDetail(match, fresh)
   local history = showBoard and game.history == true
   detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me, #match.players)) or "")
   -- A challenge says what it is a challenge to: the rules are part of what is being accepted
-  local rules = game and Games.DescribeOptions(game, match.options) or {}
+  local rules = game and Games.DescribeOptions(game, match.options, #match.players) or {}
   local message = MainFrame.Describe(match)
   if #rules > 0 then
     message = message .. "\n\n|cffffd100" .. L["rules_custom"] .. "|r\n|cffffffff" .. table.concat(rules, "\n") .. "|r"

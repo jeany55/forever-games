@@ -35,6 +35,7 @@ Lexicon\English.lua
 Lexicon\Warcraft.lua
 Lexicon\Fourtiles.lua
 Lexicon\Sketch.lua
+Lexicon\Trivia.lua
 Games\TicTacToe.lua
 Games\Chess.lua
 Games\ConnectFour.lua
@@ -51,7 +52,10 @@ Games\2048.lua
 Games\Sudoku.lua
 Games\Fourtiles.lua
 Games\Warcraftstein.lua
+Games\Wormcraft.lua
 Games\Sketch.lua
+Games\Deathroll.lua
+Games\Trivia.lua
 Transport.lua
 Links.lua
 GUI\Toast.lua
