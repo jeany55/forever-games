@@ -2,8 +2,9 @@
 --  Tiles
 --------------------------
 -- Lettered tiles, for any game played with them: a tile of bone with a letter on it and, small
--- in its corner, what the letter is worth, both in Lexend. The letters are written rather than
--- painted, so a tile is sharp at whatever size it is drawn and however far a board is zoomed in on.
+-- in its corner, what the letter is worth, both in Lexend (GUI/Lettering.lua). The letters are
+-- drawn on rather than painted into the tile, at the size of picture that suits how large they
+-- are on screen, so a tile is sharp however far a board is zoomed in on.
 --
 -- Nothing here knows any rules. See Games/Words.lua, and Tools/make_tiles.py for the pictures,
 -- which also come with a few white ones for a game to tint: the light around a tile, a square of
@@ -30,8 +31,8 @@ local STOOD = { 0.5, 0.18, 0.62 }
 
 --- @class Tile: Frame
 --- @field side number
---- @field letter FontString
---- @field value FontString
+--- @field letter LetteringLine
+--- @field value LetteringLine
 --- @field body Texture
 
 --- How many screen pixels a tile covers, for picking a texture of the right size
@@ -53,11 +54,8 @@ function Tiles.New(parent)
   tile.side = 0
   tile.body = tile:CreateTexture(nil, "ARTWORK")
   tile.body:SetAllPoints()
-  tile.letter = tile:CreateFontString(nil, "OVERLAY")
-  tile.value = tile:CreateFontString(nil, "OVERLAY")
-  -- Nothing can be written without a font, and a tile may be told its letter before its size
-  private.Widgets.Lexend(tile.letter, SMALLEST_FONT)
-  private.Widgets.Lexend(tile.value, SMALLEST_FONT)
+  tile.letter = private.Lettering.New(tile, SMALLEST_FONT)
+  tile.value = private.Lettering.New(tile, SMALLEST_FONT)
 
   --- Draws it at another size
   --- @param side number
@@ -67,10 +65,10 @@ function Tiles.New(parent)
     end
     self.side = side
     self:SetSize(side, side)
-    private.Widgets.Lexend(self.letter, math.max(SMALLEST_FONT, math.floor(side * LETTER)))
+    self.letter:SetFontSize(math.max(SMALLEST_FONT, math.floor(side * LETTER)))
     self.letter:ClearAllPoints()
     self.letter:SetPoint("CENTER", -side * 0.03, side * 0.02)
-    private.Widgets.Lexend(self.value, math.max(SMALLEST_FONT, math.floor(side * VALUE)))
+    self.value:SetFontSize(math.max(SMALLEST_FONT, math.floor(side * VALUE)))
     self.value:ClearAllPoints()
     self.value:SetPoint("BOTTOMRIGHT", -side * 0.13, side * 0.11)
     self:Sharpen()
@@ -83,6 +81,8 @@ function Tiles.New(parent)
       self.path = path
       self.body:SetTexture(path)
     end
+    self.letter:Sharpen()
+    self.value:Sharpen()
   end
 
   --- @param letter string? What is written on it, nothing for a tile seen blank

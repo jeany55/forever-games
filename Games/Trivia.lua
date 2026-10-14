@@ -655,7 +655,7 @@ local TITLE, FOOT, BUTTON_ROW, BAR, GAP = 26, 24, 26, 6, 8
 local SMALL_TITLE, SMALL_FOOT, SMALL_QUESTION = 20, 18, 92
 local COLUMN_LEAST, COLUMN_MOST = 200, 260
 local ICON, SMALL_ICON = 28, 18
--- The sizes of what is written in Lexend: the question, an answer and the clock, whole and small
+-- The sizes of what is written large: the question, an answer and the clock, whole and small
 local QUESTION_SIZE, ANSWER_SIZE, CLOCK_SIZE = 20, 15, 22
 local SMALL_QUESTION_SIZE, SMALL_ANSWER_SIZE, SMALL_CLOCK_SIZE = 13, 11, 14
 -- The raid markers the answers go by, star, circle, diamond and triangle, in their colours
@@ -790,7 +790,7 @@ function TriviaView:Layout(width, height, compact)
   self.title:SetWidth(main - 64)
   self.title:SetFontObject(compact and "GameFontNormal" or "GameFontNormalLarge")
   self.clock:SetPoint("TOPRIGHT", self.frame, "TOPLEFT", main - 2, -3)
-  Widgets.Lexend(self.clock, compact and SMALL_CLOCK_SIZE or CLOCK_SIZE)
+  self.clock:SetFont(STANDARD_TEXT_FONT, compact and SMALL_CLOCK_SIZE or CLOCK_SIZE, "")
 
   local cardHeight = compact and SMALL_QUESTION or math.floor((height - title - foot - buttons) * 0.36)
   self.card:SetPoint("TOPLEFT", 0, -title)
@@ -808,12 +808,12 @@ function TriviaView:Layout(width, height, compact)
     button.icon:SetPoint("LEFT", compact and 6 or 10, 0)
     button.count:ClearAllPoints()
     button.count:SetPoint("RIGHT", compact and -6 or -12, 0)
-    Widgets.Lexend(button.count, compact and SMALL_ANSWER_SIZE + 2 or ANSWER_SIZE + 3)
+    button.count:SetFont(STANDARD_TEXT_FONT, compact and SMALL_ANSWER_SIZE + 2 or ANSWER_SIZE + 3, "")
     button.label:ClearAllPoints()
     local inset = compact and (6 + SMALL_ICON + 5) or (10 + ICON + 10)
     button.label:SetPoint("TOPLEFT", inset, -4)
     button.label:SetPoint("BOTTOMRIGHT", compact and -24 or -40, 4)
-    Widgets.Lexend(button.label, compact and SMALL_ANSWER_SIZE or ANSWER_SIZE)
+    button.label:SetFont(STANDARD_TEXT_FONT, compact and SMALL_ANSWER_SIZE or ANSWER_SIZE, "")
   end
 
   self.detail:SetPoint("TOPLEFT", 0, -(height - foot - buttons))
@@ -897,13 +897,13 @@ function TriviaView:Update(room)
     self.bar:SetColorTexture(color[1], color[2], color[3], 0.85)
   end
 
-  -- The question in Lexend, like the answers. Whatever stands in for it has names in it, in
-  -- the client's font, which writes every name there is
-  local font = playing and "lexend" or "client"
+  -- The question as large as the answers. Whatever stands in for it has names in it, in the
+  -- client's font as it comes, which writes every name there is
+  local font = playing and "sized" or "client"
   if self.questionFont ~= font then
     self.questionFont = font
     if playing then
-      Widgets.Lexend(self.question, self.compact and SMALL_QUESTION_SIZE or QUESTION_SIZE)
+      self.question:SetFont(STANDARD_TEXT_FONT, self.compact and SMALL_QUESTION_SIZE or QUESTION_SIZE, "")
     else
       self.question:SetFontObject(self.compact and "GameFontHighlight" or "GameFontHighlightLarge")
     end

@@ -21,6 +21,8 @@ Engine\Session.lua
 Engine\Presence.lua
 Engine\Rooms.lua
 GUI\Widgets.lua
+GUI\LetteringGlyphs.lua
+GUI\Lettering.lua
 GUI\Effects.lua
 GUI\SlideGrid.lua
 GUI\NumberGrid.lua

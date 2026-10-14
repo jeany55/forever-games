@@ -1136,7 +1136,7 @@ function View:Layout(width, height)
     parts.cell:SetPoint("TOPLEFT", x, -y)
     parts.cell:SetSize(cell, cell)
     if parts.label then
-      private.Widgets.Lexend(parts.label, font)
+      parts.label:SetFont(STANDARD_TEXT_FONT, font, "")
       parts.label:SetText(L["words_square_" .. premiumAt(square)])
       parts.label:ClearAllPoints()
       parts.label:SetPoint("CENTER", self.board, "TOPLEFT", x + cell / 2, -(y + cell / 2))

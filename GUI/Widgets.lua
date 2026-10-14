@@ -21,19 +21,6 @@ Widgets.GREY = { 0.65, 0.65, 0.65 }
 Widgets.GOLD = { 1, 0.82, 0 }
 Widgets.RED = { 1, 0.3, 0.25 }
 
--- A plain, round font the addon brings along, easy on the eyes in lower case (Fonts/)
-Widgets.LEXEND = "Interface\\AddOns\\ForeverGames\\Fonts\\Lexend-SemiBold.ttf"
-
---- Writes a text in Lexend. The client's own font is set first: a text told to use a font the
---- client can't find, as it can't one that was added while it was running, keeps the one it had
---- @param text FontString
---- @param size number
---- @param flags string?
-function Widgets.Lexend(text, size, flags)
-  text:SetFont(STANDARD_TEXT_FONT, size, flags or "")
-  text:SetFont(Widgets.LEXEND, size, flags or "")
-end
-
 --- A slightly darker box with a hairline border, for grouping content
 --- @param parent Frame
 --- @param frameType string?

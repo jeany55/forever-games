@@ -43,7 +43,7 @@ local ENGINE_FILES = {
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/Effects.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -7306,6 +7306,57 @@ local function gridRestsOn(grid, cells)
     end
   end
   equal(count, gridShown(grid), "tiles to be seen")
+end
+
+function tests.LetteringDrawsACharacterAtATime()
+  Client.Install()
+  local private = {}
+  for _, file in ipairs({ "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local glyphs = private.LetteringGlyphs
+  local count = 0
+  for _ in pairs(glyphs.glyphs) do
+    count = count + 1
+  end
+  equal(true, count <= glyphs.columns * glyphs.columns, "every character has a square of its own")
+  local line = private.Lettering.New(CreateFrame("Frame", nil, UIParent), 20)
+  local function shown(set)
+    local count = 0
+    for _, texture in ipairs(set) do
+      count = count + (texture.shown and 1 or 0)
+    end
+    return count
+  end
+
+  -- As wide as the characters move the pen, a space for one there is no picture of
+  line:SetText("ab|cff808080·|rZ9?")
+  equal("ab|cff808080·|rZ9?", line:GetText())
+  equal(5, shown(line.glyphs), "the colour codes and the ? aren't characters drawn")
+  local wide = (glyphs.glyphs.a[2] + glyphs.glyphs.b[2] + glyphs.glyphs["·"][2] + glyphs.glyphs.Z[2] + glyphs.glyphs["9"][2] + glyphs.space) * 20
+  assert(math.abs(line:GetStringWidth() - wide) < 1e-6)
+  equal((glyphs.ascent + glyphs.descent) * 20, line.height)
+  -- The dot in its own colour, the others in the line's
+  line:SetTextColor(1, 0.5, 0)
+  equal("1,0.5,0,1", table.concat(line.glyphs[1].color, ","))
+  equal(string.format("%.3f", 0x80 / 255), string.format("%.3f", line.glyphs[3].color[1]))
+  equal(0, shown(line.shadows))
+
+  -- A shadow is another of each, and fewer characters hide what isn't needed
+  line:SetShadow({ 0, 0, 0, 0.6 }, 0, -1)
+  equal(5, shown(line.shadows))
+  line:SetText("ok")
+  equal(2, shown(line.glyphs))
+  equal(2, shown(line.shadows))
+
+  -- The smallest picture that isn't shrunk much, the largest when none is large enough. The
+  -- screen is 1080 pixels high, so a size of 14 is 20 pixels
+  local paths = {}
+  for _, size in ipairs({ 8, 14, 40, 200 }) do
+    line:SetFontSize(size)
+    paths[#paths + 1] = line.glyphs[1].texture:match("(%d+)$")
+  end
+  equal("128,256,512,512", table.concat(paths, ","))
 end
 
 function tests.SlideGridPutsTilesOnItsSquares()
@@ -14892,6 +14943,10 @@ function tests.WindowPlaysFourtiles()
   local tiles = fourtilesOnScreen()
   equal(20, #tiles)
   equal(state.tiles[7]:lower(), tiles[7].label.text, "written in lower case, which is easier to read")
+  -- Nothing is drawn that isn't put anywhere
+  for _, tile in ipairs(tiles) do
+    equal("CENTER", tile.label.anchors and tile.label.anchors[1][1], "the letters are in the middle of their tile")
+  end
   equal(true, says("status_together") or says("fourtiles_progress"))
   equal(false, Client.Button("fourtiles_enter").enabled == true, "nothing to enter yet")
 

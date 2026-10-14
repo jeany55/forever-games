@@ -331,6 +331,8 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
 The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`.
+The letters on the tiles of Fourtiles and Words are drawn from Lexend by `Tools/make_lettering.py`:
+the client won't write in a font an addon brings, so they are pictures.
 The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
 ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
 `Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
@@ -350,4 +352,4 @@ The words the puzzles of Fourtiles are cut from were picked with the help of
 
 The tiles of Fourtiles and Words are written in [Lexend](https://github.com/googlefonts/lexend)
 by The Lexend Project Authors, used under the SIL Open Font License 1.1. See
-`Fonts/Lexend-OFL.txt`.
+`Images/Lettering/Lexend-OFL.txt`.

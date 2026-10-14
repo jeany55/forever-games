@@ -254,8 +254,9 @@ local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Fourtiles\\"
 local PLAIN = { 0.21, 0.22, 0.27 }
 local PICKED = { 0.6, 0.45, 0.1 }
 local SOLVED = { 0.15, 0.37, 0.22 }
--- What is written on them: a warm white, softer than white is on a dark tile
-local LETTERING = { 0.94, 0.92, 0.86 }
+-- What is written on them, in Lexend (GUI/Lettering.lua): a warm white, softer than white is on a
+-- dark tile
+local CHALK = { 0.94, 0.92, 0.86 }
 -- How large the letters are and how round the corners, as fractions of a tile's height. A tile
 -- is never too narrow for four letters: they get smaller first
 local LETTERS, CORNERS = 0.44, 0.22
@@ -290,8 +291,7 @@ local function createView(stage)
 
   -- The word being put together
   self.tray = Widgets.Panel(stage)
-  self.word = self.tray:CreateFontString(nil, "OVERLAY")
-  Widgets.Lexend(self.word, 24)
+  self.word = private.Lettering.New(self.tray, 24)
   self.word:SetTextColor(unpack(Widgets.GOLD))
   self.word:SetPoint("CENTER", 0, 1)
   self.hint = self.tray:CreateFontString(nil, "OVERLAY", "GameFontDisable")
@@ -314,13 +314,11 @@ local function createView(stage)
     local hover = Widgets.Slices(tile, IMAGES .. "body", "HIGHLIGHT")
     hover:SetVertexColor(1, 1, 1, 0.07)
     tile.slices = { shadow, tile.body, gloss, tile.ring, hover }
-    tile.label = tile:CreateFontString(nil, "OVERLAY")
-    Widgets.Lexend(tile.label, 16)
-    tile.label:SetShadowColor(0, 0, 0, 0.6)
-    tile.label:SetShadowOffset(0, -1)
+    tile.label = private.Lettering.New(tile, 16)
+    tile.label:SetPoint("CENTER", 0, 1)
+    tile.label:SetShadow({ 0, 0, 0, 0.6 }, 0, -1)
     -- Where it comes in the word, small in its corner
-    tile.number = tile:CreateFontString(nil, "OVERLAY")
-    Widgets.Lexend(tile.number, 10)
+    tile.number = private.Lettering.New(tile, 10)
     tile.number:SetTextColor(unpack(Widgets.GOLD))
     tile:SetScript("OnClick", function()
       self:pick(index)
@@ -366,10 +364,8 @@ local function createView(stage)
   self.found = Widgets.List(self.side, SIDE_MIN, ROW_HEIGHT, function(content)
     local row = CreateFrame("Frame", nil, content)
     row.word = Widgets.Label(row, "GameFontHighlightSmall")
-    Widgets.Lexend(row.word, 11)
     row.word:SetPoint("LEFT", 8, 0)
     row.points = Widgets.Label(row, "GameFontDisableSmall")
-    Widgets.Lexend(row.points, 10)
     row.points:SetPoint("RIGHT", -10, 0)
     return row
   end)
@@ -595,7 +591,7 @@ function View:arrange()
       slices:SetCorner(corner)
     end
     if size ~= self.letterSize then
-      private.Widgets.Lexend(tile.label, size)
+      tile.label:SetFontSize(size)
     end
     tile.number:ClearAllPoints()
     tile.number:SetPoint("TOPRIGHT", -math.floor(corner * 0.6) - 1, -3)
@@ -701,7 +697,7 @@ function View:draw()
   for index, tile in ipairs(self.tiles) do
     local color = at[index] and PICKED or (solved[state.of[index]] and SOLVED) or PLAIN
     tile.label:SetText(state.tiles[index]:lower())
-    tile.label:SetTextColor(unpack(at[index] and WHITE or LETTERING))
+    tile.label:SetTextColor(unpack(at[index] and WHITE or CHALK))
     tile.number:SetText(at[index] and tostring(at[index]) or "")
     tile.body:SetVertexColor(color[1], color[2], color[3])
     tile.ring:SetShown(at[index] ~= nil)
