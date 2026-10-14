@@ -20,6 +20,7 @@ Engine\Match.lua
 Engine\Session.lua
 Engine\Presence.lua
 Engine\Rooms.lua
+Engine\Bracket.lua
 GUI\Widgets.lua
 GUI\LetteringGlyphs.lua
 GUI\Lettering.lua
@@ -58,7 +59,6 @@ Games\Fourtiles.lua
 Games\Warcraftstein.lua
 Games\Wormcraft.lua
 Games\Sketch.lua
-Games\Deathroll.lua
 Games\Trivia.lua
 Transport.lua
 Links.lua

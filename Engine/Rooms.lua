@@ -357,6 +357,53 @@ function Room:Tell(member, kind, ...)
   end
 end
 
+--- On the host: tells one member a list, as many messages as it takes. Each message is the kind,
+--- the fields given, and as many of the entries as fit in it with a "." between them
+--- @param member RoomMember
+--- @param kind string
+--- @param entries (string|number)[]
+--- @param ... string|number
+function Room:TellList(member, kind, entries, ...)
+  local fields, last = { ... }, select("#", ...) + 1
+  local head = table.concat({ kind, ... }, ":") .. ":"
+  local chunk, length = {}, #head
+  local function flush()
+    if #chunk > 0 then
+      fields[last] = table.concat(chunk, ".")
+      self:Tell(member, kind, unpack(fields))
+      chunk, length = {}, #head
+    end
+  end
+  for _, entry in ipairs(entries) do
+    entry = tostring(entry)
+    if #chunk > 0 and length + 1 + #entry > Rooms.PAYLOAD then
+      flush()
+    end
+    length = length + (#chunk > 0 and 1 or 0) + #entry
+    chunk[#chunk + 1] = entry
+  end
+  flush()
+end
+
+--- Shuffles a list in place, the same way on every client that is given the same rolls
+--- @generic T
+--- @param list T[]
+--- @return T[] The same list
+function Room:Shuffle(list)
+  for index = #list, 2, -1 do
+    local other = self:Random(index)
+    list[index], list[other] = list[other], list[index]
+  end
+  return list
+end
+
+--- Everyone in the room starts again from nothing, for a new game
+function Room:ClearScores()
+  for _, member in pairs(self.members) do
+    member.score = 0
+  end
+end
+
 --- How many messages of a kind are still waiting to be sent, for a game that would rather say
 --- more in one message than fall behind
 --- @param kind string

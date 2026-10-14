@@ -13,9 +13,9 @@ local ENGINE_FILES = {
   "Engine/Session.lua",
   "Engine/Presence.lua",
   "Engine/Rooms.lua",
+  "Engine/Bracket.lua",
   "Lexicon/Sketch.lua",
   "Games/Sketch.lua",
-  "Games/Deathroll.lua",
   "Lexicon/Trivia.lua",
   "Games/Trivia.lua",
   "Games/TicTacToe.lua",
@@ -2034,7 +2034,7 @@ function tests.WizardNarrowsTheGamesDown()
 
   -- Those for any number but one aren't set up here: they have a window of their own
   clickGenre("genre_party")
-  equal("deathroll,sketch,trivia", idsOf(offeredGames()))
+  equal("sketch,trivia", idsOf(offeredGames()))
   clickGenre("genre_solo")
   equal(0, #offeredGames())
   clickGenre("wizard_all_games")
@@ -15513,7 +15513,6 @@ end
 function RoomWorld:Add(name, channels)
   local player = { name = name, channels = channels or {}, events = {}, online = true, private = loadEngine() }
   player.Sketch = player.private.Sketch
-  player.Deathroll = player.private.Deathroll
   player.Trivia = player.private.Trivia
   player.rooms = player.private.Rooms.New({
     me = name,
@@ -16040,292 +16039,159 @@ function tests.PartyPagesSetUpARoomAndPlayIt()
   assert(Client.Button("party_open_room"), "back to setting one up")
 end
 
---- A room of Deathroll that Alice opened for her guild, with as many more in it as are named
---- @param names string[]
---- @return RoomWorld, table[] players Alice first
-local function deathrollRoom(names)
+--- A bracket of these many, drawn in order
+--- @param count number
+--- @return BracketDuel[]
+local function drawOf(count)
+  local players = {}
+  for n = 1, count do
+    players[n] = n
+  end
+  return loadEngine().Bracket.Draw(players)
+end
+
+function tests.BracketHalvesDownToOne()
+  local Bracket = loadEngine().Bracket
+  -- However many, whoever is left over goes through the first round, and every round after it
+  -- is a power of two
+  for count = 2, 40 do
+    local duels = drawOf(count)
+    local size = 1
+    while size < count do
+      size = size * 2
+    end
+    equal(size / 2, #duels, count .. " fill a bracket of " .. size)
+    equal(count, Bracket.Left(duels))
+    local seen = {}
+    for _, duel in ipairs(duels) do
+      for _, n in ipairs({ duel.a, duel.b }) do
+        equal(nil, seen[n], "nobody is drawn twice")
+        seen[n] = true
+      end
+    end
+
+    -- The first of every pair wins, until one is left
+    local rounds = 0
+    while duels do
+      rounds = rounds + 1
+      for _, duel in ipairs(duels) do
+        duel.winner = duel.winner or duel.a
+      end
+      equal(true, Bracket.Decided(duels))
+      local champion
+      duels, champion = Bracket.Next(duels, function()
+        return 1
+      end)
+      if not duels then
+        assert(champion, "somebody won")
+      else
+        for _, duel in ipairs(duels) do
+          assert(duel.b, "nobody goes through after the first round")
+        end
+      end
+    end
+    equal(math.log(size) / math.log(2), rounds, count .. " take a round for every halving")
+  end
+end
+
+function tests.BracketGoesOnWithoutWhoeverIsGone()
+  local Bracket = loadEngine().Bracket
+  local duels = drawOf(8)
+  equal(false, Bracket.IsFinal(duels))
+  equal(false, Bracket.Decided(duels))
+  for _, duel in ipairs(duels) do
+    duel.winner = duel.b
+  end
+  -- 2, 4, 6 and 8 won, and 4 left: 6 has nobody to meet and goes through
+  local nextDuels = Bracket.Next(duels, function()
+    return 1
+  end, function(n)
+    return n ~= 4
+  end)
+  equal("2-6.8", Bracket.Encode(nextDuels))
+  equal(8, nextDuels[2].winner)
+  equal(3, Bracket.Left(nextDuels))
+
+  -- A duel won by nobody sends nobody through
+  nextDuels[1].winner = 0
+  equal(1, Bracket.Left(nextDuels))
+  local after, champion = Bracket.Next(nextDuels, function()
+    return 1
+  end)
+  equal(nil, after)
+  equal(8, champion)
+  equal(nil, select(2, Bracket.Next({ { a = 1, b = 2, winner = 0 } }, math.random)), "nobody won it")
+end
+
+function tests.BracketIsSentAsText()
+  local Bracket = loadEngine().Bracket
+  local duels = Bracket.Decode("3-5.7.2-9")
+  equal(3, #duels)
+  equal(5, duels[1].b)
+  equal(nil, duels[1].winner)
+  equal(7, duels[2].winner, "on their own goes through")
+  equal("3-5.7.2-9", Bracket.Encode(duels))
+  equal(duels[3], Bracket.ByPlayer(duels)[9])
+  equal(2, Bracket.OtherOf(duels[3], 9))
+  equal(nil, Bracket.OtherOf(duels[2], 7))
+  equal(true, Bracket.IsFinal(Bracket.Decode("4-1")))
+  equal(nil, Bracket.Decode(""))
+  equal(nil, Bracket.Decode("3-x"))
+  equal(nil, Bracket.Decode("3-5.-2"))
+end
+
+function tests.RoomTellsALongListInPieces()
   local world = RoomWorld.New()
   local guild = { GUILD = true }
-  local players = { world:Add("Alice-Realm", guild) }
-  for _, name in ipairs(names) do
-    players[#players + 1] = world:Add(name .. "-Realm", guild)
-  end
-  local room = assert(players[1].rooms:Open("deathroll", "GUILD", { start = 100, seconds = 5 }))
+  local alice, bob = world:Add("Alice-Realm", guild), world:Add("Bob-Realm", guild)
+  local room = assert(alice.rooms:Open("sketch", "GUILD"))
   world:Run(1)
-  for index = 2, #players do
-    equal(room.id, players[index].heard.id, "heard of the room")
-    assert(players[index].rooms:Join(room.id))
-    world:Run(1)
-  end
-  -- Everyone who came in is told who else is, as fast as the client lets messages go
-  world:Run(15)
-  return world, players
-end
+  assert(bob.rooms:Join(room.id))
+  world:Run(5)
 
---- Has everyone roll whenever it is their roll, until the tourney is over
---- @param world RoomWorld
---- @param players table[]
---- @param skip table<table, boolean>? Players who never roll
-local function rollItOut(world, players, skip)
-  for _ = 1, 4000 do
-    for _, player in ipairs(players) do
-      local room = player.rooms.room
-      if room and player.online and not (skip and skip[player]) and player.Deathroll.MyRoll(room) then
-        player.Deathroll.Roll(room)
+  local entries = {}
+  for index = 1, 120 do
+    entries[index] = index .. "/" .. ("x"):rep(index % 7)
+  end
+  local heard = {}
+  local game = bob.private.Rooms.Game("sketch")
+  local receive = game.receive
+  game.receive = function(_, member, kind, fields)
+    if kind == "LST" then
+      equal("7", fields[1])
+      equal("y", fields[2])
+      for entry in fields[3]:gmatch("[^.]+") do
+        heard[#heard + 1] = entry
       end
     end
-    world:Run(0.25)
-    if players[1].rooms.room.state.phase == "idle" then
-      return
+  end
+  local before = #world.sent
+  room:TellList(room.members[bob.rooms.room.me], "LST", entries, 7, "y")
+  world:Run(30)
+  game.receive = receive
+  equal(table.concat(entries, ","), table.concat(heard, ","), "all of it, in order")
+  local pieces = 0
+  for index = before + 1, #world.sent do
+    local text = world.sent[index]
+    if text:find(":LST:", 1, true) then
+      pieces = pieces + 1
+      equal(true, #text:match("^%S+ (.*)$") <= 255, "every piece fits in a message")
     end
   end
-  error("The tourney never ended")
+  equal(true, pieces > 1, "it took more than one")
 end
 
-function tests.DeathrollTourneyEndsWithAChampion()
-  local world, players = deathrollRoom({ "Bob", "Carol", "Dave", "Erin" })
-  local alice, bob = players[1], players[2]
-  local room = alice.rooms.room
-  equal(false, (bob.Deathroll.Start(bob.rooms.room)), "only the host starts")
-  equal(false, (bob.Deathroll.Roll(bob.rooms.room)), "nothing to roll yet")
-  assert(alice.Deathroll.Start(room))
-  world:Run(0.25)
-
-  -- Five fill a bracket of eight: three go through the first round without rolling
-  for _, player in ipairs(players) do
-    local state = player.rooms.room.state
-    equal("play", state.phase, player.name .. " knows the tourney began")
-    equal(4, #state.duels)
-    equal(100, state.start)
-    equal(5, state.seconds)
-    equal(5, player.Deathroll.Left(player.rooms.room))
-  end
-  local byes = 0
-  for _, duel in ipairs(room.state.duels) do
-    byes = byes + (duel.b and 0 or 1)
-  end
-  equal(3, byes)
-
-  -- Whoever's roll it isn't can't roll
-  local duel = room.state.duels[4]
-  local waiting
-  for _, player in ipairs(players) do
-    if player.rooms.room.me == duel.b then
-      waiting = player
-    end
-  end
-  equal(false, waiting.Deathroll.Roll(waiting.rooms.room))
-
-  rollItOut(world, players)
-  local champion = room.state.champion
-  assert(champion, "somebody won")
-  for _, player in ipairs(players) do
-    local state = player.rooms.room.state
-    equal("idle", state.phase)
-    equal(champion, state.champion, player.name .. " knows who won")
-    equal(scoresOf(alice), scoresOf(player), player.name .. " counted the same duels")
-  end
-  -- Three rounds: the first with one duel, two in the second and the final
-  equal(3, room.state.round)
-  local total = 0
-  for _, member in pairs(room.members) do
-    total = total + member.score
-  end
-  equal(4, total, "every duel was won by somebody")
-  equal(2, room.members[champion].score, "the champion won two")
-
-  -- And again, everyone with nothing
-  assert(alice.Deathroll.Start(room))
-  world:Run(0.25)
-  equal(1, bob.rooms.room.state.round)
-  equal("A0 B0 C0 D0 E0", scoresOf(bob))
-end
-
-function tests.DeathrollRollsAreFromWhatWasRolledLast()
-  local world, players = deathrollRoom({ "Bob" })
-  local alice, bob = players[1], players[2]
-  assert(alice.Deathroll.Start(alice.rooms.room))
-  world:Run(0.25)
-  local duel = alice.rooms.room.state.duels[1]
-  local first = duel.a == 1 and alice or bob
-  local second = first == alice and bob or alice
-  assert(first.Deathroll.Roll(first.rooms.room))
-  equal(false, first.Deathroll.Roll(first.rooms.room), "one at a time")
-  world:Run(0.25)
-  local roll = duel.rolls[1]
-  equal(1, duel.k)
-  equal(100, roll.max)
-  equal(roll.value, second.rooms.room.state.duels[1].max, "the next is from what was rolled")
-  if roll.value > 1 then
-    equal(true, second.Deathroll.MyRoll(second.rooms.room))
-  end
-
-  -- Nobody rolls for somebody else, or from more than there is, or the same roll twice
-  local them = second.rooms.room
-  local k = them.state.duels[1].k
-  first.rooms:Handle(second.name, "1:ROOM:" .. them.id .. ":R:1:" .. (k + 1) .. ":100:1", "GUILD")
-  equal(k, them.state.duels[1].k, "from the wrong one of the two")
-  second.rooms:Handle(first.name, "1:ROOM:" .. them.id .. ":R:1:" .. (k + 2) .. ":5:9", "GUILD")
-  equal(k, them.state.duels[1].k, "more than it is from")
-end
-
-function tests.DeathrollRollsForWhoeverDoesNot()
-  local world, players = deathrollRoom({ "Bob" })
-  local alice = players[1]
-  assert(alice.Deathroll.Start(alice.rooms.room))
-  world:Run(4)
-  equal(0, alice.rooms.room.state.duels[1].k, "there is time to roll")
-  -- Nobody clicks a thing, the clients roll for them, five seconds a roll
-  for _ = 1, 400 do
-    world:Run(1)
-    if alice.rooms.room.state.phase == "idle" then
-      break
-    end
-  end
-  equal("idle", alice.rooms.room.state.phase)
-  assert(alice.rooms.room.state.champion)
-  equal(alice.rooms.room.state.champion, players[2].rooms.room.state.champion)
-end
-
-function tests.DeathrollGoesOnWithoutWhoeverIsGone()
-  local world, players = deathrollRoom({ "Bob", "Carol", "Dave" })
-  local alice, bob, carol, dave = players[1], players[2], players[3], players[4]
-  assert(alice.Deathroll.Start(alice.rooms.room))
-  world:Run(0.25)
-  equal(2, #alice.rooms.room.state.duels, "four make two duels and no byes")
-
-  -- Bob's client is gone without a word, Carol leaves
-  bob.online = false
-  carol.rooms:Leave()
-  world:Run(0.25)
-  local state = alice.rooms.room.state
-  local carolsDuel = state.duelOf[3]
-  equal(3, carolsDuel.forfeit, "whoever leaves is out")
-  equal(true, carolsDuel.winner ~= 3)
-  rollItOut(world, { alice, dave }, nil)
-  equal("idle", state.phase)
-  equal(state.champion, dave.rooms.room.state.champion)
-  equal(true, state.champion ~= 2 and state.champion ~= 3, "neither of them won")
-  equal(true, alice.rooms.room.members[2].away, "Bob never rolled")
-end
-
-function tests.DeathrollIsWatchedByWhoeverComesInLate()
-  local world, players = deathrollRoom({ "Bob", "Carol" })
-  local alice = players[1]
-  assert(alice.Deathroll.Start(alice.rooms.room))
-  world:Run(0.25)
-  local room = alice.rooms.room
-  -- A few rolls in
-  for _ = 1, 3 do
-    for _, player in ipairs(players) do
-      if player.Deathroll.MyRoll(player.rooms.room) then
-        player.Deathroll.Roll(player.rooms.room)
-      end
-    end
-    world:Run(0.25)
-  end
-  local frank = world:Add("Frank-Realm", { GUILD = true })
-  frank.rooms:Look()
-  world:Run(1)
-  assert(frank.rooms:Join(room.id))
-  world:Run(2)
-  local theirs = frank.rooms.room.state
-  equal("play", theirs.phase)
-  equal(#room.state.duels, #theirs.duels)
-  for index, duel in ipairs(room.state.duels) do
-    equal(duel.k, theirs.duels[index].k, "where duel " .. index .. " stands")
-    equal(duel.max, theirs.duels[index].max)
-    equal(duel.winner, theirs.duels[index].winner)
-  end
-  equal(scoresOf(alice), scoresOf(frank), "nobody has nothing because Frank came in")
-  equal(nil, frank.Deathroll.MyDuel(frank.rooms.room), "he watches this one")
-  equal("deathroll_watching", (frank.private.Rooms.Game("deathroll").status(frank.rooms.room)))
-  equal(false, frank.Deathroll.Roll(frank.rooms.room))
-
-  rollItOut(world, players)
-  equal(room.state.champion, frank.rooms.room.state.champion)
-  assert(alice.Deathroll.Start(room))
-  world:Run(0.25)
-  equal(2, #frank.rooms.room.state.duels, "four make two duels")
-  assert(frank.Deathroll.MyDuel(frank.rooms.room), "and he plays the next")
-end
-
-function tests.DeathrollPageRollsAndShowsTheBracket()
-  local world, players = deathrollRoom({ "Bob", "Carol" })
-  local alice = players[1]
-  Client.Install()
-  ForeverGames = { db = { profile = { sound = true } }, printed = {} }
-  function ForeverGames:Print(text)
-    self.printed[#self.printed + 1] = text
-  end
-  local private = alice.private
-  private.ICON = "icon"
-  private.rooms = alice.rooms
-  private.Transport = {
-    DisplayName = function(name)
-      return (name:gsub("%-.*", ""))
-    end,
-  }
-  private.MainFrame = {
-    Open = function() end,
-    Hide = function() end,
-    IsShown = function()
-      return true
-    end,
-    Refresh = function()
-      private.Party.Refresh()
-    end,
-  }
-  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Party.lua" }) do
-    assert(loadfile(file))(ADDON_NAME, private)
-  end
-  local Party = private.Party
-  Party.Init(UIParent)
-  Party.Open()
-  Party.Refresh()
-  local function shown(text)
-    return #Client.Find(function(widget)
-      return widget.text == text and widget:IsVisible()
-    end) > 0
-  end
-  equal(true, shown("game_deathroll"))
-  Client.Button("deathroll_start"):Fire("OnClick")
-  world:Run(0.25)
-  Party.Refresh()
-  equal("play", alice.rooms.room.state.phase)
-  equal(true, shown("deathroll_round"))
-
-  -- Roll whenever it is hers, from the page, until the tourney is over
-  for _ = 1, 2000 do
-    local room = alice.rooms.room
-    if alice.Deathroll.MyRoll(room) then
-      local button = Client.Button("deathroll_roll")
-      assert(button and button:IsVisible(), "the button to roll is there")
-      button:Fire("OnClick")
-    end
-    for _, player in ipairs(players) do
-      if player ~= alice and player.Deathroll.MyRoll(player.rooms.room) then
-        player.Deathroll.Roll(player.rooms.room)
-      end
-    end
-    world:Run(0.25)
-    Party.Refresh()
-    if room.state.phase == "idle" then
-      break
-    end
-  end
-  equal("idle", alice.rooms.room.state.phase)
-  equal(true, shown("deathroll_champion"))
-  assert(Client.Button("deathroll_again"))
-
-  -- Small, it is the duel and nothing else
-  Client.Button("party_small"):Fire("OnClick")
-  Party.Refresh()
-  equal(true, Party.IsOpen())
-  Client.Button("deathroll_again"):Fire("OnClick")
-  world:Run(0.25)
-  Party.Refresh()
-  equal("play", alice.rooms.room.state.phase)
+function tests.RoomShufflesTheSameWayForTheSameRolls()
+  local world = RoomWorld.New()
+  local alice = world:Add("Alice-Realm", { GUILD = true })
+  local room = assert(alice.rooms:Open("sketch", "GUILD"))
+  local list = room:Shuffle({ 1, 2, 3, 4, 5, 6 })
+  table.sort(list)
+  equal("1,2,3,4,5,6", table.concat(list, ","), "nothing lost or doubled")
+  world.seed = 0
+  local first = table.concat(room:Shuffle({ "a", "b", "c", "d" }), "")
+  world.seed = 0
+  equal(first, table.concat(room:Shuffle({ "a", "b", "c", "d" }), ""))
 end
 
 --- Questions to ask in a test, whatever the real ones are

@@ -584,9 +584,7 @@ local function receive(room, member, kind, fields)
       return
     end
     if round == 1 then
-      for _, other in pairs(room.members) do
-        other.score = 0
-      end
+      room:ClearScores()
       state.feed = {}
     end
     wipe(state)

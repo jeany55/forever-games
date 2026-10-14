@@ -46,13 +46,6 @@ solve on your own or the two of you together, both at once.
 - **Sketch** is the first of them: one of you is given three things to pick from and draws one,
   everyone else types what they think it is. The sooner you get it the more it is worth, and
   whoever drew gets something for everyone who did
-- **Deathroll** is a tourney of the tavern gamble, for a raid between pulls. The host starts it
-  and everyone in the room is drawn into a bracket. Two of you take turns to **Roll**, the first
-  from 1 to 1000 and each after that from 1 to what the other just rolled, and whoever rolls a 1
-  is out. Every duel of a round is rolled at once and the winners meet in the next round until
-  one is left. Don't roll in time and it is rolled for you. What the rolls start from and how
-  long you have for each are set when the room is opened. The rolls are the addon's and are
-  shown in the room, never in chat
 - **Trivia** is a quiz the way Kahoot plays one, for a raid while it waits. The host asks and
   everyone gets the same question at once, with two to four answers marked by raid icons. Click
   one, or press 1 to 4 with the cursor over the game. A right answer is worth up to 1000, less

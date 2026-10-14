@@ -165,10 +165,7 @@ local function ask(room, k)
       return a == "True" or (b ~= "True" and a < b)
     end)
   else
-    for index = #answers, 2, -1 do
-      local other = room:Random(index)
-      answers[index], answers[other] = answers[other], answers[index]
-    end
+    room:Shuffle(answers)
   end
   for index, answer in ipairs(answers) do
     if answer == right then
@@ -359,9 +356,7 @@ local function takeQuestion(room, fields, now)
     return
   end
   if k == 1 and ago == 0 then
-    for _, other in pairs(room.members) do
-      other.score = 0
-    end
+    room:ClearScores()
     state.streak = 0
   end
   state.phase, state.k, state.total, state.seconds = "ask", k, total, seconds
@@ -501,21 +496,11 @@ local function welcome(room, member)
       room:Tell(member, "REV", state.k, state.right)
       return
     end
-    local chunk = {}
-    local function flush()
-      if #chunk > 0 then
-        room:Tell(member, "PK", state.k, table.concat(chunk, "."))
-        chunk = {}
-      end
-    end
+    local entries = {}
     for n, given in pairs(state.picks) do
-      local entry = table.concat({ n, given.choice, given.ms, given.streak }, "/")
-      if #table.concat(chunk, ".") + #entry + 12 > Rooms.PAYLOAD then
-        flush()
-      end
-      chunk[#chunk + 1] = entry
+      entries[#entries + 1] = table.concat({ n, given.choice, given.ms, given.streak }, "/")
     end
-    flush()
+    room:TellList(member, "PK", entries, state.k)
   elseif state.phase == "held" then
     room:Tell(member, "HOLD", state.next, state.total)
   elseif state.phase == "over" then
