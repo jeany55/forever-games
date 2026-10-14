@@ -46,13 +46,19 @@ function Links.Text(game)
   return "[" .. TITLE .. ": " .. game.name .. "]"
 end
 
---- The game a link is to, going by what it says. Only a game two can play can be linked
+--- The game a link is to, going by what it says. Only a game two can play can be linked, or a
+--- game for a room (Engine/Rooms.lua), where the link is to the room whoever said it is host of
 --- @param name string
---- @return GameDefinition?
+--- @return GameDefinition|PartyGame?
 function Links.Find(name)
   name = name:lower()
   for _, game in ipairs(Games.List()) do
     if (game.name:lower() == name or game.id == name) and Games.CanSeat(game, 2) then
+      return game
+    end
+  end
+  for _, game in ipairs(private.Rooms.Games()) do
+    if game.name:lower() == name or game.id == name then
       return game
     end
   end
@@ -85,7 +91,7 @@ function Links.Parse(link)
 end
 
 --- Puts the link to a game where the player is typing, or starts a line of chat with it
---- @param game GameDefinition
+--- @param game GameDefinition|PartyGame
 function Links.Insert(game)
   local text = Links.Text(game)
   local insert = (ChatFrameUtil and ChatFrameUtil.InsertLink) or ChatEdit_InsertLink

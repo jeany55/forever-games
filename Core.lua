@@ -267,12 +267,27 @@ function ForeverGames:OnRoomEvent(event, subject)
   if event ~= "changed" then
     Party.Refresh()
   end
+  -- The front page has a way back to the room for as long as there is one
+  if event == "joined" or event == "closed" then
+    MainFrame.Refresh()
+  end
 end
 
 --- A link to a game someone left open was clicked
 --- @param host string Full name of whoever linked it
 --- @param gameId string
 function ForeverGames:OnLinkClicked(host, gameId)
+  -- A link to a game for a room is to the room
+  local party = Rooms.Game(gameId)
+  if party then
+    local ok, err = private.rooms:Knock(host, gameId)
+    if ok then
+      self:Print(L["room_knocking"]:format(Transport.DisplayName(host), party.name))
+    else
+      self:Print(L["err_" .. err])
+    end
+    return
+  end
   local game = Games.Get(gameId)
   local name = game and game.name or gameId
   if host == Transport.PlayerName() then

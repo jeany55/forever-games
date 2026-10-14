@@ -1924,6 +1924,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
+  equal("crazyeights,solitaire", idsOf(Games.Search(nil, "cards")), "a game for one goes with the others like it")
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
@@ -1998,8 +1999,9 @@ function tests.WizardNarrowsTheGamesDown()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
   world:AddPlayer("Bob-Realm")
-  openWizard(alice)
-  local count = #alice.private.Games.List()
+  local wizard = openWizard(alice)
+  -- The games for a room are listed with the rest
+  local count = #alice.private.Games.List() + #alice.private.Rooms.Games()
   equal(count, #offeredGames())
 
   local search = Client.Find(function(widget)
@@ -2024,6 +2026,26 @@ function tests.WizardNarrowsTheGamesDown()
   equal(true, nothingFound())
   type("")
   equal(count, #offeredGames())
+
+  -- One of those is for any number but one, and isn't set up here: it has a window of its own
+  clickGenre("genre_party")
+  equal("sketch", idsOf(offeredGames()))
+  clickGenre("genre_solo")
+  equal(0, #offeredGames())
+  clickGenre("wizard_all_games")
+  type("sketch")
+  equal("sketch", idsOf(offeredGames()))
+  local opened = 0
+  alice.private.Party = {
+    Open = function()
+      opened = opened + 1
+    end,
+  }
+  search:Fire("OnEnterPressed")
+  equal(1, opened)
+  equal(false, wizard.IsOpen())
+  wizard.Open()
+  type("")
 
   -- By genre, on top of whatever is typed
   clickGenre("genre_casual")
@@ -2056,6 +2078,9 @@ function tests.WizardKeepsFavouritesFirst()
   local favourites = ForeverGames.db.profile.favourites
   local byName = {}
   for _, game in ipairs(alice.private.Games.List()) do
+    byName[#byName + 1] = game.id
+  end
+  for _, game in ipairs(alice.private.Rooms.Games()) do
     byName[#byName + 1] = game.id
   end
   table.sort(byName)
@@ -2094,7 +2119,8 @@ function tests.WizardKeepsFavouritesFirst()
   clickGenre("wizard_all_games")
   equal(#byName, #offeredGames())
   clickGenre("wizard_two_players")
-  equal(#alice.private.Games.Search(nil, nil, 2), #offeredGames(), "all but the ones only played alone, or only by more")
+  local forTwo = #alice.private.Games.Search(nil, nil, 2) + #alice.private.Rooms.Games()
+  equal(forTwo, #offeredGames(), "all but the ones only played alone, or only by more")
   wizard.Open()
   equal(#byName, #offeredGames())
   equal("chess", offeredGames()[1].id, "a favourite stays one")
@@ -8382,7 +8408,7 @@ function tests.WizardStartsAGameForOneAtOnce()
   end)
   equal(1, #cards)
   equal("players_solo", cards[1].players.text)
-  equal("genre_solo", cards[1].genre.text)
+  equal("genre_cards", cards[1].genre.text)
 
   cards[1]:Fire("OnClick")
   equal(false, Wizard.IsOpen(), "nobody to pick")
@@ -13710,9 +13736,25 @@ function tests.RoomTakesInvitedGuestsOnly()
   equal(4, erin.rooms.room.count)
   equal(4, bob.rooms.room.count)
 
+  -- A link lets in whoever clicks it, once there is one
+  local gina = world:Add("Gina-Realm")
+  assert(gina.rooms:Knock("Alice-Realm", "sketch"))
+  world:Run(2)
+  equal(nil, gina.rooms.room)
+  equal("closed", gina.refused)
+  equal("own_room", select(2, alice.rooms:Knock("Alice-Realm", "sketch")))
+  equal("sketch", alice.rooms:Link().id)
+  assert(gina.rooms:Knock("Alice-Realm", "sketch"))
+  world:Run(3)
+  equal(id, gina.rooms.room.id)
+  equal("GUILD", gina.rooms.room.channel)
+  equal(true, gina.rooms.room.direct)
+  equal(5, bob.rooms.room.count)
+
   -- What the guest says reaches the guild through the host, and the other way round
   assert(alice.Sketch.Start(alice.rooms.room))
-  world:Run(1)
+  -- Two guests to whisper on top of the guild
+  world:Run(4)
   local drawer = sketchRound(world, { alice, bob, erin })
   equal(alice, drawer)
   -- The host whispers a guest everything, which takes a moment longer than saying it once
@@ -13720,7 +13762,7 @@ function tests.RoomTakesInvitedGuestsOnly()
   equal("draw", erin.rooms.room.state.phase)
   assert(erin.Sketch.Guess(erin.rooms.room, "a boat"))
   assert(bob.Sketch.Guess(bob.rooms.room, "a goat"))
-  world:Run(2)
+  world:Run(4)
   local function said(player)
     local texts = {}
     for _, entry in ipairs(player.rooms.room.state.feed) do
@@ -13908,37 +13950,94 @@ function tests.SketchSkipsWhoeverIsNotThere()
   equal("over", alice.rooms.room.state.phase)
 end
 
-function tests.PartyWindowShowsARoomBigAndSmall()
-  local world, alice, bob = sketchRoom()
+function tests.PartyPagesSetUpARoomAndPlayIt()
+  local world = RoomWorld.New()
+  local guild = { GUILD = true }
+  local alice, bob = world:Add("Alice-Realm", guild), world:Add("Bob-Realm", guild)
   Client.Install()
   ForeverGames = { db = { profile = { sound = true } }, printed = {} }
   function ForeverGames:Print(text)
     self.printed[#self.printed + 1] = text
   end
-  local private = alice.private
+  function UnitIsPlayer()
+    return false
+  end
+  local private, linked = alice.private, nil
   private.ICON = "icon"
   private.rooms = alice.rooms
   private.Transport = {
     DisplayName = function(name)
       return name
     end,
+    Normalize = function(name)
+      return name ~= "" and name or nil
+    end,
+  }
+  private.Links = {
+    Insert = function(game)
+      linked = game
+    end,
+  }
+  local mainShown = false
+  private.MainFrame = {
+    Open = function()
+      mainShown = true
+    end,
+    Hide = function()
+      mainShown = false
+    end,
+    IsShown = function()
+      return mainShown
+    end,
+    Refresh = function()
+      private.Party.Refresh()
+    end,
   }
   for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/Party.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   local Party = private.Party
-  Party.Open()
+  Party.Init(UIParent)
+  Party.Open("sketch")
   equal(true, Party.IsOpen())
+
+  -- Set up the way the wizard sets a game up: who for, and how it is played
+  local function audience(text)
+    return Client.Find(function(widget)
+      return widget.label ~= nil and widget.label.text == text and widget:IsVisible()
+    end)[1]
+  end
+  equal(1, audience("party_for_GUILD"):GetAlpha(), "Alice is in a guild")
+  equal(0.45, audience("party_for_GROUP"):GetAlpha(), "and in no group")
+  audience("party_for_GROUP"):Fire("OnClick")
+  equal("party_summary_GUILD", Client.Find(function(widget)
+    return widget.text == "party_summary_GUILD" and widget:IsVisible()
+  end)[1].text, "a room can't be for a group she isn't in")
+  audience("sketch_list_w"):Fire("OnClick")
+  Client.Button("party_open_room"):Fire("OnClick")
+  world:Run(1)
+  local room = alice.rooms.room
+  equal("w", room.state.list)
+  equal("GUILD", room.channel)
+  equal("w", ForeverGames.db.profile.rules.sketch.list, "and it is set up that way next time")
+  assert(bob.rooms:Join(room.id))
+  world:Run(2)
+  Party.Refresh()
+
+  -- Anyone at all can be let in by a link
+  Client.Button("party_link"):Fire("OnClick")
+  equal("sketch", linked.id)
+  equal(true, room.linked)
 
   Client.Button("sketch_start"):Fire("OnClick")
   world:Run(1)
   Party.Refresh()
   equal("pick", bob.rooms.room.state.phase)
-  local word = alice.rooms.room.state.choices[2]
+  local word = room.state.choices[2]
   Client.Button(word):Fire("OnClick")
   world:Run(1)
   Party.Refresh()
-  equal(word, alice.rooms.room.state.word)
+  equal(word, room.state.word)
 
   -- The sheet is the one thing on screen that takes the mouse down and watches it move
   local sheets = Client.Find(function(widget)
@@ -13957,14 +14056,36 @@ function tests.PartyWindowShowsARoomBigAndSmall()
   equal("12:100,50,200,150", pictureOf(alice))
   equal("12:100,50,200,150", pictureOf(bob))
 
-  -- Made small while it is the player's turn to draw it stays small: they asked
-  Client.Button("-"):Fire("OnClick")
-  equal(true, ForeverGames.db.profile.party.mini)
-  Party.Refresh()
-  assert(Client.Button("+"), "the way back")
+  -- Made small while it is her turn it stays small: she asked for it
+  Client.Button("party_small"):Fire("OnClick")
+  equal(false, mainShown, "the big window is out of the way")
+  equal(true, Party.IsOpen())
+  assert(Client.Button("party_grow"))
   world:Run(90)
   Party.Refresh()
-  equal(2, alice.rooms.room.state.drawer)
+  equal(2, room.state.drawer, "Bob's turn")
+  equal(false, mainShown)
+
+  -- On her next turn the room is whole again, and small after it
+  world:Run(16 + 82 + 8)
+  equal(1, room.state.drawer)
+  Party.Refresh()
+  equal(true, mainShown, "her turn")
+  assert(Client.Button("party_small"))
+  world:Run(16 + 82)
+  Party.Refresh()
+  equal(false, mainShown, "back in its corner")
+  assert(Client.Button("party_grow"))
+
+  -- Whole again by hand, and out of the room
+  Client.Button("party_grow"):Fire("OnClick")
+  equal(true, mainShown)
+  Client.Button("party_close"):Fire("OnClick")
+  world:Run(1)
+  Party.Refresh()
+  equal(nil, alice.rooms.room)
+  equal(nil, bob.rooms.room)
+  assert(Client.Button("party_open_room"), "back to setting one up")
 end
 
 -----------------------------

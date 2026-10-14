@@ -32,14 +32,16 @@ solve on your own or the two of you together, both at once.
   you type, to send to your party, your guild or anyone else. Everyone with the addon sees it
   as a link, and the first to click it plays you, by the rules you set. The game stays open for
   an hour
-- **Party games** on the front page, or `/fg party`, opens the window of the games that are played
-  in a room by whoever turns up. Open a room for your guild, for the group you are in, or for
-  nobody but the players you invite. Everyone on that channel with the addon is told, and can
-  come and go while the room lasts. Whoever opened it can type a name to ask in a friend who
-  isn't in the guild or the group, a few of them at most. The room is gone when its host leaves,
-  and nothing of it is kept. The small button in the corner of the window makes it small enough
-  to sit in a corner while you do something else: it shows only the game, and grows again when
-  the game needs you
+- The games that are played in a room by whoever turns up are in the list with the rest, under
+  **Party**. Picking one asks who the room is for, the way any game asks who you play: your
+  guild, the group you are in, or nobody but the players you invite. How the game is played is
+  set next to that, and under it are the rooms others have open, to join instead. Everyone on
+  the room's channel with the addon is told, and can come and go while it lasts
+- In a room, its host can invite a player by name, or put a link to the room in chat: whoever
+  clicks it comes in, in the guild or not. A few players from outside the guild or group can be
+  in a room at once. **Make Small** puts the game in a small window of its own for a corner of
+  the screen while you do something else, and it comes back whole when it is your turn. The
+  room is gone when its host leaves, and nothing of it is kept
 - **Sketch** is the first of them: one of you is given three things to pick from and draws one,
   everyone else types what they think it is. The sooner you get it the more it is worth, and
   whoever drew gets something for everyone who did
@@ -193,7 +195,8 @@ nothing: that catches mistakes in what the window does, not in how it looks.
     keys to write with, which say something small about themselves and can be dimmed or on
   - `Canvas.lua` a sheet to draw on with the mouse and to show a drawing on, at any size: lines
     in a handful of colours and widths, drawn over each other in the order they were made
-  - `Party.lua` the window a room is played in, whole or small enough for a corner
+  - `Party.lua` the pages a room is set up and played on, and the small window it can be put
+    in for a corner
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`

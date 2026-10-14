@@ -19,8 +19,11 @@
 --                                to whoever asked WHO and to a player the host wants in it
 --   JOIN:heard:version           to the host: let me in. `heard` is 1 if the room was heard of on
 --                                its channel, which is how the host knows the player is on it
+--   KNOCK:0:version:game         to the host, with 0 for the room: let me into your room of this
+--                                game. Sent by clicking a link to it in chat (Links.lua), which
+--                                lets in whoever clicks it, the way being asked in does
 --   NO:reason                    from the host: you can't come in
---   WELCOME:n:route              from the host: you are in, as member n. Route is "c" for a
+--   WELCOME:n:route:game:channel from the host: you are in, as member n. Route is "c" for a
 --                                member who talks on the channel and "d" for a guest
 --   IN:n:name:score[:n:name:score...]
 --                                from the host: these are in the room
@@ -79,7 +82,9 @@ local _, private = ...
 --- @field icon string?
 --- @field version number Bump when its messages change, players on different versions can't share a room
 --- @field lanes table<string, number>? Which line a kind of message waits in, 1 if it isn't named
---- @field new fun(room: Room): table What the game keeps about a room, from when it is opened or joined
+--- @field options GameOption[]? What whoever opens a room can set, as a game played at its own pace has them (Engine/Games.lua)
+--- @field new fun(room: Room, rules: table<string, any>?): table What the game keeps about a room, from when it is opened or joined. Whoever opened it is given how they set it up
+--- @field status (fun(room: Room): string?, boolean?)? How the game stands, in a few words for the header over it, and whether that is the player's to do something about
 --- @field receive fun(room: Room, member: RoomMember, kind: string, fields: string[]) A member said something. Also called for what the local player said
 --- @field tick (fun(room: Room, now: number))? Called several times a second
 --- @field welcome (fun(room: Room, member: RoomMember))? On the host: somebody came in and has to be told where the game is, see Room.Tell
@@ -99,6 +104,7 @@ local _, private = ...
 --- @field count number
 --- @field state table The game's
 --- @field invited table<string, boolean>? On the host: who was asked in
+--- @field linked boolean? On the host: there is a link to it in chat, and whoever clicks it gets in
 --- @field nextN number? On the host: the number the next member gets
 local Room = {}
 Room.__index = Room
@@ -106,7 +112,7 @@ Room.__index = Room
 --- @class Rooms
 --- @field env RoomsEnv
 --- @field room Room? The room the player is in
---- @field joining { id: string, host: string, at: number }? The room the player asked to be let into
+--- @field joining { id: string?, host: string, at: number, knock: string? }? The room the player asked to be let into, or the game a room is of when that was by a link
 --- @field known table<string, RoomInfo> Rooms heard of, by id
 local Rooms = {}
 Rooms.__index = Rooms
@@ -429,8 +435,9 @@ end
 --- Opens a room and says so on its channel
 --- @param gameId string
 --- @param channel RoomChannel? Who it is for. Without one it is for whoever the host asks in
+--- @param rules table<string, any>? How the game is set up, see PartyGame.options
 --- @return Room? room, string? error
-function Rooms:Open(gameId, channel)
+function Rooms:Open(gameId, channel, rules)
   local game = games[gameId]
   if not game then
     return nil, "unknown_game"
@@ -448,7 +455,7 @@ function Rooms:Open(gameId, channel)
   local room = self:newRoom(id, gameId, self.env.me, channel)
   room.invited, room.nextN, room.me = {}, 2, 1
   self:addMember(room, 1, self.env.me, 0)
-  room.state = game.new(room)
+  room.state = game.new(room, rules)
   self.room, self.joining = room, nil
   if channel then
     self:post(1, channel, nil, self:openText(room, false))
@@ -480,6 +487,35 @@ function Rooms:Invite(name)
   end
   room.invited[name] = true
   self:post(1, nil, name, self:openText(room, true))
+  return true
+end
+
+--- On the host: whoever clicks a link to the room in chat may come in from now on
+--- @return PartyGame? game What to link to, nil if the player has no room
+function Rooms:Link()
+  local room = self.room
+  if not room or not room:IsHost() then
+    return nil
+  end
+  room.linked = true
+  return games[room.game]
+end
+
+--- Asks to be let into a room somebody linked in chat
+--- @param host string Full name of whoever linked it
+--- @param gameId string
+--- @return boolean ok, string? error
+function Rooms:Knock(host, gameId)
+  local game = games[gameId]
+  if not game then
+    return false, "unknown_game"
+  elseif host == self.env.me then
+    return false, "own_room"
+  elseif self.room then
+    return false, "in_room"
+  end
+  self.joining = { host = host, knock = gameId, at = self.env.now() }
+  self:post(1, nil, host, PREFIX .. table.concat({ "0", "KNOCK", 0, game.version, gameId }, ":"))
   return true
 end
 
@@ -602,7 +638,8 @@ end
 --- @param room Room
 --- @param sender string
 --- @param fields string[]
-function Rooms:onJoin(room, sender, fields)
+--- @param linked boolean? They clicked a link to the room
+function Rooms:onJoin(room, sender, fields, linked)
   local game = games[room.game]
   local function refuse(reason)
     self:post(1, nil, sender, PREFIX .. room.id .. ":NO:" .. reason)
@@ -617,7 +654,7 @@ function Rooms:onJoin(room, sender, fields)
     end
     if tonumber(fields[2]) ~= game.version then
       return refuse("version")
-    elseif direct and not room.invited[sender] then
+    elseif direct and not room.invited[sender] and not linked then
       return refuse("closed")
     elseif room.count >= MAX_MEMBERS or (direct and guests >= MAX_GUESTS) then
       return refuse("full")
@@ -628,7 +665,8 @@ function Rooms:onJoin(room, sender, fields)
   end
   -- Somebody who was in already has lost the room, to a reload perhaps, and is told it all again
 
-  self:post(1, nil, sender, PREFIX .. table.concat({ room.id, "WELCOME", member.n, member.direct and "d" or "c" }, ":"))
+  local welcome = { room.id, "WELCOME", member.n, member.direct and "d" or "c", room.game, CHANNEL_CODES[room.channel] or "-" }
+  self:post(1, nil, sender, PREFIX .. table.concat(welcome, ":"))
   local chunk = {}
   local function flush()
     if #chunk > 0 then
@@ -707,12 +745,23 @@ function Rooms:Handle(sender, text, channel)
   elseif kind == "OPEN" then
     self:onOpen(sender, id, fields, channel)
     return true
+  elseif kind == "KNOCK" then
+    if not channel and hosting and room.linked and fields[3] == room.game then
+      self:onJoin(room, sender, fields, true)
+    elseif not channel then
+      self:post(1, nil, sender, PREFIX .. "0:NO:closed")
+    end
+    return true
   end
 
   local joining = self.joining
-  if joining and joining.id == id and joining.host == sender and (kind == "NO" or kind == "WELCOME") then
+  local answers = joining and joining.host == sender and (joining.id == id or joining.knock)
+  if answers and (kind == "NO" or kind == "WELCOME") then
     self.joining = nil
     local info, n = self.known[id], tonumber(fields[1])
+    if joining.knock and kind == "WELCOME" and fields[3] == joining.knock then
+      info = { game = fields[3], channel = CHANNELS[fields[4]] }
+    end
     if kind == "NO" or not info or not n or room then
       if fields[1] == "closed" then
         self.known[id] = nil

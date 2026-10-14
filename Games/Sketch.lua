@@ -730,6 +730,36 @@ local function welcome(room, member)
   end
 end
 
+--- @param room Room
+--- @param n number?
+--- @return string
+local function nameOf(room, n)
+  local member = room.members[n]
+  return member and private.Transport.DisplayName(member.name) or "?"
+end
+
+--- How the game stands, for the header over it and for the small window
+--- @param room Room
+--- @return string text, boolean urgent It is the player's to do something
+local function statusOf(room)
+  local state = room.state
+  local mine, drawer = state.drawer == room.me, nameOf(room, state.drawer)
+  if state.phase == "idle" then
+    if room:IsHost() then
+      return L[room.count < 2 and "sketch_alone" or "sketch_idle_host"], false
+    end
+    return L["sketch_idle"]:format(private.Transport.DisplayName(room.host)), false
+  elseif state.phase == "pick" then
+    return mine and L["sketch_pick"] or L["sketch_picking"]:format(drawer), mine
+  elseif state.phase == "draw" then
+    if mine then
+      return L["sketch_draw_this"], true
+    end
+    return state.got[room.me] and L["sketch_you_got"] or L["sketch_drawing"]:format(drawer), false
+  end
+  return state.word and L["sketch_was"]:format(state.word) or L["sketch_skipped"], false
+end
+
 Rooms.Register({
   id = "sketch",
   name = L["game_sketch"],
@@ -738,12 +768,34 @@ Rooms.Register({
   version = 1,
   -- The picture waits behind everything the game can't do without
   lanes = { D = 2 },
-  new = function()
+  options = {
+    {
+      id = "length",
+      name = L["sketch_option_length"],
+      description = L["sketch_option_length_tip"],
+      choices = Sketch.LENGTHS,
+      default = USUAL_LENGTH,
+      label = function(value)
+        return L["sketch_seconds"]:format(value)
+      end,
+    },
+    {
+      id = "list",
+      name = L["sketch_option_words"],
+      description = L["sketch_option_words_tip"],
+      choices = Sketch.LISTS,
+      default = "b",
+      label = function(value)
+        return L["sketch_list_" .. value]
+      end,
+    },
+  },
+  new = function(_, rules)
     return {
       phase = "idle",
       round = 0,
-      length = USUAL_LENGTH,
-      list = "b",
+      length = rules and rules.length or USUAL_LENGTH,
+      list = rules and rules.list or "b",
       ops = {},
       top = 0,
       strokes = {},
@@ -758,6 +810,7 @@ Rooms.Register({
   tick = tick,
   left = left,
   welcome = welcome,
+  status = statusOf,
   busy = function(room)
     local state = room.state
     return state.drawer == room.me and (state.phase == "pick" or state.phase == "draw")
@@ -779,6 +832,10 @@ Rooms.Register({
 -----------------------------
 -- View
 -----------------------------
+-- The sheet on the left as big as the room allows, and down its right who is playing, what they
+-- guessed and where the player guesses. Over the sheet what it is (as far as the player may
+-- know) and the time that is left, under it what whoever draws draws with. Made small it is the
+-- sheet, the last thing said and the guess.
 
 --- @class SketchView
 --- @field frame Frame
@@ -786,44 +843,29 @@ local SketchView = {}
 SketchView.__index = SketchView
 private.SketchView = SketchView
 
-local TOP, TOOLS, GAP = 26, 26, 6
-local FEED_WIDTH, FEED_LINE, GUESS_HEIGHT = 230, 13, 20
+-- The line over the sheet, the tools under it, and the space between things
+local HINT, TOOLS, GAP = 28, 26, 8
+-- The column down the right: never narrower or wider than this, and how much of it is for who is
+-- playing
+local COLUMN_LEAST, COLUMN_MOST, ROSTER_SHARE = 220, 300, 0.42
+local FEED_LINE, GUESS_HEIGHT = 15, 24
+local SMALL_HINT = 22
 local DARK = { 0.12, 0.12, 0.12 }
-
---- @param room Room
---- @param n number?
---- @return string
-local function nameOf(room, n)
-  local member = room.members[n]
-  return member and private.Transport.DisplayName(member.name) or "?"
-end
-
---- @param value any
---- @param list any[]
---- @return any The one after it, the first after the last
-local function after(value, list)
-  for index, other in ipairs(list) do
-    if other == value then
-      return list[index % #list + 1]
-    end
-  end
-  return list[1]
-end
+local SHEET = Sketch.WIDTH / Sketch.HEIGHT
 
 --- @param parent Frame
 --- @return SketchView
 function SketchView.New(parent)
   local Widgets, Canvas = private.Widgets, private.Canvas
-  local self = setmetatable({ color = 1, width = 2 }, SketchView)
+  local self = setmetatable({ color = 1, pen = 2 }, SketchView)
   local frame = CreateFrame("Frame", nil, parent)
   self.frame = frame
 
-  self.status = Widgets.Label(frame, "GameFontHighlightSmall")
-  self.status:SetPoint("TOPLEFT", 2, -6)
-  self.status:SetTextColor(unpack(Widgets.GREY))
-  self.timer = Widgets.Label(frame, "GameFontNormalLarge")
   self.hint = Widgets.Label(frame, "GameFontHighlightLarge")
   self.hint:SetJustifyH("CENTER")
+  self.hint:SetWordWrap(false)
+  self.timer = Widgets.Label(frame, "GameFontNormalLarge")
+  self.timer:SetJustifyH("RIGHT")
 
   local canvas = Canvas.New(frame, {
     width = Sketch.WIDTH,
@@ -833,9 +875,8 @@ function SketchView.New(parent)
     paper = Sketch.COLORS[Sketch.PAPER],
   })
   self.canvas = canvas
-  canvas.frame:SetPoint("TOPLEFT", 0, -TOP)
   canvas.onPen = function(x, y)
-    local drawing = Sketch.Pen(self.room, self.color, self.width, x, y)
+    local drawing = Sketch.Pen(self.room, self.color, self.pen, x, y)
     canvas:Render(self.room.state.strokes)
     return drawing
   end
@@ -847,62 +888,60 @@ function SketchView.New(parent)
   canvas.onLift = function()
     Sketch.Lift(self.room)
   end
-  self.timer:SetPoint("BOTTOMRIGHT", canvas.frame, "TOPRIGHT", -2, 4)
-  self.hint:SetPoint("BOTTOM", canvas.frame, "TOP", 0, 4)
+  -- A hairline around the sheet, so that its edge is seen on the dark
+  local edge = Widgets.Panel(frame)
+  edge:SetPoint("TOPLEFT", canvas.frame, "TOPLEFT", -1, 1)
+  edge:SetPoint("BOTTOMRIGHT", canvas.frame, "BOTTOMRIGHT", 1, -1)
+  edge:SetBackdropColor(0, 0, 0, 0)
+  edge:SetBackdropBorderColor(1, 0.82, 0, 0.25)
+  edge:SetFrameLevel(canvas.frame:GetFrameLevel() + 1)
+  edge:EnableMouse(false)
 
   -- What lies over the sheet while nothing is drawn on it
   local overlay = CreateFrame("Frame", nil, canvas.frame)
   overlay:SetAllPoints()
   overlay:SetFrameLevel(canvas.frame:GetFrameLevel() + 5)
   self.overlay = overlay
-  self.notice = Widgets.Label(overlay, "GameFontNormalLarge")
-  self.notice:SetPoint("TOP", 0, -14)
-  self.notice:SetPoint("LEFT", 8, 0)
-  self.notice:SetPoint("RIGHT", -8, 0)
+  self.notice = Widgets.Label(overlay, "GameFontNormalHuge")
+  self.notice:SetPoint("LEFT", 16, 0)
+  self.notice:SetPoint("RIGHT", -16, 0)
   self.notice:SetJustifyH("CENTER")
   self.notice:SetTextColor(unpack(DARK))
   self.notice:SetShadowColor(0, 0, 0, 0)
+  self.detail = Widgets.Label(overlay, "GameFontHighlight")
+  self.detail:SetPoint("TOP", self.notice, "BOTTOM", 0, -8)
+  self.detail:SetPoint("LEFT", 16, 0)
+  self.detail:SetPoint("RIGHT", -16, 0)
+  self.detail:SetJustifyH("CENTER")
+  self.detail:SetTextColor(0.35, 0.35, 0.35)
+  self.detail:SetShadowColor(0, 0, 0, 0)
 
   self.picks = {}
   for index = 1, 3 do
-    local pick = Widgets.Button(overlay, "", 170, 26)
-    pick:SetPoint("TOP", 0, -24 - index * 32)
+    local pick = Widgets.Button(overlay, "", 200, 30)
+    pick:SetNormalFontObject("GameFontNormalLarge")
+    pick:SetHighlightFontObject("GameFontHighlightLarge")
     pick:SetScript("OnClick", function()
       Sketch.Choose(self.room, index)
     end)
     self.picks[index] = pick
   end
-
-  self.start = Widgets.Button(overlay, L["sketch_start"], 170, 30)
-  self.start:SetPoint("TOP", 0, -56)
+  self.start = Widgets.Button(overlay, L["sketch_start"], 200, 34)
+  self.start:SetNormalFontObject("GameFontNormalLarge")
+  self.start:SetHighlightFontObject("GameFontHighlightLarge")
   self.start:SetScript("OnClick", function()
     Sketch.Start(self.room)
-  end)
-  self.length = Widgets.Button(overlay, "", 170, 22)
-  self.length:SetPoint("TOP", self.start, "BOTTOM", 0, -10)
-  self.length:SetScript("OnClick", function()
-    local state = self.room.state
-    state.length = after(state.length, Sketch.LENGTHS)
-    self:Update(self.room)
-  end)
-  self.list = Widgets.Button(overlay, "", 170, 22)
-  self.list:SetPoint("TOP", self.length, "BOTTOM", 0, -4)
-  self.list:SetScript("OnClick", function()
-    local state = self.room.state
-    state.list = after(state.list, Sketch.LISTS)
-    self:Update(self.room)
   end)
 
   -- What whoever draws draws with
   local tools = CreateFrame("Frame", nil, frame)
   tools:SetHeight(TOOLS)
-  tools:SetPoint("TOPLEFT", canvas.frame, "BOTTOMLEFT", 0, -GAP)
   self.tools = tools
   self.swatches, self.nibs = {}, {}
   for index, color in ipairs(Sketch.COLORS) do
     local swatch = CreateFrame("Button", nil, tools)
     swatch:SetSize(20, 20)
-    swatch:SetPoint("LEFT", (index - 1) * 23 + 2, 0)
+    swatch:SetPoint("LEFT", (index - 1) * 24 + 2, 0)
     swatch.edge = swatch:CreateTexture(nil, "BACKGROUND")
     swatch.edge:SetPoint("TOPLEFT", -2, 2)
     swatch.edge:SetPoint("BOTTOMRIGHT", 2, -2)
@@ -912,32 +951,40 @@ function SketchView.New(parent)
     swatch:SetScript("OnClick", function()
       self.color = index
       -- Rubbing out wants the widest there is, and drawing again doesn't
-      self.width = index == Sketch.PAPER and #Sketch.WIDTHS or (self.width == #Sketch.WIDTHS and 2 or self.width)
+      self.pen = index == Sketch.PAPER and #Sketch.WIDTHS or (self.pen == #Sketch.WIDTHS and 2 or self.pen)
       self:paintTools()
     end)
+    if index == Sketch.PAPER then
+      swatch:SetScript("OnEnter", function(button)
+        GameTooltip:SetOwner(button, "ANCHOR_TOP")
+        GameTooltip:SetText(L["sketch_rubber"])
+        GameTooltip:Show()
+      end)
+      swatch:SetScript("OnLeave", GameTooltip_Hide)
+    end
     self.swatches[index] = swatch
   end
   for index in ipairs(Sketch.WIDTHS) do
     local nib = CreateFrame("Button", nil, tools)
-    nib:SetSize(22, 20)
-    nib:SetPoint("LEFT", #Sketch.COLORS * 23 + 12 + (index - 1) * 25, 0)
+    nib:SetSize(24, 22)
+    nib:SetPoint("LEFT", #Sketch.COLORS * 24 + 14 + (index - 1) * 27, 0)
     nib.edge = nib:CreateTexture(nil, "BACKGROUND")
     nib.edge:SetAllPoints()
     local dot = Widgets.Icon(nib, "Interface\\AddOns\\ForeverGames\\Images\\Board\\dot", 3 + index * 4)
     dot:SetPoint("CENTER")
     nib:SetScript("OnClick", function()
-      self.width = index
+      self.pen = index
       self:paintTools()
     end)
     self.nibs[index] = nib
   end
-  local undo = Widgets.Button(tools, L["sketch_undo"], 62, 20)
-  undo:SetPoint("LEFT", self.nibs[#self.nibs], "RIGHT", 12, 0)
+  local undo = Widgets.Button(tools, L["sketch_undo"], 64, 22)
+  undo:SetPoint("LEFT", self.nibs[#self.nibs], "RIGHT", 14, 0)
   undo:SetScript("OnClick", function()
     Sketch.Undo(self.room)
     self:Update(self.room)
   end)
-  local clear = Widgets.Button(tools, L["sketch_clear"], 62, 20)
+  local clear = Widgets.Button(tools, L["sketch_clear"], 64, 22)
   clear:SetPoint("LEFT", undo, "RIGHT", 4, 0)
   clear:SetScript("OnClick", function()
     Sketch.Clear(self.room)
@@ -945,20 +992,23 @@ function SketchView.New(parent)
   end)
   self:paintTools()
 
-  self.stop = Widgets.Button(frame, L["sketch_stop"], 90, 20)
-  self.stop:SetPoint("TOPRIGHT", canvas.frame, "BOTTOMRIGHT", 0, -GAP - 3)
+  -- Whoever opened the room ends the game from where the tools are, when they aren't drawing
+  self.stop = Widgets.Button(frame, L["sketch_stop"], 110, 22)
+  self.stop:SetPoint("RIGHT", tools, "RIGHT", 0, 0)
   self.stop:SetScript("OnClick", function()
     Sketch.Stop(self.room)
   end)
 
-  -- What everybody guessed, and where the player does
+  -- Down the right: who is playing, what everybody guessed, and where the player does
+  self.roster = private.Party.Roster(frame)
   self.feedPanel = Widgets.Panel(frame)
+  local feedTitle = Widgets.Label(self.feedPanel, "GameFontNormal", L["sketch_guesses"])
+  feedTitle:SetPoint("TOPLEFT", 8, -8)
+  self.feedTitle = feedTitle
   self.feed = Widgets.Label(self.feedPanel, "GameFontHighlightSmall")
-  self.feed:SetPoint("TOPLEFT", 6, -4)
-  self.feed:SetPoint("BOTTOMRIGHT", -6, 4)
   self.feed:SetJustifyV("BOTTOM")
   self.feed:SetWordWrap(false)
-  self.feed:SetSpacing(2)
+  self.feed:SetSpacing(3)
 
   local guess = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
   guess:SetHeight(GUESS_HEIGHT)
@@ -975,7 +1025,12 @@ function SketchView.New(parent)
     end
   end)
   guess:SetScript("OnEscapePressed", guess.ClearFocus)
+  guess:SetScript("OnTextChanged", function(box)
+    self.guessHint:SetShown((box:GetText() or "") == "")
+  end)
   self.guess = guess
+  self.guessHint = Widgets.Label(guess, "GameFontDisable", L["sketch_guess_here"])
+  self.guessHint:SetPoint("LEFT", 2, 0)
   return self
 end
 
@@ -986,7 +1041,7 @@ function SketchView:paintTools()
     swatch.edge:SetColorTexture(1, on and 0.82 or 1, on and 0 or 1, on and 1 or 0.15)
   end
   for index, nib in ipairs(self.nibs) do
-    local on = index == self.width
+    local on = index == self.pen
     nib.edge:SetColorTexture(1, 0.82, 0, on and 0.5 or 0.08)
   end
 end
@@ -997,35 +1052,80 @@ end
 function SketchView:Layout(width, height, compact)
   self.compact = compact
   self.frame:SetSize(width, height)
-  local sheet = Sketch.WIDTH / Sketch.HEIGHT
-  local feed, guess = self.feedPanel, self.guess
-  feed:ClearAllPoints()
-  guess:ClearAllPoints()
-  if compact then
-    local room = height - TOP - GAP * 2 - GUESS_HEIGHT - FEED_LINE - 8
-    local sheetWidth = math.floor(math.min(width, room * sheet))
-    self.canvas:Layout(sheetWidth)
-    self.canvas.frame:ClearAllPoints()
-    self.canvas.frame:SetPoint("TOP", 0, -TOP)
-    -- Only the last thing that was said
-    feed:SetPoint("TOPLEFT", self.canvas.frame, "BOTTOMLEFT", 0, -GAP)
-    feed:SetPoint("TOPRIGHT", self.canvas.frame, "BOTTOMRIGHT", 0, -GAP)
-    feed:SetHeight(FEED_LINE + 8)
-    guess:SetPoint("TOPLEFT", feed, "BOTTOMLEFT", 6, -GAP)
-    guess:SetPoint("TOPRIGHT", feed, "BOTTOMRIGHT", 0, -GAP)
-  else
-    local sheetWidth = math.floor(math.min(width - FEED_WIDTH - GAP, (height - TOP - TOOLS - GAP * 2) * sheet))
-    self.canvas:Layout(sheetWidth)
-    self.canvas.frame:ClearAllPoints()
-    self.canvas.frame:SetPoint("TOPLEFT", 0, -TOP)
-    feed:SetPoint("TOPLEFT", self.canvas.frame, "TOPRIGHT", GAP, 0)
-    feed:SetPoint("BOTTOMRIGHT", self.frame, "TOPRIGHT", 0, -TOP - self.canvas.frame:GetHeight() + GUESS_HEIGHT + GAP)
-    guess:SetPoint("TOPLEFT", feed, "BOTTOMLEFT", 6, -GAP)
-    guess:SetPoint("TOPRIGHT", feed, "BOTTOMRIGHT", 0, -GAP)
+  local canvas, feed, guess, hint, timer = self.canvas.frame, self.feedPanel, self.guess, self.hint, self.timer
+  for _, region in ipairs({ canvas, feed, guess, hint, timer, self.tools }) do
+    region:ClearAllPoints()
   end
-  self.tools:SetWidth(self.canvas.frame:GetWidth())
-  local feedHeight = self.canvas.frame:GetHeight() - GUESS_HEIGHT - GAP - 8
-  self.feedLines = compact and 1 or math.max(1, math.floor(feedHeight / (FEED_LINE + 2)))
+  self.roster.frame:SetShown(not compact)
+  self.feedTitle:SetShown(not compact)
+
+  if compact then
+    -- The sheet, a line of what was said last, and the guess
+    local below = GAP + FEED_LINE + 10 + GAP + GUESS_HEIGHT
+    local sheetWidth = math.floor(math.min(width, (height - SMALL_HINT - below) * SHEET))
+    self.canvas:Layout(sheetWidth)
+    canvas:SetPoint("TOP", 0, -SMALL_HINT)
+    hint:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", 2, 5)
+    hint:SetPoint("BOTTOMRIGHT", canvas, "TOPRIGHT", -40, 5)
+    timer:SetPoint("BOTTOMRIGHT", canvas, "TOPRIGHT", -2, 4)
+    feed:SetPoint("TOPLEFT", canvas, "BOTTOMLEFT", 0, -GAP)
+    feed:SetPoint("TOPRIGHT", canvas, "BOTTOMRIGHT", 0, -GAP)
+    feed:SetHeight(FEED_LINE + 10)
+    self.feed:ClearAllPoints()
+    self.feed:SetPoint("TOPLEFT", 8, -5)
+    self.feed:SetPoint("BOTTOMRIGHT", -8, 5)
+    guess:SetPoint("TOPLEFT", feed, "BOTTOMLEFT", 6, -GAP)
+    guess:SetPoint("TOPRIGHT", feed, "BOTTOMRIGHT", 0, -GAP)
+    self.feedLines = 1
+  else
+    -- As big a sheet as there is room for, with a column next to it that is neither cramped
+    -- nor wider than it needs to be. Whatever is over goes either side of the two, evenly
+    local sheetHeight = height - HINT - GAP - TOOLS
+    local sheetWidth = math.floor(sheetHeight * SHEET)
+    local column = width - sheetWidth - GAP
+    if column < COLUMN_LEAST then
+      column = COLUMN_LEAST
+      sheetWidth = width - column - GAP
+    end
+    column = math.min(column, COLUMN_MOST)
+    self.canvas:Layout(sheetWidth)
+    local left = math.floor((width - sheetWidth - GAP - column) / 2)
+    canvas:SetPoint("TOPLEFT", left, -HINT)
+    hint:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", 60, 7)
+    hint:SetPoint("BOTTOMRIGHT", canvas, "TOPRIGHT", -60, 7)
+    timer:SetPoint("BOTTOMRIGHT", canvas, "TOPRIGHT", -2, 6)
+    self.tools:SetPoint("TOPLEFT", canvas, "BOTTOMLEFT", 0, -GAP)
+    self.tools:SetPoint("TOPRIGHT", canvas, "BOTTOMRIGHT", 0, -GAP)
+
+    -- The column runs from the top of everything to the bottom of the tools
+    local columnHeight = HINT + canvas:GetHeight() + GAP + TOOLS
+    local rosterHeight = math.floor(columnHeight * ROSTER_SHARE)
+    self.roster:Layout(column, rosterHeight)
+    self.roster.frame:ClearAllPoints()
+    self.roster.frame:SetPoint("TOPLEFT", left + sheetWidth + GAP, 0)
+    feed:SetPoint("TOPLEFT", self.roster.frame, "BOTTOMLEFT", 0, -GAP)
+    feed:SetSize(column, columnHeight - rosterHeight - GAP * 2 - GUESS_HEIGHT)
+    self.feed:ClearAllPoints()
+    self.feed:SetPoint("TOPLEFT", 8, -28)
+    self.feed:SetPoint("BOTTOMRIGHT", -8, 6)
+    guess:SetPoint("TOPLEFT", feed, "BOTTOMLEFT", 6, -GAP)
+    guess:SetPoint("TOPRIGHT", feed, "BOTTOMRIGHT", 0, -GAP)
+    self.feedLines = math.max(1, math.floor((feed:GetHeight() - 34) / (FEED_LINE + 3)))
+  end
+
+  -- The choices and the button over the sheet stand in its middle, whatever its size
+  local middle = canvas:GetHeight() / 2
+  self.notice:ClearAllPoints()
+  self.notice:SetPoint("TOP", 0, -math.max(12, middle - (compact and 70 or 100)))
+  self.notice:SetPoint("LEFT", 16, 0)
+  self.notice:SetPoint("RIGHT", -16, 0)
+  self.notice:SetFontObject(compact and "GameFontNormalLarge" or "GameFontNormalHuge")
+  for index, pick in ipairs(self.picks) do
+    pick:ClearAllPoints()
+    pick:SetPoint("TOP", self.notice, "BOTTOM", 0, -(compact and 8 or 18) - (index - 1) * (compact and 32 or 38))
+  end
+  self.start:ClearAllPoints()
+  self.start:SetPoint("TOP", self.detail, "BOTTOM", 0, compact and -10 or -22)
   self.feedSeen = nil
 end
 
@@ -1054,8 +1154,8 @@ local function feedText(room, lines)
 end
 
 --- @param room Room
---- @return string? Who is ahead, once there is something to be ahead by
-local function leader(room)
+--- @return string? Who won, once there was a game to win
+local function winner(room)
   local best
   for _, member in ipairs(room:Members()) do
     if member.score > 0 and (not best or member.score > best.score) then
@@ -1072,57 +1172,60 @@ function SketchView:Update(room)
   local state = room.state
   local phase, mine, host = state.phase, state.drawer == room.me, room:IsHost()
   local drawing = Sketch.Drawing(room)
-  local drawer = nameOf(room, state.drawer)
+  local status = statusOf(room)
 
-  local status, notice = "", ""
-  if phase == "idle" then
-    status = host and L["sketch_idle_host"] or L["sketch_idle"]:format(private.Transport.DisplayName(room.host))
-    notice = leader(room) or (host and (room.count < 2 and L["sketch_alone"] or L["sketch_ready"]:format(room.count)) or status)
-  elseif phase == "pick" then
-    status = mine and L["sketch_pick"] or L["sketch_picking"]:format(drawer)
-    notice = status
-  elseif phase == "draw" then
-    status = mine and L["sketch_draw_this"] or (state.got[room.me] and L["sketch_you_got"] or L["sketch_drawing"]:format(drawer))
-  else
-    status = state.word and L["sketch_was"]:format(state.word) or L["sketch_skipped"]
-  end
-  self.status:SetText(self.compact and "" or status)
-  self.notice:SetText(notice)
-  self.hint:SetText((phase == "draw" or phase == "over") and Sketch.Hint(room) or (self.compact and status or ""))
-  self.hint:SetFontObject((self.compact or #(Sketch.Hint(room) or "") > 44) and "GameFontHighlight" or "GameFontHighlightLarge")
-
+  -- Over the sheet: the word as far as the player may know it, and small, how the game stands
+  local hint = (phase == "draw" or phase == "over") and Sketch.Hint(room) or nil
+  self.hint:SetText(hint or (self.compact and status or ""))
+  self.hint:SetFontObject((self.compact or not hint or #hint > 40) and "GameFontHighlight" or "GameFontHighlightLarge")
   local left = Sketch.TimeLeft(room)
   self.timer:SetText(left and math.ceil(left) or "")
   self.timer:SetTextColor(unpack(left and left <= 10 and Widgets.RED or Widgets.GOLD))
 
   self.canvas:Render(state.strokes)
   self.canvas:SetInk(drawing)
+
+  -- On the sheet while nothing is drawn on it: what is about to happen
   self.overlay:SetShown(phase == "idle" or phase == "pick")
+  local notice, detail = status, ""
+  if phase == "idle" then
+    notice = state.round > 0 and (winner(room) or L["sketch_feed_stopped"]) or L["game_sketch"]
+    detail = L["sketch_rules_line"]:format(state.length, L["sketch_list_" .. state.list])
+    if not host then
+      detail = status
+    elseif room.count < 2 then
+      detail = L["sketch_alone"]
+    end
+  end
+  self.notice:SetText(notice)
+  self.detail:SetText(detail)
   for index, pick in ipairs(self.picks) do
-    local word = phase == "pick" and state.choices and state.choices[index]
+    local word = phase == "pick" and mine and state.choices and state.choices[index]
     pick:SetShown(word ~= nil and word ~= false)
     if word then
       pick:SetText(word)
     end
   end
-  local setup = phase == "idle" and host
-  self.start:SetShown(setup)
+  self.start:SetShown(phase == "idle" and host)
   self.start:SetEnabled(room.count >= 2)
-  self.length:SetShown(setup)
-  self.list:SetShown(setup)
-  self.length:SetText(L["sketch_length"]:format(state.length))
-  self.list:SetText(L["sketch_list_" .. state.list])
-  self.tools:SetShown(drawing and not self.compact)
-  self.stop:SetShown(host and phase ~= "idle" and not self.compact)
+  self.start:SetText(L[state.round > 0 and "sketch_again" or "sketch_start"])
 
+  self.tools:SetShown(drawing and not self.compact)
+  self.stop:SetShown(host and phase ~= "idle" and not drawing and not self.compact)
+
+  if not self.compact then
+    self.roster:Update(room)
+  end
   local last = state.feed[#state.feed]
   if self.feedSeen ~= last or self.feedCount ~= room.count then
     self.feedSeen, self.feedCount = last, room.count
-    self.feed:SetText(feedText(room, self.feedLines or 1))
+    local text = feedText(room, self.feedLines or 1)
+    self.feed:SetText(text ~= "" and text or (self.compact and "" or "|cff808080" .. L["sketch_no_guesses"] .. "|r"))
   end
   local guessing = phase == "draw" and not mine and not state.got[room.me]
   self.guess:SetEnabled(guessing)
-  self.guess:SetAlpha(guessing and 1 or 0.35)
+  self.guess:SetAlpha(guessing and 1 or 0.4)
+  self.guessHint:SetText(L[guessing and "sketch_guess_here" or (state.got[room.me] and phase == "draw" and "sketch_you_got" or "sketch_guess_wait")])
   if not guessing and self.guess:HasFocus() then
     self.guess:ClearFocus()
   end

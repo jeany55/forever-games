@@ -1531,11 +1531,8 @@ local function createHomePanel(body)
   home.wisp = createWisp(crest, crest)
   home.wisp:SetFrameLevel(home.shimmer:GetFrameLevel() + 1)
 
-  local rule = createRule(home, 340, Widgets.GOLD, 0.7)
-  rule:SetPoint("TOP", crest, "BOTTOM", 0, -4)
-
   home.presence = createPresence(home)
-  home.presence:SetPoint("TOP", rule, "BOTTOM", 0, -10)
+  home.presence:SetPoint("TOP", crest, "BOTTOM", 0, -14)
   -- It shows things that change with time alone: the "looking" message after a refresh and
   -- whether Refresh can be pressed again
   local sinceUpdate = 0
@@ -1577,8 +1574,9 @@ local function createHomePanel(body)
     button:SetHighlightFontObject("GameFontHighlightLarge")
   end
 
-  -- The games for a room have a window of their own, see GUI/Party.lua
-  home.party = Widgets.Button(home, L["party_open"], 130, 26)
+  -- The games for a room have a window of their own, see GUI/Party.lua. They are picked in
+  -- the wizard like any other, this is only the way back to a room whose window was closed
+  home.party = Widgets.Button(home, L["party_back"], 150, 26)
   home.party:SetPoint("TOPRIGHT", -12, -12)
   home.party:SetScript("OnClick", function()
     private.Party.Open()
@@ -1676,9 +1674,10 @@ local function refreshHome(list)
     -- Where a frame is put is measured in its own points, which are smaller now
     home.crest:SetPoint("TOP", home, "TOP", 0, -LOGO_TOP / scale)
   else
-    home.crest:SetPoint("CENTER", home, "CENTER", 0, 118)
+    home.crest:SetPoint("CENTER", home, "CENTER", 0, 130)
   end
 
+  home.party:SetShown(private.rooms ~= nil and private.rooms.room ~= nil)
   home.title:SetShown(not any)
   home.blurb:SetShown(not any)
   home.actions:ClearAllPoints()
@@ -1777,7 +1776,14 @@ local function create()
     end
     MainFrame.Refresh()
   end)
-  frame:SetScript("OnHide", Wizard.Reset)
+  frame:SetScript("OnHide", function()
+    Wizard.Reset()
+    -- Setting a room up is started over next time. A room the player is in is where the
+    -- window opens again
+    if private.Party and not (private.rooms and private.rooms.room) then
+      private.Party.Hide()
+    end
+  end)
   frame:Hide()
   table.insert(UISpecialFrames, "ForeverGamesFrame")
   frame.TitleText:SetText(L["title"])
@@ -1795,6 +1801,10 @@ local function create()
   end)
   createResizeGrip()
 
+  -- The games for a room have pages of their own, see GUI/Party.lua
+  if private.Party then
+    private.Party.Init(frame)
+  end
   Wizard.Init(frame, function(matchId)
     if matchId then
       selectedId = matchId
@@ -1815,10 +1825,14 @@ function MainFrame.Refresh()
   refreshing = true
 
   local inWizard = Wizard.IsOpen()
-  frame.body:SetShown(not inWizard)
+  local Party = private.Party
+  local inParty = not inWizard and Party ~= nil and Party.OnPage()
+  frame.body:SetShown(not inWizard and not inParty)
 
   if inWizard then
     Wizard.Refresh()
+  elseif inParty then
+    Party.Refresh()
   else
     local selected = selectedId and private.session:Get(selectedId)
     if not selected or selected.hidden then
@@ -1864,6 +1878,10 @@ end
 
 --- @param id string? The match to show, or none for the front page
 function MainFrame.Select(id)
+  -- A match is shown in place of a room, which goes on all the same
+  if id and private.Party then
+    private.Party.Hide()
+  end
   selectedId = id
   MainFrame.Refresh()
 end
@@ -1890,6 +1908,9 @@ function MainFrame.Open(id)
     if Wizard.IsOpen() then
       Wizard.Close()
     end
+    if private.Party then
+      private.Party.Hide()
+    end
   end
   if frame:IsShown() then
     MainFrame.Refresh()
@@ -1906,8 +1927,23 @@ function MainFrame.NewGame()
   if not frame:IsShown() then
     frame:Show()
   end
+  if private.Party then
+    private.Party.Hide()
+  end
   Wizard.Open()
   MainFrame.Refresh()
+end
+
+--- @return boolean Whether the window is open
+function MainFrame.IsShown()
+  return frame ~= nil and frame:IsShown()
+end
+
+--- Puts the window away
+function MainFrame.Hide()
+  if frame then
+    frame:Hide()
+  end
 end
 
 function MainFrame.Toggle()

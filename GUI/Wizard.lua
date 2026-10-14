@@ -19,6 +19,7 @@
 local _, private = ...
 local L = private.L
 local Games = private.Games
+local Rooms = private.Rooms
 local Transport = private.Transport
 local Widgets = private.Widgets
 
@@ -46,6 +47,8 @@ local RULES_WIDTH, RULES_INSET = 400, 12
 local OPTIONS_TOP, OPTION_ROW_HEIGHT, OPTION_NAME_WIDTH = 146, 30, 142
 local CHOICE_PADDING = 16
 local SOLO_GENRE = "solo"
+-- What the games for a room (Engine/Rooms.lua) are listed as
+local PARTY_GENRE = "party"
 local STAR = "Interface\\AddOns\\ForeverGames\\Images\\Board\\favourite"
 
 local SOURCE_LABELS = { guild = "source_guild", friend = "source_friend", other = "source_other" }
@@ -161,6 +164,9 @@ end
 --- @param game GameDefinition
 --- @return string
 local function playersText(game)
+  if Rooms.Game(game.id) == game then
+    return L["players_party"]
+  end
   local counts = Games.SeatCounts(game)
   if Games.IsSolo(game) then
     return L["players_solo"]
@@ -218,8 +224,15 @@ end
 
 --- The game was chosen. One that is played alone begins there and then unless it has rules to
 --- set, anything else goes on to who it is played with and how
---- @param game GameDefinition
+--- @param game GameDefinition|PartyGame
 local function pick(game)
+  -- A game for a room isn't set up here at all: it has a window of its own, where a room of it
+  -- is opened or joined
+  if Rooms.Game(game.id) == game then
+    Wizard.Close()
+    private.Party.Open(game.id)
+    return
+  end
   if Games.IsSolo(game) and #(game.options or {}) == 0 then
     local match = private.session:Invite({}, game.id)
     Wizard.Close(match and match.id)
@@ -327,7 +340,8 @@ local function fillGameRow(row, games)
       card:SetPoint("TOPLEFT", (column - 1) * (cardWidth + CARD_GAP), 0)
       card.icon:SetTexture(game.icon or private.ICON)
       card.name:SetText(game.name)
-      card.genre:SetText(game.genre and L["genre_" .. game.genre] or "")
+      local genre = Rooms.Game(game.id) == game and PARTY_GENRE or game.genre
+      card.genre:SetText(genre and L["genre_" .. genre] or "")
       card.players:SetText(playersText(game))
       card.description:SetText(game.description or "")
       local favourite = starred[game.id] == true
@@ -392,6 +406,13 @@ local function createFilterButtons(parent)
       end)
     end
   end
+  if #Rooms.Games() > 0 then
+    add(L["genre_" .. PARTY_GENRE], "genre", function()
+      return chosenGenre == PARTY_GENRE
+    end, function()
+      chosenGenre = chosenGenre ~= PARTY_GENRE and PARTY_GENRE or nil
+    end)
+  end
   local counts = { { 1, L["genre_" .. SOLO_GENRE] }, { 2, L["wizard_two_players"] }, { 3, L["wizard_more_players"] } }
   for _, players in ipairs(counts) do
     local seats = players[1]
@@ -429,6 +450,21 @@ local function matchingGames()
   local games = {}
   for _, game in ipairs(Games.Search(panel.searchBox:GetText(), chosenGenre, chosenSeats)) do
     if starred[game.id] or not favouritesOnly then
+      games[#games + 1] = game
+    end
+  end
+  -- The games for a room are listed with the rest. They are for any number but one
+  local words = {}
+  for word in (panel.searchBox:GetText() or ""):lower():gmatch("%S+") do
+    words[#words + 1] = word
+  end
+  for _, game in ipairs(Rooms.Games()) do
+    local matches = (chosenGenre == nil or chosenGenre == PARTY_GENRE) and chosenSeats ~= 1
+    local about = table.concat({ game.name, game.description or "", L["genre_" .. PARTY_GENRE] }, " "):lower()
+    for _, word in ipairs(words) do
+      matches = matches and about:find(word, 1, true) ~= nil
+    end
+    if matches and (starred[game.id] or not favouritesOnly) then
       games[#games + 1] = game
     end
   end

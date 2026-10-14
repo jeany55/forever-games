@@ -595,7 +595,7 @@ private.Games.Register({
   id = "solitaire",
   name = L["game_solitaire"],
   description = L["game_solitaire_description"],
-  genre = "solo",
+  genre = "cards",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\solitaire",
   version = 1,
   seats = 1,
