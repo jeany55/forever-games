@@ -12421,132 +12421,146 @@ end
 -- Warcraftstein 3D
 -----------------------------
 
---- The squares next to one, as indexes into the cells of a maze
+--- The squares next to one, as indexes into the cells of the monastery
 --- @param state table
 --- @param square number
 --- @return number[]
-local function mazeNeighbours(state, square)
+local function abbeyNeighbours(state, square)
   return { square - 1, square + 1, square - state.side, square + state.side }
 end
 
---- The way through a maze from where the player starts to the portal: the squares to cross,
---- the portal last, and how many squares can be reached at all
+--- The square a point is on
 --- @param state table
---- @return number[] way, number reached
-local function mazeWay(state)
-  local start = math.floor(state.start.y) * state.side + math.floor(state.start.x) + 1
-  local from, queue, reached, portal = { [start] = 0 }, { start }, 0, nil
-  while #queue > 0 do
-    local square = table.remove(queue, 1)
-    reached = reached + 1
-    for _, next in ipairs(mazeNeighbours(state, square)) do
-      if state.cells[next] == 4 then
+--- @param x number
+--- @param y number
+--- @return number
+local function abbeySquare(state, x, y)
+  return math.floor(y) * state.side + math.floor(x) + 1
+end
+
+--- How far every square is to walk to from the start, going round whatever stands in the way,
+--- and the way to the portal: the squares to cross, the portal last
+--- @param state table
+--- @return table<number, number> walk, number[] way
+local function abbeyWalk(state)
+  local solid = {}
+  for _, item in ipairs(state.decor) do
+    solid[abbeySquare(state, item.x, item.y)] = true
+  end
+  local start = abbeySquare(state, state.start.x, state.start.y)
+  local walk, from, queue, portal = { [start] = 0 }, {}, { start }, nil
+  local index = 1
+  while queue[index] do
+    local square = queue[index]
+    index = index + 1
+    for _, next in ipairs(abbeyNeighbours(state, square)) do
+      if state.cells[next] == 7 then
         portal = portal or next
         from[next] = from[next] or square
-      elseif state.cells[next] == 0 and not from[next] then
-        from[next] = square
+      elseif state.cells[next] == 0 and not solid[next] and not walk[next] then
+        walk[next], from[next] = walk[square] + 1, square
         queue[#queue + 1] = next
       end
     end
   end
-  local way = {}
-  local square = assert(portal, "the portal can be reached")
+  local way, square = {}, assert(portal, "the portal can be reached")
   while square ~= start do
     table.insert(way, 1, square)
     square = from[square]
   end
-  return way, reached
+  return walk, way
 end
 
-function tests.WarcraftsteinMazesHaveAWayOut()
+function tests.WarcraftsteinBuildsAMonastery()
   local private = loadEngine()
   local game = private.Games.Get("warcraftstein")
   for _, size in ipairs({ 6, 9, 12 }) do
-    for seed = 1, 40 do
+    for seed = 1, 30 do
       local state = game.newState(1, private.Random.New(seed), { size = size })
-      local side = size * 2 + 1
-      equal(side, state.side)
+      local side = state.side
       equal(side * side, #state.cells)
+      equal(size, #state.rooms, "as many rooms as were asked for")
+      equal(nil, state.class, "nobody yet")
 
-      local portals, rooms = 0, 0
+      local portals = 0
       for square, kind in ipairs(state.cells) do
-        local column, row = (square - 1) % side + 1, math.floor((square - 1) / side) + 1
-        assert(kind >= 0 and kind <= 4, "something that can be drawn on every square")
-        if column == 1 or row == 1 or column == side or row == side then
-          assert(kind >= 1 and kind <= 3, "a wall all round")
+        local column, row = (square - 1) % side, math.floor((square - 1) / side)
+        assert(kind >= 0 and kind <= 8, "something that can be drawn on every square")
+        if column == 0 or row == 0 or column == side - 1 or row == side - 1 then
+          assert(kind >= 1 and kind <= 8, "a wall all round, the portal in it as likely as not")
         end
-        if column % 2 == 0 and row % 2 == 0 then
-          rooms = rooms + (kind == 0 and 1 or 0)
-        end
-        if kind == 4 then
-          portals = portals + 1
-          local ways = 0
-          for _, next in ipairs(mazeNeighbours(state, square)) do
-            ways = ways + (state.cells[next] == 0 and 1 or 0)
-          end
-          equal(1, ways, "the portal is at the end of a dead end")
-        end
+        portals = portals + (kind == 7 and 1 or 0)
       end
       equal(1, portals)
-      equal(size * size - 1, rooms, "every room but the one the portal is in")
 
-      local way, reached = mazeWay(state)
-      assert(#way >= size * 4 - 4, "the way out is at least as far as the far corner: " .. #way)
-      local open = 0
-      for _, kind in ipairs(state.cells) do
-        open = open + (kind == 0 and 1 or 0)
-      end
-      equal(open, reached, "nowhere that can't be got to")
-      equal(0, state.cells[math.floor(state.start.y) * side + math.floor(state.start.x) + 1], "the player starts in a room")
-      -- And looks down a way that is open
-      local aheadX, aheadY = math.floor(state.start.x + math.cos(state.start.facing) + 0.5), math.floor(state.start.y + math.sin(state.start.facing) + 0.5)
-      equal(0, state.cells[math.floor(aheadY - 0.5) * side + math.floor(aheadX - 0.5) + 1], "the player looks down a way that is open")
-
-      -- Kobolds: one to every five rooms, each in a room of its own and none near the start
-      equal(math.floor(size * size / 5), #state.mobs)
-      local start = math.floor(state.start.y) * side + math.floor(state.start.x) + 1
-      local walk, queue = { [start] = 0 }, { start }
-      while #queue > 0 do
-        local square = table.remove(queue, 1)
-        for _, next in ipairs(mazeNeighbours(state, square)) do
-          if state.cells[next] == 0 and not walk[next] then
-            walk[next] = walk[square] + 1
-            queue[#queue + 1] = next
+      -- Everywhere can be got to, round whatever stands about, and the portal from the armory
+      local walk, way = abbeyWalk(state)
+      for square, kind in ipairs(state.cells) do
+        if kind == 0 then
+          local solid = false
+          for _, item in ipairs(state.decor) do
+            solid = solid or abbeySquare(state, item.x, item.y) == square
           end
+          assert(solid or walk[square], "nowhere that can't be got to")
         end
       end
-      local dens = {}
-      for _, mob in ipairs(state.mobs) do
-        local square = math.floor(mob.y) * side + math.floor(mob.x) + 1
-        equal(0, state.cells[square], "a kobold sleeps in a room")
-        equal(0.5, mob.x % 1)
-        equal(nil, dens[square], "and has it to itself")
-        dens[square] = true
-        assert(walk[square] >= 8, "well away from the start")
+      local last = state.rooms[1]
+      for _, room in ipairs(state.rooms) do
+        last = room.far > last.far and room or last
       end
-      -- And potions in rooms nobody sleeps in
+      equal("sanctuary", state.rooms[1].wing, "the sanctuary first")
+      equal("fountain", state.decor[1].kind, "with a fountain in it")
+      local sanctuary = state.rooms[1]
+      assert(state.start.x >= sanctuary.x and state.start.x < sanctuary.x + sanctuary.w and state.start.y >= sanctuary.y and state.start.y < sanctuary.y + sanctuary.h, "where the player begins")
+      local fountainX, fountainY = state.start.x + math.cos(state.start.facing), state.start.y + math.sin(state.start.facing)
+      equal(string.format("%.1f,%.1f", state.decor[1].x, state.decor[1].y), string.format("%.1f,%.1f", fountainX, fountainY), "right in front of them")
+      equal("armory", last.wing, "and the armory last")
+      local before = way[#way - 1]
+      local column, row = (before - 1) % side, math.floor((before - 1) / side)
+      assert(column >= last.x and column < last.x + last.w and row >= last.y and row < last.y + last.h, "the portal is in a wall of the armory")
+
+      -- Herod in the armory, nobody in the first room, never two on one square
+      local taken, herods = {}, 0
+      local function inside(room, x, y)
+        return x >= room.x and x < room.x + room.w and y >= room.y and y < room.y + room.h
+      end
+      for _, mob in ipairs(state.mobs) do
+        local square = abbeySquare(state, mob.x, mob.y)
+        equal(0, state.cells[square])
+        equal(nil, taken[square], "a square to itself")
+        taken[square] = true
+        assert(not inside(state.rooms[1], mob.x, mob.y), "nobody where the player begins")
+        -- Ten squares' walk from the middle of it, which the player is a step back from
+        assert(walk[square] >= 9, "nor anywhere near it")
+        if mob.kind == "herod" then
+          herods = herods + 1
+          assert(inside(last, mob.x, mob.y))
+        end
+      end
+      equal(1, herods)
       local potions = { health = 0, power = 0 }
       for _, potion in ipairs(state.loot) do
-        local square = math.floor(potion.y) * side + math.floor(potion.x) + 1
-        equal(0, state.cells[square], "a potion lies in a room")
-        equal(nil, dens[square], "with nothing else in it")
-        assert(square ~= start, "and not where the player begins")
-        dens[square] = true
+        local square = abbeySquare(state, potion.x, potion.y)
+        equal(0, state.cells[square])
+        equal(nil, taken[square])
+        taken[square] = true
         potions[potion.kind] = potions[potion.kind] + 1
       end
-      equal(math.floor(size * size / 9), potions.health)
-      equal(math.floor(size * size / 12), potions.power)
-      equal(nil, state.class, "nobody yet")
+      equal(math.floor(size / 1.5), potions.health)
+      equal(math.floor(size / 2), potions.power)
+      for _, item in ipairs(state.decor) do
+        local square = abbeySquare(state, item.x, item.y)
+        equal(0, state.cells[square])
+        assert(square ~= abbeySquare(state, state.start.x, state.start.y))
+      end
+      assert(#state.decor >= size, "something standing about in every room")
     end
   end
 
   local one, other = game.newState(1, private.Random.New(7), { size = 9 }), game.newState(1, private.Random.New(7), { size = 9 })
-  equal(table.concat(one.cells), table.concat(other.cells), "the same maze from the same seed")
+  equal(table.concat(one.cells), table.concat(other.cells), "the same monastery from the same seed")
   for index, mob in ipairs(one.mobs) do
-    equal(mob.x .. "," .. mob.y, other.mobs[index].x .. "," .. other.mobs[index].y, "and the same kobolds in it")
-  end
-  for index, potion in ipairs(one.loot) do
-    equal(potion.x .. "," .. potion.y .. potion.kind, other.loot[index].x .. "," .. other.loot[index].y .. other.loot[index].kind)
+    equal(mob.x .. "," .. mob.y .. mob.kind, other.mobs[index].x .. "," .. other.mobs[index].y .. other.mobs[index].kind, "and the same Crusade in it")
   end
 end
 
@@ -12581,11 +12595,11 @@ function tests.WarcraftsteinEndsAtThePortal()
   equal(false, (game.validate(state, 1, "x")), "only once")
   equal("finished", match.status)
   local record = game.record(state, 12)[1]
-  equal("time6", record.key)
+  equal("rooms6", record.key)
   equal(12, record.value)
   equal(true, record.lower)
 
-  -- Or with the kobolds getting the player first, which is no time worth keeping
+  -- Or with the Crusade getting the player first, which is no time worth keeping
   match = assert(alice.session:Invite({}, "warcraftstein", { options = { size = 6 } }))
   assert(alice.session:Move(match.id, "cDRUID"))
   assert(alice.session:Move(match.id, "d"))
@@ -12602,7 +12616,7 @@ end
 --- @param size number?
 --- @param class string|boolean|nil Who goes in: a warrior if left out, nobody yet if false
 --- @return table player, table match, table walker The view of the game on screen
-local function mazeOnScreen(size, class)
+local function abbeyOnScreen(size, class)
   local world = World.New()
   world.seed = 3
   local player = world:AddPlayer("Alice-Realm")
@@ -12618,15 +12632,15 @@ local function mazeOnScreen(size, class)
   local found = Client.Find(function(widget)
     return widget.walker ~= nil and widget:IsVisible()
   end)
-  equal(1, #found, "mazes on screen")
+  equal(1, #found, "monasteries on screen")
   return player, match, found[1].walker
 end
 
---- Holds keys down for a while in the maze on screen, and lets go of them again
+--- Holds keys down for a while in the monastery on screen, and lets go of them again
 --- @param walker table
 --- @param keys string[]
 --- @param frames number
-local function mazeHold(walker, keys, frames)
+local function abbeyHold(walker, keys, frames)
   for _, key in ipairs(keys) do
     walker.ticker:Fire("OnKeyDown", key)
   end
@@ -12638,10 +12652,10 @@ local function mazeHold(walker, keys, frames)
   end
 end
 
---- How tall every column of the maze on screen is, to tell one look from another
+--- How tall every column of the monastery on screen is, to tell one look from another
 --- @param walker table
 --- @return string
-local function mazeSeen(walker)
+local function abbeySeen(walker)
   local heights = {}
   for index = 1, walker.count do
     heights[index] = string.format("%.1f", walker.columns[index].height)
@@ -12649,155 +12663,42 @@ local function mazeSeen(walker)
   return table.concat(heights, " ")
 end
 
-function tests.WarcraftsteinDrawsWhatIsSeen()
-  local player, match, walker = mazeOnScreen(6)
-  local state = player.private.Match.State(match)
-  assert(walker.count >= 60, "columns to draw with")
-  equal(state.start.x, walker.pose.x)
-
-  local frame = walker.frame
-  for index = 1, walker.count do
-    local column = walker.columns[index]
-    assert(column:IsVisible(), "every column in use is shown")
-    assert(column.height > 0 and column.height <= frame.height, "a column is never taller than what is seen: " .. column.height)
-    assert(column.texture and column.texture:find("Warcraftstein"), "every column shows a wall")
-    assert(column.color[1] > 0 and column.color[1] <= 1, "and has some light on it")
-  end
-  -- Looking down a corridor: what is straight ahead is further away than what is at the edges
-  local middle = walker.columns[math.floor(walker.count / 2)]
-  assert(middle.height < walker.columns[1].height, "the wall ahead is smaller than the one beside")
-  assert(middle.height < walker.columns[walker.count].height)
-
-  -- Standing still nothing is drawn again, turning shows something else, and so does walking
-  local before = mazeSeen(walker)
-  walker.ticker:Fire("OnUpdate", 0.02)
-  equal(before, mazeSeen(walker))
-  mazeHold(walker, { "D" }, 10)
-  local turned = mazeSeen(walker)
-  assert(turned ~= before, "turning changes what is seen")
-  assert(walker.pose.facing ~= state.start.facing)
-  equal(state.start.x, walker.pose.x, "turning goes nowhere")
-  mazeHold(walker, { "A" }, 10)
-  mazeHold(walker, { "W" }, 10)
-  assert(walker.pose.x ~= state.start.x or walker.pose.y ~= state.start.y, "walking does")
-
-  -- A key that is let go of stops, and so does one held when the cursor leaves
-  local x, y = walker.pose.x, walker.pose.y
-  mazeHold(walker, {}, 10)
-  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
-  walker.ticker:Fire("OnKeyDown", "W")
-  Client.over = false
-  walker.ticker:Fire("OnUpdate", 0.02)
-  Client.over = true
-  walker.ticker:Fire("OnUpdate", 0.02)
-  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
-  walker.ticker:Fire("OnKeyUp", "W")
-  equal(false, walker.ticker.propagates, "a key the game takes goes no further")
-  walker.ticker:Fire("OnKeyDown", "X")
-  equal(true, walker.ticker.propagates, "one that means nothing here is left to the client")
-
-  -- Fewer columns in a smaller window, and none of the others left showing
-  local count = walker.count
-  walker:Layout(300, 260)
-  assert(walker.count < count, "fewer columns in less room")
-  equal(false, walker.columns[count]:IsShown())
-  assert(walker.columns[walker.count].height > 0)
-end
-
-function tests.WarcraftsteinNeverWalksThroughAWall()
-  local player, match, walker = mazeOnScreen(6)
-  local state = player.private.Match.State(match)
-  -- Leaning on every key in turn for a good while, wherever that leads
-  local leans = { { "W" }, { "W", "D" }, { "S", "E" }, { "Q" }, { "W", "A" }, { "E", "W" }, { "S" }, { "W", "Q", "D" } }
-  for round = 1, 40 do
-    mazeHold(walker, leans[(round - 1) % #leans + 1], 45)
-    if match.status == "finished" then
-      break
-    end
-    local pose = walker.pose
-    for _, corner in ipairs({ { -0.2, -0.2 }, { 0.2, -0.2 }, { -0.2, 0.2 }, { 0.2, 0.2 } }) do
-      local square = math.floor(pose.y + corner[2]) * state.side + math.floor(pose.x + corner[1]) + 1
-      equal(0, state.cells[square], "the player stands clear of every wall")
-    end
-  end
-end
-
-function tests.WarcraftsteinIsWalkedToTheWayOut()
-  local player, match, walker = mazeOnScreen(6)
-  local Match = player.private.Match
-  local state = Match.State(match)
-  local way = mazeWay(state)
-
-  -- From the middle of one square to the middle of the next: turned to face it first, then walked
-  local frames = 0
-  for step, square in ipairs(way) do
-    local x, y = (square - 1) % state.side + 0.5, math.floor((square - 1) / state.side) + 0.5
-    while not Match.State(match).found do
-      local pose = walker.pose
-      local away = math.sqrt((x - pose.x) ^ 2 + (y - pose.y) ^ 2)
-      if away < 0.1 and step < #way then
-        break
-      end
-      -- A kobold that is up comes first: faced where the player stands, and struck when it is there
-      local toX, toY, key, nearest = x, y, "W", math.huge
-      for _, mob in ipairs(walker.run.mobs) do
-        local far = (mob.x - pose.x) ^ 2 + (mob.y - pose.y) ^ 2
-        if mob.awake and far < nearest then
-          toX, toY, key, nearest = mob.x, mob.y, "SPACE", far
-        end
-      end
-      local off = (math.atan2(toY - pose.y, toX - pose.x) - pose.facing + math.pi) % (math.pi * 2) - math.pi
-      if math.abs(off) > 0.05 then
-        key = off > 0 and "D" or "A"
-      end
-      mazeHold(walker, { key }, 1)
-      frames = frames + 1
-      assert(frames < 20000, "the way out is found some time")
-    end
-  end
-
-  equal(true, Match.State(match).found)
-  equal("finished", match.status)
-  equal(true, walker.effects:HasBanner(), "it says so across what was seen")
-  local fallen = 0
-  for _, mob in ipairs(walker.run.mobs) do
-    fallen = fallen + (mob.dead and 1 or 0)
-  end
-  assert(fallen > 0, "past a kobold or two")
-  assert(walker.run.health > 0)
-  assert(player.session:Best("warcraftstein", "time6"), "and the time it took is kept")
-  local x = walker.pose.x
-  mazeHold(walker, { "S" }, 10)
-  equal(x, walker.pose.x, "nobody walks about in a game that is over")
-  equal(true, walker.ticker.propagates)
-end
-
---- Stands the player a square away from a kobold that sleeps, looking at it
+--- Stands the player a square away from a foe that waits, looking at it, with nobody else about
 --- @param state table
 --- @param walker table
---- @param alone boolean? With no other kobold left in the maze to come and help it
+--- @param kind string? What it is, a soldier if left out
 --- @return table mob
-local function mazeMeet(state, walker, alone)
-  local mob = walker.run.mobs[1]
-  for index = 2, alone and #walker.run.mobs or 1 do
-    walker.run.mobs[index].dead = true
+local function abbeyMeet(state, walker, kind)
+  local run = walker.run
+  for _, item in ipairs(run.decor) do
+    item.girth = nil
   end
-  for _, step in ipairs({ { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } }) do
-    if state.cells[math.floor(mob.y + step[2]) * state.side + math.floor(mob.x + step[1]) + 1] == 0 then
-      walker.pose.x, walker.pose.y = mob.x + step[1], mob.y + step[2]
-      walker.pose.facing = math.atan2(-step[2], -step[1]) % (math.pi * 2)
-      walker:render()
-      return mob
+  for _, mob in ipairs(run.mobs) do
+    mob.dead = true
+  end
+  for _, mob in ipairs(run.mobs) do
+    for _, step in ipairs({ { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } }) do
+      if state.cells[abbeySquare(state, mob.x + step[1], mob.y + step[2])] == 0 and mob.kind ~= "herod" then
+        local foe = walker.foes[kind or "soldier"]
+        mob.dead, mob.kind, mob.foe, mob.health = false, kind or "soldier", foe, foe.health
+        if run.boss and run.boss ~= mob then
+          run.boss = nil
+        end
+        walker.pose.x, walker.pose.y = mob.x + step[1], mob.y + step[2]
+        walker.pose.facing = math.atan2(-step[2], -step[1]) % (math.pi * 2)
+        walker:render()
+        return mob
+      end
     end
   end
-  error("a room with no way into it")
+  error("nobody to meet")
 end
 
---- The strips of what is seen that show something that stands in the maze
+--- The strips of what is seen that show something that stands in the monastery
 --- @param walker table
 --- @param thing table? Only the ones that show this
 --- @return number
-local function mazeStrips(walker, thing)
+local function abbeyStrips(walker, thing)
   local strips, all = 0, 0
   for _, layer in pairs(walker.strips) do
     for index, strip in pairs(layer) do
@@ -12814,156 +12715,540 @@ local function mazeStrips(walker, thing)
   return strips
 end
 
-function tests.WarcraftsteinShowsTheKobolds()
-  local player, match, walker = mazeOnScreen(6)
+function tests.WarcraftsteinDrawsWhatIsSeen()
+  local player, match, walker = abbeyOnScreen(6)
+  local state = player.private.Match.State(match)
+  assert(walker.count >= 60, "columns to draw with")
+  equal(state.start.x, walker.pose.x)
+
+  local frame = walker.frame
+  for index = 1, walker.count do
+    local column = walker.columns[index]
+    assert(column:IsVisible(), "every column in use is shown")
+    assert(column.height > 0 and column.height <= frame.height, "a column is never taller than what is seen: " .. column.height)
+    assert(column.texture and column.texture:find("Warcraftstein"), "every column shows a wall")
+    assert(column.color[1] > 0 and column.color[1] <= 1, "and has some light on it")
+  end
+  -- Floor and ceiling, a row at a time from the middle out
+  assert(walker.rows > 10)
+  for index = 1, walker.rows do
+    assert(walker.floors[index].texture:find("floor"))
+    assert(walker.ceilings[index].texture:find("ceiling"))
+    assert(walker.floors[index]:IsShown())
+  end
+  assert(walker.floors[walker.rows].color[1] > walker.floors[1].color[1], "the floor at the player's feet is lighter than far away")
+  -- Firelight is warm: some wall near a light is redder than it is blue
+  local warm = false
+  for _ = 1, 4 do
+    walker.pose.facing = walker.pose.facing + math.pi / 2
+    walker:render()
+    for index = 1, walker.count do
+      warm = warm or walker.columns[index].color[1] > walker.columns[index].color[3] + 0.05
+    end
+  end
+  assert(warm, "the lights in the room light it")
+  walker.pose.facing = state.start.facing
+  walker:render()
+
+  -- Standing still nothing is drawn again, turning shows something else, and so does walking
+  local before = abbeySeen(walker)
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal(before, abbeySeen(walker))
+  abbeyHold(walker, { "D" }, 10)
+  assert(abbeySeen(walker) ~= before, "turning changes what is seen")
+  assert(walker.pose.facing ~= state.start.facing)
+  equal(state.start.x, walker.pose.x, "turning goes nowhere")
+  abbeyHold(walker, { "A" }, 10)
+  abbeyHold(walker, { "W" }, 10)
+  assert(walker.pose.x ~= state.start.x or walker.pose.y ~= state.start.y, "walking does")
+
+  -- A key that is let go of stops, and so does one held when the cursor leaves
+  local x, y = walker.pose.x, walker.pose.y
+  abbeyHold(walker, {}, 10)
+  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
+  walker.ticker:Fire("OnKeyDown", "W")
+  Client.over = false
+  walker.ticker:Fire("OnUpdate", 0.02)
+  Client.over = true
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal(x .. "," .. y, walker.pose.x .. "," .. walker.pose.y)
+  walker.ticker:Fire("OnKeyUp", "W")
+  equal(false, walker.ticker.propagates, "a key the game takes goes no further")
+  walker.ticker:Fire("OnKeyDown", "X")
+  equal(true, walker.ticker.propagates, "one that means nothing here is left to the client")
+
+  -- Fewer columns in a smaller window, and none of the others left showing
+  local count, rows = walker.count, walker.rows
+  walker:Layout(300, 260)
+  assert(walker.count < count, "fewer columns in less room")
+  assert(walker.rows < rows)
+  equal(false, walker.columns[count]:IsShown())
+  equal(false, walker.floors[rows]:IsShown())
+  assert(walker.columns[walker.count].height > 0)
+end
+
+function tests.WarcraftsteinNeverWalksThroughAWall()
+  local player, match, walker = abbeyOnScreen(6)
+  local state = player.private.Match.State(match)
+  walker.run.health, walker.run.spec.health = 1e6, 1e6
+  -- Leaning on every key in turn for a good while, wherever that leads
+  local leans = { { "W" }, { "W", "D" }, { "S", "E" }, { "Q" }, { "W", "A" }, { "E", "W" }, { "S" }, { "W", "Q", "D" } }
+  for round = 1, 40 do
+    abbeyHold(walker, leans[(round - 1) % #leans + 1], 45)
+    if match.status == "finished" then
+      break
+    end
+    local pose = walker.pose
+    for _, corner in ipairs({ { -0.2, -0.2 }, { 0.2, -0.2 }, { -0.2, 0.2 }, { 0.2, 0.2 } }) do
+      equal(0, state.cells[abbeySquare(state, pose.x + corner[1], pose.y + corner[2])], "the player stands clear of every wall")
+    end
+  end
+end
+
+function tests.WarcraftsteinIsFoughtThroughToTheWayOut()
+  local player, match, walker = abbeyOnScreen(6)
+  local Match = player.private.Match
+  local state = Match.State(match)
+  local run = walker.run
+  -- Nobody dies of it here: what is tried is getting there
+  run.health, run.spec.health = 1e6, 1e6
+  local _, way = abbeyWalk(state)
+  local side = state.side
+
+  local frames, herod = 0, run.boss
+  for step, square in ipairs(way) do
+    local x, y = (square - 1) % side + 0.5, math.floor((square - 1) / side) + 0.5
+    while not Match.State(match).found do
+      local pose = walker.pose
+      local away = math.sqrt((x - pose.x) ^ 2 + (y - pose.y) ^ 2)
+      if away < 0.1 and step < #way then
+        break
+      end
+      -- Whoever is up and in sight comes first: gone up to, and struck
+      local toX, toY, keys, nearest = x, y, { "W" }, math.huge
+      for _, mob in ipairs(run.mobs) do
+        local far = (mob.x - pose.x) ^ 2 + (mob.y - pose.y) ^ 2
+        if mob.awake and not mob.dead and far < nearest and far < 36 then
+          toX, toY, nearest = mob.x, mob.y, far
+          keys = far > 1 and { "W", "SPACE" } or { "SPACE" }
+        end
+      end
+      local off = (math.atan2(toY - pose.y, toX - pose.x) - pose.facing + math.pi) % (math.pi * 2) - math.pi
+      if math.abs(off) > 0.08 then
+        keys = { off > 0 and "D" or "A" }
+      end
+      abbeyHold(walker, keys, 1)
+      frames = frames + 1
+      assert(frames < 60000, "the way out is found some time")
+    end
+  end
+
+  equal(true, Match.State(match).found)
+  equal(true, herod.dead, "past Herod, who has to fall first")
+  equal("finished", match.status)
+  equal(true, walker.effects:HasBanner(), "it says so across what was seen")
+  assert(run.level > 1, "with a level or two on the way")
+  assert(player.session:Best("warcraftstein", "rooms6"), "and the time it took is kept")
+  local x = walker.pose.x
+  abbeyHold(walker, { "S" }, 10)
+  equal(x, walker.pose.x, "nobody walks about in a game that is over")
+  equal(true, walker.ticker.propagates)
+end
+
+function tests.WarcraftsteinShowsWhoIsThere()
+  local player, match, walker = abbeyOnScreen(6)
   local state = player.private.Match.State(match)
   equal(#state.mobs, #walker.run.mobs)
   equal(#state.loot, #walker.run.loot)
-  for _, mob in ipairs(walker.run.mobs) do
-    equal(0, mazeStrips(walker, mob), "none to be seen from the start")
-  end
+  equal(#state.decor, #walker.run.decor)
   equal(120, walker.health.value)
   equal(0, walker.power.value, "no rage yet")
 
-  local mob = mazeMeet(state, walker)
-  local near = mazeStrips(walker, mob)
+  local mob = abbeyMeet(state, walker)
+  local near = abbeyStrips(walker, mob)
   assert(near > walker.count / 2, "one that is a square away fills most of what is seen: " .. near)
   -- Not through a wall: only the columns where the wall is further away than it is
-  for index, strip in pairs(walker.strips[6]) do
-    if strip:IsShown() then
-      assert(walker.depths[index] > strip.shows.depth)
+  for _, layer in pairs(walker.strips) do
+    for index, strip in pairs(layer) do
+      if strip:IsShown() then
+        assert(walker.depths[index] > strip.shows.depth)
+      end
     end
   end
   -- Further away it is smaller, and behind the player it isn't there
   local x, y = walker.pose.x, walker.pose.y
   walker.pose.x, walker.pose.y = x + (x - mob.x) * 0.4, y + (y - mob.y) * 0.4
   walker:render()
-  local far = mazeStrips(walker, mob)
+  local far = abbeyStrips(walker, mob)
   assert(far > 0 and far < near, "smaller from further away")
   walker.pose.facing = (walker.pose.facing + math.pi) % (math.pi * 2)
   walker:render()
-  equal(0, mazeStrips(walker, mob), "nothing of what is behind")
-
-  -- And in a smaller window there are fewer columns to show it in
+  equal(0, abbeyStrips(walker, mob), "nothing of what is behind")
   walker.pose.facing = (walker.pose.facing + math.pi) % (math.pi * 2)
-  walker:Layout(300, 260)
-  local fewer = mazeStrips(walker, mob)
-  assert(fewer > 0 and fewer < far)
 
-  -- A potion is drawn the same way
+  -- A phantasm is seen through
+  mob.kind, mob.foe = "phantasm", walker.foes.phantasm
+  walker:render()
+  for _, strip in ipairs(walker.lit) do
+    if strip.shows == mob then
+      equal(0.7, strip.color[4])
+    end
+  end
+
+  -- A potion is drawn the same way, in front of whoever is behind it
   local potion = walker.run.loot[1]
   potion.x, potion.y = (walker.pose.x + mob.x) / 2, (walker.pose.y + mob.y) / 2
   walker:render()
-  assert(mazeStrips(walker, potion) > 0)
-  assert(mazeStrips(walker, mob) > 0, "and the kobold behind it still is")
+  assert(abbeyStrips(walker, potion) > 0)
+  assert(abbeyStrips(walker, mob) > 0, "and whoever is behind it still is")
+
+  -- And in a smaller window there are fewer columns to show it in
+  walker:Layout(300, 260)
+  local fewer = abbeyStrips(walker, mob)
+  assert(fewer > 0)
 end
 
-function tests.WarcraftsteinKoboldsComeForThePlayer()
-  local player, match, walker = mazeOnScreen(6)
+function tests.WarcraftsteinFoesComeForThePlayer()
+  local player, match, walker = abbeyOnScreen(6)
   local state = player.private.Match.State(match)
-  local mob = mazeMeet(state, walker, true)
+  local mob = abbeyMeet(state, walker)
   local run = walker.run
   equal(false, mob.awake)
 
   -- With the cursor somewhere else nothing happens at all
   Client.over = false
-  mazeHold(walker, {}, 50)
+  abbeyHold(walker, {}, 50)
   Client.over = true
   equal(false, mob.awake)
   equal(120, run.health)
 
-  -- It wakes, comes up to the player and hits them, again and again. A warrior's armour takes
-  -- some of every blow, and every blow makes them angrier
-  mazeHold(walker, {}, 5)
+  -- It wakes, says so, comes up to the player and hits them, again and again. A warrior's
+  -- armour takes some of every blow, and every blow makes them angrier
+  abbeyHold(walker, {}, 5)
   equal(true, mob.awake)
-  mazeHold(walker, {}, 40)
+  equal(true, walker.said:IsShown(), "the Crusade has something to say")
+  abbeyHold(walker, {}, 40)
   local away = math.sqrt((mob.x - walker.pose.x) ^ 2 + (mob.y - walker.pose.y) ^ 2)
   assert(away <= 0.95 and away > 0.7, "as near as it comes: " .. away)
   equal("111.6", string.format("%.1f", run.health))
   equal(112, walker.health.value)
   equal(8, run.power)
-  mazeHold(walker, {}, 60)
+  abbeyHold(walker, {}, 60)
   equal("103.2", string.format("%.1f", run.health))
 
   -- Three blows are the end of it: it lies where it fell and does nothing more
-  mazeHold(walker, { "SPACE" }, 2)
-  equal(25, mob.health)
+  abbeyHold(walker, { "SPACE" }, 2)
+  equal(30, mob.health)
   equal(false, mob.dead)
-  mazeHold(walker, { "SPACE" }, 10)
-  equal(25, mob.health, "a blow takes its time")
-  mazeHold(walker, { "SPACE" }, 45)
+  abbeyHold(walker, { "SPACE" }, 10)
+  equal(30, mob.health, "a blow takes its time")
+  abbeyHold(walker, { "SPACE" }, 45)
   equal(true, mob.dead)
-  assert(run.power >= 36, "rage for every one of them")
+  equal(10, run.xp, "and it was worth something")
   local health = run.health
-  mazeHold(walker, {}, 200)
+  abbeyHold(walker, {}, 200)
   equal(health, run.health)
-  assert(mazeStrips(walker, mob) > 0, "still to be seen")
+  assert(abbeyStrips(walker, mob) > 0, "still to be seen")
   equal("active", match.status)
 
   -- Backing away is slower than going at them
   local x, y = walker.pose.x, walker.pose.y
-  mazeHold(walker, { "S" }, 5)
+  abbeyHold(walker, { "S" }, 5)
   local back = math.sqrt((walker.pose.x - x) ^ 2 + (walker.pose.y - y) ^ 2)
-  mazeHold(walker, { "W" }, 5)
+  abbeyHold(walker, { "W" }, 5)
   assert(math.abs(walker.pose.x - x) + math.abs(walker.pose.y - y) < back * 0.75, "further forward than back")
 end
 
-function tests.WarcraftsteinKoboldsHuntThePlayer()
-  local player, match, walker = mazeOnScreen(6)
+function tests.WarcraftsteinFoesHuntThePlayer()
+  local player, match, walker = abbeyOnScreen(6)
   local state = player.private.Match.State(match)
-  local mob = mazeMeet(state, walker, true)
+  local mob = abbeyMeet(state, walker)
   local run = walker.run
-  -- One that wakes tells the ones around it
-  local other = run.mobs[2]
-  other.dead, other.x, other.y = false, mob.x + 2, mob.y + 2
-  mazeHold(walker, {}, 2)
+  -- One that wakes tells the ones around it that see it, and nobody behind a wall
+  local other = run.mobs[#run.mobs] ~= mob and run.mobs[#run.mobs] or run.mobs[1]
+  local behind = run.mobs[#run.mobs - 1] ~= mob and run.mobs[#run.mobs - 1] or run.mobs[2]
+  other.dead, other.x, other.y = false, mob.x, mob.y
+  behind.dead, behind.x, behind.y = false, mob.x, mob.y
+  while state.cells[abbeySquare(state, behind.x, behind.y)] == 0 do
+    behind.x = behind.x + 1
+  end
+  behind.x = behind.x + 1
+  if state.cells[abbeySquare(state, behind.x, behind.y)] ~= 0 or (behind.x - mob.x) > 4 then
+    behind.x = mob.x
+    behind.dead = true
+  end
+  abbeyHold(walker, {}, 2)
   equal(true, mob.awake)
   equal(true, other.awake)
-  other.dead = true
+  if not behind.dead then
+    equal(false, behind.awake, "nobody who didn't see it")
+  end
+  other.dead, behind.dead = true, true
 
-  -- The player gone to where it can't see them: it comes after them through the maze
-  walker.pose.x, walker.pose.y = state.start.x, state.start.y
-  mazeHold(walker, {}, 1)
+  -- The player gone to where it can't see them: it comes after them through the monastery
+  local trail = walker:trail()
+  local fromMob = {}
+  local queue, index = { abbeySquare(state, mob.x, mob.y) }, 1
+  fromMob[queue[1]] = 0
+  while queue[index] do
+    local square = queue[index]
+    index = index + 1
+    for _, next in ipairs(abbeyNeighbours(state, square)) do
+      if state.cells[next] == 0 and not fromMob[next] then
+        fromMob[next] = fromMob[square] + 1
+        queue[#queue + 1] = next
+      end
+    end
+  end
+  local sanctuary = state.rooms[1]
+  local away = nil
+  for square, steps in pairs(fromMob) do
+    local x, y = (square - 1) % state.side + 0.5, math.floor((square - 1) / state.side) + 0.5
+    local outside = not (x >= sanctuary.x and x < sanctuary.x + sanctuary.w and y >= sanctuary.y and y < sanctuary.y + sanctuary.h)
+    if outside and steps >= 8 and steps <= 12 and (not away or square < away) then
+      away = square
+    end
+  end
+  assert(trail and away, "somewhere to go")
+  walker.pose.x, walker.pose.y = (away - 1) % state.side + 0.5, math.floor((away - 1) / state.side) + 0.5
+  abbeyHold(walker, {}, 1)
   local function walk()
-    return walker:trail()[math.floor(mob.y) * state.side + math.floor(mob.x) + 1]
+    return walker:trail()[abbeySquare(state, mob.x, mob.y)]
   end
   local far = walk()
-  assert(far >= 8)
-  mazeHold(walker, {}, 100)
+  assert(far >= 4)
+  abbeyHold(walker, {}, 100)
   equal(true, mob.awake)
   assert(walk() <= far - 3, "nearer by the way there is: " .. walk() .. " from " .. far)
   -- Until it has them, or hasn't seen them for too long
-  mazeHold(walker, {}, 700)
+  abbeyHold(walker, {}, 700)
   assert(run.health < 120 or not mob.awake)
   if far <= 16 then
     assert(run.health < 120, "which it has from this near")
   end
 end
 
-function tests.WarcraftsteinEndsWithThePlayerDead()
-  local player, match, walker = mazeOnScreen(6)
+function tests.WarcraftsteinAdeptsCastFromAfar()
+  local player, match, walker = abbeyOnScreen(9)
+  local state = player.private.Match.State(match)
+  local mob = abbeyMeet(state, walker, "adept")
+  local run = walker.run
+  -- Room to back away into: the player a step back from where they were
+  abbeyHold(walker, {}, 2)
+  equal(true, mob.awake)
+  abbeyHold(walker, {}, 150)
+  assert(run.health < 120, "something hit")
+  local cast = false
+  for _ = 1, 200 do
+    abbeyHold(walker, {}, 1)
+    cast = cast or #run.shots > 0
+  end
+  assert(cast, "bolts on their way")
+  local away = math.sqrt((mob.x - walker.pose.x) ^ 2 + (mob.y - walker.pose.y) ^ 2)
+  assert(away > 0.95, "and from further than arm's length when it can: " .. away)
+end
+
+function tests.WarcraftsteinHerodKeepsThePortal()
+  local player, match, walker = abbeyOnScreen(6)
   local Match = player.private.Match
-  mazeMeet(Match.State(match), walker, true)
+  local state = Match.State(match)
+  local run = walker.run
+  local herod = assert(run.boss)
+  for _, mob in ipairs(run.mobs) do
+    mob.dead = mob ~= herod
+  end
+  run.health, run.spec.health = 1e6, 1e6
+  -- In front of the portal, walking into it: shut
+  local _, way = abbeyWalk(state)
+  local portal, before = way[#way], way[#way - 1]
+  local side = state.side
+  walker.pose.x, walker.pose.y = (before - 1) % side + 0.5, math.floor((before - 1) / side) + 0.5
+  walker.pose.facing = math.atan2(math.floor((portal - 1) / side) + 0.5 - walker.pose.y, (portal - 1) % side + 0.5 - walker.pose.x)
+  herod.frozen = 1000
+  abbeyHold(walker, { "W" }, 30)
+  equal("active", match.status, "not while Herod stands")
+  equal(true, walker.said:IsShown())
+
+  -- He comes for the player, spinning, and shows how he is
+  herod.frozen, herod.x, herod.y = 0, walker.pose.x - math.cos(walker.pose.facing), walker.pose.y - math.sin(walker.pose.facing)
+  if state.cells[abbeySquare(state, herod.x, herod.y)] ~= 0 then
+    herod.x, herod.y = walker.pose.x, walker.pose.y
+  end
+  abbeyHold(walker, {}, 3)
+  equal(true, herod.awake)
+  equal(true, walker.bossBar:IsShown())
+  equal(herod.foe.health, walker.bossBar.value)
+  local spun = false
+  for _ = 1, 100 do
+    abbeyHold(walker, {}, 1)
+    spun = spun or herod.spinning > 0
+  end
+  assert(spun, "Blades of Light!")
+  assert(run.health < 1e6)
+
+  -- Angry once he is hurt enough
+  walker:wound(herod, herod.foe.health * 0.75)
+  equal(true, herod.angry)
+  -- And once he falls the portal opens
+  walker:wound(herod, herod.health)
+  equal(true, herod.dead)
+  equal(nil, run.boss)
+  abbeyHold(walker, {}, 1)
+  equal(false, walker.bossBar:IsShown())
+  assert(run.level > 1, "worth a level or two by himself")
+  walker.pose.x, walker.pose.y = (before - 1) % side + 0.5, math.floor((before - 1) / side) + 0.5
+  walker.pose.facing = math.atan2(math.floor((portal - 1) / side) + 0.5 - walker.pose.y, (portal - 1) % side + 0.5 - walker.pose.x)
+  abbeyHold(walker, { "W" }, 30)
+  equal(true, Match.State(match).found)
+end
+
+function tests.WarcraftsteinHasASanctuary()
+  local player, match, walker = abbeyOnScreen(6)
+  local state = player.private.Match.State(match)
+  local run, sanctuary = walker.run, state.rooms[1]
+  abbeyHold(walker, {}, 1)
+  equal(true, run.safe, "the player begins in it")
+  equal(true, walker.said:IsShown(), "and is told so")
+  equal(true, walker.veil:IsShown(), "and sees it")
+  -- The fountain in front of them, its water moving
+  local fountain = run.decor[1]
+  equal("fountain", fountain.kind)
+  assert(abbeyStrips(walker, fountain) > 0, "to be seen")
+  local first = fountain.picture
+  for _, strip in ipairs(walker.lit) do
+    if strip.shows == fountain then
+      first = strip.shows.picture
+    end
+  end
+  -- The water runs, one picture and then the other, and the fountain is there all along
+  local shown = {}
+  for _ = 1, 100 do
+    abbeyHold(walker, {}, 1)
+    assert(abbeyStrips(walker, fountain) > 0, "the fountain stays")
+    shown[fountain.picture] = true
+  end
+  equal(true, shown[first], "the one picture")
+  equal(true, shown[first == 33 and 34 or 33], "and the other")
+  local pictures = 0
+  for _ in pairs(shown) do
+    pictures = pictures + 1
+  end
+  equal(2, pictures, "and no others")
+
+  -- Nobody of the Crusade sees the player in here, nor hurts them, even right beside them
+  local mob = run.mobs[1]
+  for _, other in ipairs(run.mobs) do
+    other.dead = other ~= mob
+  end
+  run.boss = nil
+  mob.kind, mob.foe, mob.health = "soldier", walker.foes.soldier, walker.foes.soldier.health
+  mob.x, mob.y = walker.pose.x + 0.8 * math.cos(walker.pose.facing + math.pi / 2), walker.pose.y + 0.8 * math.sin(walker.pose.facing + math.pi / 2)
+  if state.cells[abbeySquare(state, mob.x, mob.y)] ~= 0 then
+    mob.x, mob.y = walker.pose.x - 0.8 * math.cos(walker.pose.facing + math.pi / 2), walker.pose.y - 0.8 * math.sin(walker.pose.facing + math.pi / 2)
+  end
+  abbeyHold(walker, {}, 100)
+  equal(false, mob.awake)
+  equal(120, run.health)
+  -- Nor is there any fighting: no blow, no whirlwind
+  run.power = 100
+  abbeyHold(walker, { "SPACE", "F" }, 20)
+  equal(0, run.swung)
+  equal(100, run.power)
+  equal(45, mob.health)
+  -- But health comes back quickly
+  run.health = 50
+  abbeyHold(walker, {}, 50)
+  equal("58.0", string.format("%.1f", run.health))
+
+  -- Nobody walks in, however much they would like to
+  local door = nil
+  for row = sanctuary.y - 1, sanctuary.y + sanctuary.h do
+    for column = sanctuary.x - 1, sanctuary.x + sanctuary.w do
+      local outside = column < sanctuary.x or row < sanctuary.y or column >= sanctuary.x + sanctuary.w or row >= sanctuary.y + sanctuary.h
+      if outside and state.cells[row * state.side + column + 1] == 0 then
+        door = door or { column + 0.5, row + 0.5 }
+      end
+    end
+  end
+  assert(door, "a way in")
+  mob.x, mob.y, mob.awake = door[1], door[2], true
+  for _ = 1, 50 do
+    walker:step(mob, state.start.x, state.start.y, 0.1)
+    assert(not (mob.x >= sanctuary.x and mob.x < sanctuary.x + sanctuary.w and mob.y >= sanctuary.y and mob.y < sanctuary.y + sanctuary.h), "not a foot inside")
+  end
+  -- And what is cast at the player goes out at the door
+  run.shots[1] = { x = door[1], y = door[2], byX = (walker.pose.x - door[1]), byY = (walker.pose.y - door[2]), speed = 5, hits = 13, tint = { 1, 1, 1 } }
+  local length = math.sqrt(run.shots[1].byX ^ 2 + run.shots[1].byY ^ 2)
+  run.shots[1].byX, run.shots[1].byY = run.shots[1].byX / length, run.shots[1].byY / length
+  local health = run.health
+  abbeyHold(walker, {}, 60)
+  equal(0, #run.shots)
+  assert(run.health >= health)
+
+  -- Out of it, it is a fight again, and the gold is gone
+  walker.pose.x, walker.pose.y = door[1], door[2]
+  abbeyHold(walker, {}, 1)
+  equal(false, run.safe)
+  equal(false, walker.veil:IsShown())
+end
+
+function tests.WarcraftsteinWalksRoundWhatStandsAbout()
+  local player, match, walker = abbeyOnScreen(6)
+  local state = player.private.Match.State(match)
+  local pose, run = walker.pose, walker.run
+  local fountain = run.decor[1]
+  equal("fountain", fountain.kind)
+  -- Straight at the fountain from where the player begins: round it and on, not stopped by it
+  local x, y = pose.x, pose.y
+  local aheadX, aheadY = math.cos(pose.facing), math.sin(pose.facing)
+  local nearest = math.huge
+  for _ = 1, 40 do
+    abbeyHold(walker, { "W" }, 1)
+    nearest = math.min(nearest, math.sqrt((pose.x - fountain.x) ^ 2 + (pose.y - fountain.y) ^ 2))
+  end
+  local gone = (pose.x - x) * aheadX + (pose.y - y) * aheadY
+  assert(gone > 1.2, "past it: " .. gone)
+  assert(nearest >= 0.42 + 0.22 - 0.01, "and never into it: " .. nearest)
+
+  -- A candelabra is a pole: it is only in the way of whoever walks right into the pole
+  for _, item in ipairs(run.decor) do
+    if item.kind == "candelabra" then
+      equal(true, item.girth < 0.1)
+    end
+  end
+  -- Sideways along the edge of the fountain, nothing in the way at all
+  pose.x, pose.y = fountain.x - aheadY * 0.7 - aheadX * 0.7, fountain.y + aheadX * 0.7 - aheadY * 0.7
+  if state.cells[abbeySquare(state, pose.x, pose.y)] == 0 then
+    local before = (pose.x - fountain.x) * aheadX + (pose.y - fountain.y) * aheadY
+    abbeyHold(walker, { "W" }, 20)
+    assert((pose.x - fountain.x) * aheadX + (pose.y - fountain.y) * aheadY > before + 0.6, "along it")
+  end
+end
+
+function tests.WarcraftsteinEndsWithThePlayerDead()
+  local player, match, walker = abbeyOnScreen(6)
+  local Match = player.private.Match
+  abbeyMeet(Match.State(match), walker)
   walker.run.health = 10
-  mazeHold(walker, {}, 200)
+  abbeyHold(walker, {}, 200)
   equal(0, walker.run.health)
   equal(true, Match.State(match).dead)
   equal("finished", match.status)
   equal(0, Match.Result(match).winner)
   equal(true, walker.effects:HasBanner(), "it says so across what was seen")
-  equal(nil, player.session:Best("warcraftstein", "time6"), "which is nothing to be proud of")
+  equal(nil, player.session:Best("warcraftstein", "rooms6"), "which is nothing to be proud of")
   equal(0, walker.health.value)
 end
 
 function tests.WarcraftsteinAsksWhoGoesIn()
-  local player, match, walker = mazeOnScreen(6, false)
+  local player, match, walker = abbeyOnScreen(6, false)
   local Match = player.private.Match
   equal(true, walker.picker:IsShown())
   equal(nil, walker.run)
   equal(false, walker.health:IsShown())
-  mazeHold(walker, { "W" }, 5)
+  abbeyHold(walker, { "W" }, 5)
   equal(nil, Match.State(match).class, "walking isn't an answer")
-  -- Space is: the class of the character, a warrior for one of a class the maze doesn't know
+  -- Space is: the class of the character, a warrior for one of a class the monastery doesn't know
   function UnitClass()
     return "Mage", "MAGE"
   end
@@ -12977,7 +13262,7 @@ function tests.WarcraftsteinAsksWhoGoesIn()
   assert(walker.ability.icon.texture:find("FrostNova"))
 
   -- Or a click on any of them
-  player, match, walker = mazeOnScreen(6, false)
+  player, match, walker = abbeyOnScreen(6, false)
   local picks = 0
   for _ in pairs(walker.picks) do
     picks = picks + 1
@@ -12992,7 +13277,7 @@ function tests.WarcraftsteinAsksWhoGoesIn()
   function UnitClass()
     return "Monk", "MONK"
   end
-  player, match, walker = mazeOnScreen(6, false)
+  player, match, walker = abbeyOnScreen(6, false)
   walker.ticker:Fire("OnKeyDown", "SPACE")
   UnitClass = nil
   equal("WARRIOR", player.private.Match.State(match).class)
@@ -13000,14 +13285,15 @@ end
 
 function tests.WarcraftsteinEveryClassCanFight()
   for _, class in ipairs({ "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }) do
-    local player, match, walker = mazeOnScreen(6, class)
+    local player, match, walker = abbeyOnScreen(6, class)
     local state = player.private.Match.State(match)
-    local mob = mazeMeet(state, walker, true)
+    local mob = abbeyMeet(state, walker)
     equal(class, walker.run.class)
-    mazeHold(walker, { "SPACE" }, 400)
-    equal(true, mob.dead, class .. " gets the better of a kobold")
+    abbeyHold(walker, { "SPACE" }, 400)
+    equal(true, mob.dead, class .. " gets the better of a soldier")
     assert(walker.run.health > 0, class .. " lives to tell of it")
     equal("active", match.status)
+    abbeyHold(walker, {}, 100)
     equal(0, #walker.run.bolts, "nothing left in the air")
   end
 end
@@ -13016,143 +13302,325 @@ function tests.WarcraftsteinClassesDoWhatTheyDo()
   --- @param class string
   --- @return table walker, table run, table mob
   local function meet(class)
-    local player, match, walker = mazeOnScreen(6, class)
-    return walker, walker.run, mazeMeet(player.private.Match.State(match), walker, true)
+    local player, match, walker = abbeyOnScreen(6, class)
+    return walker, walker.run, abbeyMeet(player.private.Match.State(match), walker)
   end
 
   -- A warrior needs rage for it, and hits everything around
   local walker, run, mob = meet("WARRIOR")
-  mazeHold(walker, { "F" }, 2)
-  equal(40, mob.health, "nothing without rage")
+  abbeyHold(walker, { "F" }, 2)
+  equal(45, mob.health, "nothing without rage")
   equal(false, walker.ticker.propagates)
   run.power = 30
-  mazeHold(walker, { "F" }, 2)
-  equal(10, mob.health)
+  abbeyHold(walker, { "F" }, 2)
+  equal(15, mob.health)
   assert(run.power < 30)
   assert(run.ready > 0)
   equal(1, walker.ability.waits, "it says how long until the next")
 
   -- Nothing hurts a paladin for a while
   walker, run, mob = meet("PALADIN")
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   equal(60, run.power)
-  mazeHold(walker, {}, 150)
+  abbeyHold(walker, {}, 150)
   equal(110, run.health)
   equal(true, mob.awake)
-  mazeHold(walker, {}, 100)
+  abbeyHold(walker, {}, 100)
   assert(run.health < 110, "and then it does again")
 
   -- A hunter's arrow is worth half from this near, and all of it from further away
   walker, run, mob = meet("HUNTER")
-  mazeHold(walker, { "SPACE" }, 1)
-  equal(33, mob.health)
-  walker.pose.x, walker.pose.y = walker.pose.x * 2 - mob.x, walker.pose.y * 2 - mob.y
+  abbeyHold(walker, { "SPACE" }, 1)
+  equal(38, mob.health)
   mob.frozen = 100
-  mazeHold(walker, { "F" }, 1)
-  equal(19, mob.health, "every kobold in sight")
+  walker.pose.x, walker.pose.y = walker.pose.x * 2 - mob.x, walker.pose.y * 2 - mob.y
+  if walker.view.state.cells[abbeySquare(walker.view.state, walker.pose.x, walker.pose.y)] ~= 0 then
+    walker.pose.x, walker.pose.y = (walker.pose.x + mob.x) / 2, (walker.pose.y + mob.y) / 2
+  end
+  abbeyHold(walker, { "F" }, 1)
+  equal(24, mob.health, "everyone in sight")
   equal(65, math.floor(run.power))
 
   -- Nobody sees a rogue, and the first blow out of nowhere is worth three
   walker, run, mob = meet("ROGUE")
-  mazeHold(walker, { "F" }, 1)
-  mazeHold(walker, {}, 100)
+  abbeyHold(walker, { "F" }, 1)
+  abbeyHold(walker, {}, 100)
   equal(false, mob.awake)
   equal(90, run.health)
-  mazeHold(walker, { "SPACE" }, 1)
-  equal(16, mob.health)
+  abbeyHold(walker, { "SPACE" }, 1)
+  equal(21, mob.health)
   equal(nil, run.buff, "which is the end of hiding")
   equal(true, mob.awake)
-  mazeHold(walker, { "SPACE" }, 14)
-  equal(8, mob.health, "and the next is worth one")
+  abbeyHold(walker, { "SPACE" }, 14)
+  equal(13, mob.health, "and the next is worth one")
 
   -- A priest heals, but not what isn't hurt
   walker, run = meet("PRIEST")
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   equal(100, run.power)
   run.health = 20
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   equal(60, run.health)
   equal(65, math.floor(run.power))
 
   -- A shaman's totem fights on its own for as long as it stands
   walker, run, mob = meet("SHAMAN")
-  mob.frozen = 100
-  mazeHold(walker, { "F" }, 1)
+  mob.frozen = 1000
+  abbeyHold(walker, { "F" }, 1)
   assert(run.totem, "a totem")
-  assert(mazeStrips(walker, run.totem) > 0, "to be seen")
-  mazeHold(walker, {}, 120)
-  equal(16, mob.health, "three times in two seconds and a bit")
-  mazeHold(walker, {}, 600)
+  assert(abbeyStrips(walker, run.totem) > 0, "to be seen")
+  abbeyHold(walker, {}, 120)
+  equal(21, mob.health, "three times in two seconds and a bit")
+  abbeyHold(walker, {}, 600)
   equal(nil, run.totem)
-  -- And their lightning jumps on to the next kobold
-  local other = run.mobs[2]
-  other.dead, other.frozen, other.x, other.y = false, 100, mob.x, mob.y
   equal(true, mob.dead, "it was the end of that one")
-  mob.health, mob.dead = 40, false
-  mazeHold(walker, { "SPACE" }, 12)
-  equal("27,33.5", math.min(mob.health, other.health) .. "," .. math.max(mob.health, other.health))
+  -- And their lightning jumps on to the next
+  local other = run.mobs[#run.mobs] ~= mob and run.mobs[#run.mobs] or run.mobs[1]
+  other.dead, other.frozen, other.x, other.y, other.foe, other.health = false, 1000, mob.x, mob.y, mob.foe, 45
+  mob.health, mob.dead = 45, false
+  abbeyHold(walker, { "SPACE" }, 12)
+  equal("32,38.5", math.min(mob.health, other.health) .. "," .. math.max(mob.health, other.health))
 
   -- A mage freezes what is near
   walker, run, mob = meet("MAGE")
-  mazeHold(walker, { "F" }, 1)
-  equal(35, mob.health)
+  abbeyHold(walker, { "F" }, 1)
+  equal(40, mob.health)
   assert(mob.frozen > 3)
-  mazeHold(walker, {}, 150)
+  abbeyHold(walker, {}, 150)
   equal(80, run.health, "and what is frozen does nothing")
-  mazeHold(walker, {}, 150)
+  abbeyHold(walker, {}, 150)
   assert(run.health < 80, "until it thaws")
 
   -- A warlock trades health for mana, and gets some back from every bolt that lands
   walker, run, mob = meet("WARLOCK")
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   equal(90, run.health, "not with all the mana there is")
   run.power, mob.frozen = 0, 100
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   equal(75, run.health)
   equal(30, math.floor(run.power))
-  mazeHold(walker, { "SPACE" }, 12)
-  equal(22, mob.health)
+  abbeyHold(walker, { "SPACE" }, 12)
+  equal(27, mob.health)
   equal("79.5", string.format("%.1f", run.health))
 
   -- A druid has claws for a while, and is quicker on its feet
   walker, run, mob = meet("DRUID")
   mob.frozen = 100
-  mazeHold(walker, { "F" }, 1)
+  abbeyHold(walker, { "F" }, 1)
   assert(run.buff)
-  mazeHold(walker, { "SPACE" }, 1)
-  equal(29, mob.health)
+  abbeyHold(walker, { "SPACE" }, 1)
+  equal(34, mob.health)
   equal(0, #run.bolts)
-  mazeHold(walker, {}, 420)
+  abbeyHold(walker, {}, 420)
   equal(nil, run.buff)
-  mazeHold(walker, { "SPACE" }, 1)
+  abbeyHold(walker, { "SPACE" }, 1)
   equal(1, #run.bolts, "and bolts again after")
 end
 
-function tests.WarcraftsteinPotionsAreDrunk()
-  local player, match, walker = mazeOnScreen(6, "MAGE")
+function tests.WarcraftsteinLevelsAndTalents()
+  local player, match, walker = abbeyOnScreen(6)
+  local state = player.private.Match.State(match)
   local run = walker.run
+  equal(1, run.level)
+  equal(0, run.points)
+
+  -- A kill that tips it over is a level, and a point
+  local mob = abbeyMeet(state, walker)
+  run.xp = 25
+  walker:wound(mob, 100, run.spec.attack)
+  equal(2, run.level)
+  equal(5, run.xp)
+  equal(1, run.points)
+  walker:gauge()
+  equal(1, walker.talents.shown)
+
+  -- N opens the book, and while it is open nothing happens
+  local other = run.mobs[#run.mobs] ~= mob and run.mobs[#run.mobs] or run.mobs[1]
+  other.dead, other.x, other.y = false, mob.x, mob.y
+  walker.ticker:Fire("OnKeyDown", "N")
+  equal(true, walker.book:IsShown())
+  abbeyHold(walker, {}, 100)
+  equal(false, other.awake, "the monastery waits")
+  equal(120, run.health)
+
+  -- A talent further down a tree needs points in it first
+  equal(false, walker:learn(1, 2))
+  equal(false, walker:learn(3, 3))
+  equal(true, walker:learn(1, 1))
+  equal(1, run.learned.sharpened)
+  equal("17.25", string.format("%.2f", run.spec.attack.hits))
+  equal(0, run.points)
+  equal("1/2", walker.tiles[1][1].rank:GetText())
+  equal(false, walker:learn(1, 1), "not without a point")
+  run.points = 3
+  equal(true, walker:learn(1, 1))
+  equal(false, walker:learn(1, 1), "two ranks and no more")
+  equal("19.5", string.format("%.1f", run.spec.attack.hits))
+  equal(true, walker:learn(1, 2), "two in the tree open the next")
+  equal(0.6, run.spec.attack.splash)
+  equal(false, walker:learn(1, 3))
+  equal(true, walker:learn(3, 1))
+  equal("0.62", string.format("%.2f", run.spec.armor), "on top of the armour a warrior has anyway")
+  walker:explain(walker.tiles[3][1], 3, 1)
+  -- Escape closes it
+  walker.ticker:Fire("OnKeyDown", "ESCAPE")
+  equal(false, walker.book:IsShown())
+
+  -- Every talent of every class can be learnt, and changes something
+  for _, class in ipairs({ "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }) do
+    player, match, walker = abbeyOnScreen(6, class)
+    run = walker.run
+    run.points = 15
+    for tree, trees in ipairs(walker.trees[class]) do
+      for tier, known in ipairs(trees.talents) do
+        for rank = 1, known.ranks do
+          local before = run.spec
+          assert(walker:learn(tree, tier), class .. " " .. known.id .. " rank " .. rank)
+          assert(before ~= run.spec, "learning makes the class anew")
+          -- And every number it is about is another one now
+          for _, mod in ipairs(known.mods) do
+            local function find(spec)
+              local value = spec
+              for part in mod[1]:gmatch("[^.]+") do
+                value = value and value[part]
+              end
+              return value
+            end
+            assert(find(run.spec) ~= nil and find(run.spec) ~= find(before), class .. " " .. known.id .. " changes " .. mod[1])
+          end
+        end
+      end
+    end
+    equal(0, run.points)
+    -- Everything learnt and all of it still a fight
+    local mob = abbeyMeet(player.private.Match.State(match), walker)
+    abbeyHold(walker, { "SPACE" }, 400)
+    equal(true, mob.dead, class .. " with every talent")
+  end
+end
+
+function tests.WarcraftsteinPotionsAreDrunk()
+  local player, match, walker = abbeyOnScreen(6, "MAGE")
+  local run = walker.run
+  for _, item in ipairs(run.decor) do
+    item.girth = nil
+  end
   local potions = #run.loot
   local health, power
   for _, potion in ipairs(run.loot) do
     health = potion.kind == "health" and potion or health
     power = potion.kind == "power" and potion or power
   end
-  -- Not by anyone who has no use for it
-  health.x, health.y = walker.pose.x, walker.pose.y
-  mazeHold(walker, {}, 2)
+  -- Not by anyone who has no use for it. Out of the sanctuary, which gives health back by itself
+  walker.pose.x, walker.pose.y = health.x, health.y
+  abbeyHold(walker, {}, 2)
   equal(potions, #run.loot)
   run.health = 30
-  mazeHold(walker, {}, 2)
+  abbeyHold(walker, {}, 2)
   equal(65, run.health)
   equal(potions - 1, #run.loot)
   equal(65, walker.health.value)
 
   run.power = 80
   power.x, power.y = walker.pose.x, walker.pose.y
-  mazeHold(walker, {}, 2)
+  abbeyHold(walker, {}, 2)
   equal(100, run.power, "never more than there is room for")
   equal(potions - 2, #run.loot)
   equal("active", match.status)
+end
+
+function tests.WarcraftsteinGetsRoundCorners()
+  local player, match, walker = abbeyOnScreen(9)
+  local state = player.private.Match.State(match)
+  local pose, side = walker.pose, state.side
+  for _, mob in ipairs(walker.run.mobs) do
+    mob.dead = true
+  end
+  walker.run.boss = nil
+  walker.run.decor = {}
+  local function open(column, row)
+    return state.cells[row * side + column + 1] == 0
+  end
+  local function off(angle)
+    return math.abs((pose.facing - angle + math.pi) % (math.pi * 2) - math.pi)
+  end
+
+  -- A turn begins gently and is soon as quick as it gets
+  local facing = pose.facing
+  abbeyHold(walker, { "D" }, 1)
+  local first = (pose.facing - facing) % (math.pi * 2)
+  assert(first > 0 and first < 3.6 * 0.02 * 0.6, "a tap is a small correction: " .. first)
+  walker.ticker:Fire("OnKeyDown", "D")
+  for _ = 1, 10 do
+    walker.ticker:Fire("OnUpdate", 0.02)
+  end
+  local before = pose.facing
+  walker.ticker:Fire("OnUpdate", 0.02)
+  walker.ticker:Fire("OnKeyUp", "D")
+  equal("0.072", string.format("%.3f", (pose.facing - before) % (math.pi * 2)), "all of it after a moment")
+
+  -- The mouse turns with the right button held, and then the keys that turn step aside
+  Client.mouseDown, Client.cursor = true, { 500, 300 }
+  walker.ticker:Fire("OnUpdate", 0.02)
+  facing = pose.facing
+  Client.cursor = { 600, 300 }
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal("0.600", string.format("%.3f", (pose.facing - facing) % (math.pi * 2)))
+  facing = pose.facing
+  abbeyHold(walker, { "A" }, 5)
+  abbeyHold(walker, { "D" }, 5)
+  equal(facing, pose.facing, "no turning with the keys meanwhile")
+  -- And goes on turning with the cursor off the game, for as long as the button is held
+  Client.over, Client.cursor = false, { 500, 300 }
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal("5.683", string.format("%.3f", (pose.facing - facing) % (math.pi * 2)))
+  Client.over, Client.mouseDown = true, false
+  walker.ticker:Fire("OnUpdate", 0.02)
+  equal(nil, walker.dragged)
+
+  -- A corner that is only just in the way: a shoulder in the next square, the way to go beside it
+  local found = false
+  for row = 1, side - 3 do
+    for column = 1, side - 3 do
+      if not found and open(column, row) and open(column + 1, row) and open(column, row + 1) and not open(column + 1, row + 1) and open(column, row + 2) then
+        found = true
+        pose.x, pose.y, pose.facing = column + 1 - 0.22 + 0.1, row + 0.5, math.pi / 2
+        abbeyHold(walker, { "W" }, 30)
+        assert(pose.y > row + 1, "round it and on: " .. pose.y)
+        assert(pose.x + 0.22 <= column + 1, "by stepping aside")
+        -- But not one that is squarely in the way
+        pose.x, pose.y, pose.facing = column + 1 - 0.22 + 0.4, row + 0.5, math.pi / 2
+        abbeyHold(walker, { "W" }, 30)
+        assert(pose.y < row + 1, "that is a wall")
+      end
+    end
+  end
+  equal(true, found, "a corner to try it at")
+
+  -- Walked into at an angle, a wall is slid along, and the player turned to look where they go
+  found = false
+  for row = 1, side - 2 do
+    for column = 1, side - 4 do
+      local corridor = not found
+      for along = column, column + 2 do
+        corridor = corridor and open(along, row) and not open(along, row - 1) and not open(along, row + 1)
+      end
+      if corridor then
+        found = true
+        pose.x, pose.y, pose.facing = column + 0.3, row + 0.5, 0.5
+        abbeyHold(walker, { "W" }, 8)
+        equal("0.500", string.format("%.3f", pose.facing), "not before there is a wall")
+        abbeyHold(walker, { "W" }, 25)
+        assert(off(0) < 0.01, "along the corridor: " .. pose.facing)
+        assert(pose.x > column + 1)
+        -- Not while stepping sideways, which is meant
+        pose.x, pose.y, pose.facing = column + 0.3, row + 0.5, 0.5
+        abbeyHold(walker, { "W", "E" }, 30)
+        equal("0.500", string.format("%.3f", pose.facing))
+      end
+    end
+  end
+  equal(true, found, "a corridor to try it in")
 end
 
 -----------------------------

@@ -108,17 +108,23 @@ solve on your own or the two of you together, both at once.
   square, which are tidied away as the digits they are about get written. **Hint** fills in
   the square you are on, though a game with a hint in it doesn't count for your best time.
   The keys are only the game's while the cursor is over it, and never in combat
-- Warcraftstein 3D is a maze you stand in: find the portal that leads out of it and walk into
-  it, before the kobolds that live there get you. You go in as the class of the character you
-  are on (press space), or as any other you pick: each strikes its own way, from a warrior's
-  sword to a mage's fireballs, and can do one thing more, from a rogue's stealth to a shaman's
-  totem. Hold W and S or the up and down arrows to walk, A and D or the left and right arrows
-  to turn, Q and E to step sideways, space to strike and F for what your class can do, with the
-  cursor over the game. With the cursor anywhere else the maze stands still. Potions on the
-  floor are drunk by walking over them, red for health and blue for mana, rage or energy. The letter at the top says
-  which way you are looking, and the walls are built differently in different parts of the
-  maze. Pick how big it is when you set the game up, your best time for every size is kept.
-  Where you are isn't: a maze you come back to after logging out begins at the start again
+- Warcraftstein 3D is the Scarlet Monastery, seen from inside it: fight your way through the
+  graveyard, the library and the cathedral to the armory, where Herod guards the portal out.
+  It stays shut until he falls. You start in a chapel the Crusade won't follow you into, where
+  you get your health back but can't fight: go back to it whenever you need to. You go in as the class of the character you are on (press
+  space), or as any other you pick: each strikes its own way, from a warrior's sword to a
+  mage's fireballs, and can do one thing more, from a rogue's stealth to a shaman's totem.
+  Every kill is worth experience, every level a talent point, and every class has three trees
+  of talents to spend them in (press N). Soldiers, monks, adepts who cast from afar, defenders
+  behind their shields and the phantasms of the graveyard are in the way. Hold W and S or the
+  up and down arrows to walk, A and D or the left and right arrows to turn, Q and E to step
+  sideways, space to strike and F for what your class can do, with the cursor over the game.
+  Or hold the right mouse button and turn with the mouse, with A and D to step sideways. With
+  the cursor anywhere else, or the talents open, the monastery stands still. Potions on the
+  floor are drunk by walking over them, red for health and blue for mana, rage or energy. Pick
+  how many rooms there are when you set the game up, your best time for every size is kept.
+  Where you are isn't, and nor are your talents: a game you come back to after logging out
+  begins at the start again
 - `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
   the name empty to challenge your target
 
@@ -269,10 +275,11 @@ and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everythin
 game is put together again from its moves every time it is loaded, so `newState` runs often.
 `Games/Fourtiles.lua` is played alone or by two together, with no turns (`together`), and has
 its puzzles made ahead of time by a tool.
-`Games/Warcraftstein.lua` isn't played in moves at all: its view walks the player through a maze
-many times a second and draws what they see a column at a time, the kobolds in it included, and
-the engine only ever hears who went in, and that the way out was found or that they died
-looking. What a class is in there is a table of numbers at the top of the file (`CLASSES`).
+`Games/Warcraftstein.lua` isn't played in moves at all: its view walks the player through the
+monastery many times a second and draws what they see, walls a column at a time and floor and
+ceiling a row at a time, and the engine only ever hears who went in, and that the way out was
+found or that they died looking. What a class is in there, what its talents do and what the
+Crusade is like are tables of numbers in the file (`CLASSES`, `TALENTS`, `FOES`).
 
 The round pieces, the star Chinese Checkers is played on and the icons of the games played with
 them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
@@ -282,8 +289,9 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
 The puzzles of Fourtiles and its icon are made by `Tools/make_fourtiles.py`.
-The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls of Warcraftstein 3D,
-everything that stands between them and its icon by `Tools/make_warcraftstein.py`.
+The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
+ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
+`Tools/make_warcraftstein.py`.
 
 ## Credits
 
