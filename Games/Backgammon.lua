@@ -479,6 +479,10 @@ end
 --
 -- A turn is put together a checker at a time and only sent once the player says so, until then
 -- any of it can be taken back. Clicking a point two dice away moves a checker by both.
+--
+-- The dice (GUI/Dice.lua) lie in the half of the table whoever rolled them sits at. A roll of
+-- the player's own waits in their hand until they throw it, the opponent's is thrown for them
+-- as it comes.
 
 local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\"
 local DISCS = { "white", "red" }
@@ -496,12 +500,14 @@ local POINT_REACH = STACK + 0.4
 -- Squares that aren't on a point: a square on one is the point times ten plus how high up it
 local MY_BAR, THEIR_BAR, MY_OFF, THEIR_OFF = 251, 261, 271, 281
 local DIE_SIZE, DIE_GAP = 0.95, 0.15
+-- How far in from the end of the table a roll is thrown from, at its far side from the bar
+local HAND = 0.75
+-- Seconds the opponent's roll waits for the checkers just moved to get where they are going
+local THROW_DELAY = 0.3
 local LAST_MOVE = { 1, 0.9, 0.35, 0.55 }
 local TALLY_HEIGHT, TALLY_GAP = 22, 4
 local BUTTON_WIDTH = 72
--- Seconds the dice tumble for when they are rolled, and between one face and the next
-local TUMBLE, TUMBLE_FACE = 0.5, 0.07
-local MOVE_SOUND, ROLL_SOUND = "chipsCollide", "dieThrow"
+local MOVE_SOUND = "chipsCollide"
 
 --- Where a point is on the table as the player sees it
 --- @param point number In the player's own numbers
@@ -536,7 +542,7 @@ end
 
 --- @class BackgammonView: GameViewObject
 --- @field board Board
---- @field dice Texture[]
+--- @field dice Dice
 --- @field tallies Frame[] The opponent's above the table, the player's own below
 --- @field note FontString Says who had to sit out
 --- @field undo Button
@@ -547,7 +553,8 @@ end
 --- @field options table<number, table<number, boolean>> Where the player's checkers can go next
 --- @field paths table<number, BackgammonStep[]> How the checker in hand gets to each square it can go to
 --- @field sent boolean? The move being shown is the player's own, the checkers are already there
---- @field tumbling number? Seconds the dice have left to tumble
+--- @field rolled any The roll last put on the table, by its key
+--- @field thrown table<any, boolean> The player's own rolls they have thrown, by key
 local View = {}
 View.__index = View
 
@@ -661,7 +668,7 @@ end
 --- @return BackgammonView
 local function createView(stage)
   --- @type BackgammonView
-  local self = setmetatable({ steps = {}, options = {}, paths = {} }, View)
+  local self = setmetatable({ steps = {}, options = {}, paths = {}, thrown = {} }, View)
   local Board, Widgets = private.Board, private.Widgets
 
   local squares = { MY_BAR, THEIR_BAR, MY_OFF, THEIR_OFF }
@@ -703,16 +710,7 @@ local function createView(stage)
     end,
   })
 
-  -- Up to four dice, for doubles. They lie in the half of the table whoever rolled them sits at
-  local diceFrame = CreateFrame("Frame", nil, self.board.frame)
-  diceFrame:SetAllPoints()
-  self.dice = {}
-  for index = 1, 4 do
-    self.dice[index] = diceFrame:CreateTexture(nil, "ARTWORK", nil, 1)
-  end
-  diceFrame:SetScript("OnUpdate", function(_, elapsed)
-    self:tumble(elapsed)
-  end)
+  self.dice = private.Dice.New(self.board.frame)
 
   self.tallies = { Board.Tally(stage, TALLY_HEIGHT), Board.Tally(stage, TALLY_HEIGHT) }
   self.tallies[1]:SetPoint("BOTTOMLEFT", self.board.frame, "TOPLEFT", 0, TALLY_GAP)
@@ -782,15 +780,17 @@ function View:Layout(width, height)
   end
 end
 
---- Lays out the roll that is being played: the dice already used up are faded
---- @param faces number[]? What to show on them instead of what was rolled, while they tumble
-function View:showDice(faces)
+--- Puts the roll that is being played on the table, with the dice already used up told apart
+function View:showDice()
   local view, board = self.view, self.board
   --- @type BackgammonState
   local state = view.state
   -- A game that is over has no roll left to play, looking back through one shows them as they fell
-  local over = state.outcome ~= nil or (view.live and view.match.status ~= "active")
-  local shown = over and {} or rolls(state.dice)
+  if state.outcome ~= nil or (view.live and view.match.status ~= "active") then
+    self.dice:Hide()
+    return
+  end
+  local shown = rolls(state.dice)
 
   -- Which of them the turn so far has used. Either die may have borne a checker off: say the
   -- one that leaves the most to go on with
@@ -805,44 +805,57 @@ function View:showDice(faces)
       left[die] = (left[die] or 0) + 1
     end
   end
-
-  local cell = board.cell
-  local size = cell * DIE_SIZE
-  local mine = state.turn == view.seat
-  local centre = EDGE + HOME / 2 + (mine and HOME + BAR_WIDTH or 0)
-  local span = #shown * DIE_SIZE + (#shown - 1) * DIE_GAP
-  for index, die in ipairs(self.dice) do
-    local value = shown[index]
-    die:SetShown(value ~= nil)
-    if value then
-      local x = centre - span / 2 + (index - 1) * (DIE_SIZE + DIE_GAP) + DIE_SIZE / 2
-      die:SetTexture(IMAGES .. "Dice\\" .. DISCS[state.turn] .. (faces and faces[index] or value))
-      die:SetSize(size, size)
-      die:ClearAllPoints()
-      die:SetPoint("CENTER", board.frame, "TOPLEFT", x * cell, -HEIGHT / 2 * cell)
-      local unused = (left[value] or 0) > 0
-      if unused then
-        left[value] = left[value] - 1
-      end
-      die:SetAlpha((unused or faces) and 1 or 0.35)
+  local spent = {}
+  for index, die in ipairs(shown) do
+    spent[index] = (left[die] or 0) == 0
+    if not spent[index] then
+      left[die] = left[die] - 1
     end
   end
+
+  -- In the roller's half, thrown in from its far end
+  local cell = board.cell
+  local mine = state.turn == view.seat
+  local centre = EDGE + HOME / 2 + (mine and HOME + BAR_WIDTH or 0)
+  local hand = mine and EDGE + 2 * HOME + BAR_WIDTH - HAND or EDGE + HAND
+  self.dice:Show({
+    key = view.match.id .. ":" .. view.ply,
+    faces = shown,
+    color = DISCS[state.turn],
+    x = centre * cell,
+    y = HEIGHT / 2 * cell,
+    from = { x = hand * cell, y = HEIGHT / 2 * cell },
+    size = DIE_SIZE * cell,
+    gap = DIE_GAP * cell,
+    thrown = 2,
+    spent = spent,
+    glow = #shown > 2,
+  })
 end
 
---- Keeps the dice turning for a moment after they were rolled
---- @param elapsed number
-function View:tumble(elapsed)
-  if not self.tumbling then
+--- A new roll on the table is thrown: by the player, when it is theirs to play, or for the
+--- opponent as their roll comes in
+--- @param event BackgammonEvent?
+function View:throwDice(event)
+  local view = self.view
+  local roll = self.dice.roll
+  local key = roll and roll.key
+  if key == self.rolled then
     return
   end
-  local before = self.tumbling
-  self.tumbling = before - elapsed
-  if self.tumbling <= 0 then
-    self.tumbling = nil
-    self:showDice()
-  elseif math.floor(before / TUMBLE_FACE) ~= math.floor(self.tumbling / TUMBLE_FACE) then
-    -- Any faces will do on the way, what was rolled is already decided
-    self:showDice({ math.random(6), math.random(6), math.random(6), math.random(6) })
+  self.rolled = key
+  if not key or not view.live then
+    return
+  end
+  if view.state.turn == view.seat and view.canMove then
+    if not self.thrown[key] then
+      self.dice:Hold(function()
+        self.thrown[key] = true
+        self.board:SetEnabled(self.view.canMove)
+      end)
+    end
+  elseif event then
+    self.dice:Throw(THROW_DELAY)
   end
 end
 
@@ -987,9 +1000,7 @@ function View:Update(view)
   if view.changed then
     board:Select(nil)
     board:StopGlides()
-    self.tumbling = nil
   end
-  board:SetEnabled(view.canMove)
   self:draw()
 
   --- @type BackgammonEvent?
@@ -999,11 +1010,10 @@ function View:Update(view)
       self:animate(event)
     end
     private.Widgets.PlaySound(MOVE_SOUND)
-    if event.dice[1] and view.live then
-      self.tumbling = TUMBLE
-      private.Widgets.PlaySound(ROLL_SOUND)
-    end
   end
+  self:throwDice(event)
+  -- Nothing to play before the dice are out of the hand
+  board:SetEnabled(view.canMove and not self.dice:Holding())
 end
 
 private.Games.Register({

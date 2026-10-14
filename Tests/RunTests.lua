@@ -25,6 +25,7 @@ local ENGINE_FILES = {
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
   "Games/Backgammon.lua",
+  "Games/Yacht.lua",
   "Games/CrazyEights.lua",
   "Games/Battleship.lua",
   "Engine/Lexicon.lua",
@@ -43,7 +44,7 @@ local ENGINE_FILES = {
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -1932,7 +1933,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  equal("solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,wormcraft", idsOf(Games.Search(nil, nil, 1)))
+  equal("yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,wormcraft", idsOf(Games.Search(nil, nil, 1)))
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
   equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
@@ -3562,15 +3563,109 @@ local function clickPoint(board, point, button)
   release(board)
 end
 
+--- What the player has the dice in hand with: the table, there to click. Nil if they haven't
+--- @return table?
+local function diceInHand()
+  local prompts = Client.Find(function(widget)
+    return widget.text == "dice_roll" and widget:IsVisible()
+  end)
+  return prompts[1] and prompts[1]:GetParent()
+end
+
+--- Clicks to throw the dice in hand
+local function throwDice()
+  local hand = assert(diceInHand(), "Expected dice in hand")
+  hand:Fire("OnMouseDown", "LeftButton")
+  hand:Fire("OnMouseUp", "LeftButton")
+end
+
+--- Lets time pass for the dice on a table, so that they come to rest
+--- @param surface table What they lie on
+local function letDiceRoll(surface)
+  local frames = Client.Find(function(widget)
+    return widget.parent == surface and widget.scripts.OnUpdate ~= nil
+  end)
+  for _, frame in ipairs(frames) do
+    for _ = 1, 60 do
+      frame:Fire("OnUpdate", 0.02)
+    end
+  end
+end
+
+--- The dice to be seen, left to right as they lie
+--- @return number[] faces
+--- @return table[] textures
+local function diceOnTable()
+  local textures = Client.Find(function(widget)
+    return widget.kind == "Texture" and widget:IsVisible() and (widget.texture or ""):match("Dice\\%a+%d$") ~= nil
+  end)
+  local faces = {}
+  for index, texture in ipairs(textures) do
+    faces[index] = tonumber(texture.texture:match("%d$"))
+  end
+  return faces, textures
+end
+
 --- Starts a game of backgammon and opens the window of whoever won the opening roll
+--- @param held boolean? Leave the opening roll in their hand, rather than throw it
 --- @return World, table mover, table opponent, string id, table state
-local function backgammonOnScreen()
+local function backgammonOnScreen(held)
   local world, seated, id = startedGame("backgammon")
   local state = seated[1].private.Match.State(seated[1].matches[id])
   local mover = seated[state.turn]
   local MainFrame = openWindow(mover)
   MainFrame.Open(id)
+  if not held then
+    throwDice()
+  end
   return world, mover, seated[3 - state.turn], id, mover.private.Match.State(mover.matches[id])
+end
+
+function tests.WindowHasBackgammonDiceThrownFromTheHand()
+  local world, mover, opponent, id, state = backgammonOnScreen(true)
+  local board = shownBoard()
+  local high, low = state.dice[1], state.dice[2]
+  local hand = assert(diceInHand(), "the opening roll waits in the hand of whoever won it")
+  clickPoint(board, 13)
+  clickPoint(board, 13 - high)
+  equal(false, Client.Button("backgammon_undo").enabled, "nothing is played before the dice are thrown")
+
+  hand:Fire("OnMouseDown", "LeftButton")
+  equal("dieShuffle", Client.sounds[#Client.sounds], "shaken for as long as the button is held")
+  equal(nil, diceInHand())
+  hand:Fire("OnMouseUp", "LeftButton")
+  equal("dieShuffle", Client.stopped[#Client.stopped], "the rattle stops as they leave the hand")
+  equal(false, hand:IsVisible())
+  letDiceRoll(board)
+  equal("dieThrow", Client.sounds[#Client.sounds], "they are heard landing")
+  equal(high .. "," .. low, table.concat(diceOnTable(), ","), "and come to rest on what was rolled")
+
+  -- The die a checker was moved by is used up
+  clickPoint(board, 13)
+  clickPoint(board, 13 - high)
+  letDiceRoll(board)
+  local _, dice = diceOnTable()
+  assert(dice[1]:GetAlpha() < 1, "the die played is told apart")
+  equal(1, dice[2]:GetAlpha())
+  clickPoint(board, 13)
+  clickPoint(board, 13 - low)
+  Client.Button("backgammon_play"):Fire("OnClick")
+
+  -- The opponent's roll is thrown for them, there is nothing to click
+  equal(nil, diceInHand())
+  letDiceRoll(board)
+  local theirs = mover.private.Match.State(mover.matches[id])
+  equal(theirs.dice[1] .. "," .. theirs.dice[2], table.concat(diceOnTable(), ",", 1, 2))
+
+  -- And when their move comes, the next roll is the player's to throw
+  world:Deliver()
+  local game = opponent.private.Games.Get("backgammon")
+  assert(opponent.session:Move(id, backgammonTurn(game, opponent.private.Match.State(opponent.matches[id]))))
+  world:Deliver()
+  letDiceRoll(board)
+  assert(diceInHand(), "the player's roll waits in their hand")
+  throwDice()
+  equal(nil, diceInHand())
 end
 
 function tests.WindowPlaysBackgammonACheckerAtATime()
@@ -3667,6 +3762,259 @@ function tests.WindowMovesABackgammonCheckerByBothDice()
     -- Both ways there were closed, which leaves the checker where it was
     equal(false, Client.Button("backgammon_undo").enabled)
   end
+end
+
+-----------------------------
+-- Yacht
+-----------------------------
+
+function tests.YachtScoresEveryBox()
+  local game = loadEngine().Games.Get("yacht")
+  local scoreOf = game.rules.scoreOf
+  local function scores(dice, card)
+    local parts = {}
+    for _, id in ipairs({ "1", "2", "3", "4", "5", "6", "3k", "4k", "fh", "ss", "ls", "y", "c" }) do
+      parts[#parts + 1] = id .. "=" .. scoreOf(dice, id, card or {})
+    end
+    return table.concat(parts, " ")
+  end
+  equal("1=0 2=4 3=9 4=0 5=0 6=0 3k=13 4k=0 fh=25 ss=0 ls=0 y=0 c=13", scores({ 3, 2, 3, 2, 3 }))
+  equal("1=1 2=2 3=3 4=4 5=0 6=6 3k=0 4k=0 fh=0 ss=30 ls=0 y=0 c=16", scores({ 6, 1, 3, 2, 4 }), "four in a row with one more")
+  equal("1=0 2=2 3=3 4=4 5=5 6=6 3k=0 4k=0 fh=0 ss=30 ls=40 y=0 c=20", scores({ 2, 3, 4, 5, 6 }))
+  equal("1=0 2=0 3=0 4=0 5=5 6=24 3k=29 4k=29 fh=0 ss=0 ls=0 y=0 c=29", scores({ 6, 6, 5, 6, 6 }))
+  equal("1=0 2=0 3=0 4=20 5=0 6=0 3k=20 4k=20 fh=0 ss=0 ls=0 y=50 c=20", scores({ 4, 4, 4, 4, 4 }), "a yacht isn't a full house")
+  equal("1=0 2=0 3=0 4=20 5=0 6=0 3k=20 4k=20 fh=25 ss=30 ls=40 y=50 c=20", scores({ 4, 4, 4, 4, 4 }, { y = 0 }), "until the yacht box is filled, even with nothing")
+end
+
+function tests.YachtRollsAgainKeepingWhatIsKept()
+  local private = loadEngine()
+  local game = private.Games.Get("yacht")
+  local random = private.Random.New(7)
+  local state = game.newState(1, random)
+  equal(5, #state.dice)
+  equal(1, state.rolls)
+  for _, face in ipairs(state.dice) do
+    assert(face >= 1 and face <= 6)
+  end
+
+  equal(false, (game.validate(state, 1, "r11111")), "keeping everything isn't a roll")
+  equal(false, (game.validate(state, 1, "r1010")))
+  equal(false, (game.validate(state, 1, "r10102")))
+  equal(false, (game.validate(state, 1, "sxx")))
+  equal(false, (game.validate(state, 2, "r00000")))
+  local kept = { state.dice[1], state.dice[4] }
+  equal(true, (game.validate(state, 1, "r10010")))
+  local event = game.apply(state, 1, "r10010", random)
+  equal("10010", event.kept)
+  equal(kept[1] .. "," .. kept[2], state.dice[1] .. "," .. state.dice[4])
+  equal(2, state.rolls)
+  game.apply(state, 1, "r00000", random)
+  equal(false, (game.validate(state, 1, "r00000")), "three rolls a turn")
+  equal(true, (game.validate(state, 1, "sc")))
+
+  local total = state.dice[1] + state.dice[2] + state.dice[3] + state.dice[4] + state.dice[5]
+  event = game.apply(state, 1, "sc", random)
+  equal("c", event.box)
+  equal(total, event.scored)
+  equal(total, state.card.c)
+  equal(2, state.turn)
+  equal(1, state.rolls, "the next turn's dice are rolled already")
+  equal(false, (game.validate(state, 1, "sc")), "a box is filled once")
+  equal(total, game.rules.totalOf(state))
+  equal("yacht_progress", game.progress(state))
+end
+
+function tests.YachtEarnsItsBonuses()
+  local private = loadEngine()
+  local game = private.Games.Get("yacht")
+  local random = private.Random.New(3)
+  local state = game.newState(1, random)
+
+  -- Three of each upper face is the 63 that earns 35
+  state.card = { ["1"] = 3, ["2"] = 6, ["3"] = 9, ["4"] = 12, ["5"] = 15 }
+  state.dice = { 6, 6, 6, 1, 2 }
+  local event = game.apply(state, 1, "s6", random)
+  equal(18, event.scored)
+  equal(true, event.upper)
+  equal(63 + 35, game.rules.totalOf(state))
+
+  -- A yacht, then another: 100 more, and it fits the full house
+  state.dice = { 2, 2, 2, 2, 2 }
+  event = game.apply(state, 1, "sy", random)
+  equal(50, event.scored)
+  equal(nil, event.extra)
+  state.dice = { 5, 5, 5, 5, 5 }
+  event = game.apply(state, 1, "sfh", random)
+  equal(25, event.scored)
+  equal(100, event.extra)
+  equal(100, state.bonus)
+  equal(63 + 35 + 50 + 25 + 100, game.rules.totalOf(state))
+
+  -- Not after a yacht box filled with nothing
+  state = game.newState(1, random)
+  state.card.y = 0
+  state.dice = { 3, 3, 3, 3, 3 }
+  event = game.apply(state, 1, "s3", random)
+  equal(nil, event.extra)
+  equal(0, state.bonus)
+end
+
+function tests.YachtIsPlayedThroughThirteenTurns()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session, Match, game = alice.session, alice.private.Match, alice.private.Games.Get("yacht")
+  local match = assert(session:Invite({}, "yacht"))
+  local boxes = { "y", "ls", "ss", "fh", "4k", "3k", "c", "6", "5", "4", "3", "2", "1" }
+  for turn, box in ipairs(boxes) do
+    equal(turn, Match.State(match).turn)
+    assert(session:Move(match.id, "r10100"))
+    assert(session:Move(match.id, "r00000"))
+    equal(nil, game.result(Match.State(match)))
+    assert(session:Move(match.id, "s" .. box))
+  end
+  local state = Match.State(match)
+  equal(true, state.over)
+  equal(false, (game.validate(state, 1, "r00000")))
+  equal(false, (game.validate(state, 1, "s1")))
+  local total = game.rules.totalOf(state)
+  equal(total >= 200 and 1 or 0, game.result(state).winner)
+  equal(total, session:Best("yacht", "score"))
+  equal("yacht_final", game.progress(state))
+end
+
+-----------------------------
+-- Yacht on screen
+-----------------------------
+
+--- Starts a game of Yacht and opens it
+--- @return table player, string id
+local function yachtOnScreen()
+  local world = World.New()
+  world.seed = 5
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  local match = assert(player.session:Invite({}, "yacht"))
+  MainFrame.Open(match.id)
+  return player, match.id
+end
+
+--- What the dice lie on: the felt
+--- @return table
+local function yachtFelt()
+  local found = Client.Find(function(widget)
+    return (widget.text == "yacht_turn" or widget.text == "yacht_card_full") and widget:IsVisible()
+  end)
+  equal(1, #found, "the turn written on the felt")
+  return found[1]:GetParent()
+end
+
+--- The row of the card for a box, or for what is added up
+--- @param id string
+--- @return table
+local function yachtRow(id)
+  local found = Client.Find(function(widget)
+    return widget.text == "yacht_row_" .. id and widget:IsVisible()
+  end)
+  equal(1, #found, "rows for " .. id)
+  return found[1]:GetParent()
+end
+
+--- The dice there are to click, in order
+--- @return table[]
+local function yachtDiceButtons()
+  return Client.Find(function(widget)
+    return widget.kind == "Button" and widget.scripts.OnClick ~= nil and widget.parent ~= nil and widget.parent.parent == yachtFelt() and widget:IsVisible()
+  end)
+end
+
+--- Lets time pass for everything that moves over the game, beside the dice
+local function yachtTime()
+  letDiceRoll(yachtFelt():GetParent())
+end
+
+function tests.WindowPlaysYacht()
+  local player, id = yachtOnScreen()
+  local Match = player.private.Match
+  local felt = yachtFelt()
+  local roll = Client.Button("yacht_roll")
+  equal(false, roll.enabled, "the first roll is in hand")
+  equal(true, diceInHand() ~= nil)
+  equal("", yachtRow("c").value.text, "nothing to score before the dice are thrown")
+
+  throwDice()
+  equal("", yachtRow("c").value.text, "nor while they are in the air")
+  letDiceRoll(felt)
+  local state = Match.State(player.matches[id])
+  local dice = state.dice
+  equal(table.concat(dice, ","), table.concat(diceOnTable(), ","))
+  equal(tostring(dice[1] + dice[2] + dice[3] + dice[4] + dice[5]), yachtRow("c").value.text, "what the dice would score")
+  equal(true, roll.enabled)
+  equal(true, says("yacht_hint_keep"))
+
+  -- Kept dice stay as they are, the rest are picked up and shaken while the button is held
+  local buttons = yachtDiceButtons()
+  equal(5, #buttons)
+  buttons[2]:Fire("OnClick")
+  buttons[5]:Fire("OnClick")
+  roll:Fire("OnMouseDown", "LeftButton")
+  equal("dieShuffle", Client.sounds[#Client.sounds])
+  equal("", logOf(player, id), "nothing is rolled before the button is let go")
+  equal("", yachtRow("c").value.text)
+  roll:Fire("OnMouseUp", "LeftButton")
+  equal("r01001", logOf(player, id))
+  letDiceRoll(felt)
+  state = Match.State(player.matches[id])
+  equal(dice[2] .. "," .. dice[5], state.dice[2] .. "," .. state.dice[5])
+  equal(table.concat(state.dice, ","), table.concat(diceOnTable(), ","))
+
+  -- Let back onto the felt, a die is rolled again
+  yachtDiceButtons()[2]:Fire("OnClick")
+  roll:Fire("OnMouseDown", "LeftButton")
+  roll:Fire("OnMouseUp", "LeftButton")
+  equal("r01001,r00001", logOf(player, id))
+  letDiceRoll(felt)
+  equal(false, roll.enabled, "three rolls a turn")
+  equal(true, says("yacht_hint_score"))
+  equal(0, #yachtDiceButtons(), "nothing left to keep")
+
+  state = Match.State(player.matches[id])
+  local chance = state.dice[1] + state.dice[2] + state.dice[3] + state.dice[4] + state.dice[5]
+  yachtRow("c"):Fire("OnClick")
+  equal("r01001,r00001,sc", logOf(player, id))
+  equal(tostring(chance), yachtRow("c").value.text)
+  equal(tostring(chance), yachtRow("total").value.text)
+  equal(true, diceInHand() ~= nil, "the next turn's roll waits in hand")
+  local stage = yachtFelt():GetParent()
+  for _ = 1, 3 do
+    for _, frame in ipairs(Client.Find(function(widget)
+      return widget.parent == stage and widget.scripts.OnUpdate ~= nil
+    end)) do
+      frame:Fire("OnUpdate", 0.02)
+    end
+  end
+  equal(true, says("+" .. chance), "what was scored drifts up from the card")
+  yachtRow("1"):Fire("OnClick")
+  equal("r01001,r00001,sc", logOf(player, id), "and nothing is scored before it is thrown")
+end
+
+function tests.WindowSaysWhenTheYachtCardIsFull()
+  local player, id = yachtOnScreen()
+  for _, box in ipairs({ "1", "2", "3", "4", "5", "6", "3k", "4k", "fh", "ss", "ls", "y" }) do
+    throwDice()
+    letDiceRoll(yachtFelt())
+    yachtRow(box):Fire("OnClick")
+  end
+  throwDice()
+  letDiceRoll(yachtFelt())
+  yachtRow("c"):Fire("OnClick")
+  equal(13, #player.matches[id].log)
+  yachtTime()
+  local total = player.private.Games.Get("yacht").rules.totalOf(player.private.Match.State(player.matches[id]))
+  equal(true, says(total >= 200 and "yacht_won" or "yacht_over"))
+  equal(nil, diceInHand())
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and (widget.text == "yacht_roll" or widget.text == "yacht_no_rolls") and widget:IsVisible()
+  end), "no button to roll with")
 end
 
 -----------------------------
@@ -10163,6 +10511,89 @@ function tests.EffectsComeAndGo()
   effects:Banner("status_solo_lost", nil, { instant = true })
   equal(false, effects:Busy())
   equal(true, effects.title:IsShown())
+end
+
+function tests.DiceAreThrownAndComeToRest()
+  local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Dice.lua" })
+  local surface = CreateFrame("Frame", nil, UIParent)
+  surface:SetSize(400, 300)
+  local dice = private.Dice.New(surface)
+  local function roll(key, faces, spent)
+    local from = { x = 350, y = 150 }
+    return { key = key, faces = faces, color = "red", x = 200, y = 150, from = from, size = 40, thrown = 2, spent = spent, glow = #faces > 2 }
+  end
+  local function settle()
+    for _ = 1, 100 do
+      dice.frame:Fire("OnUpdate", 0.02)
+    end
+  end
+  local function shown()
+    local faces = {}
+    for index, die in ipairs(dice.dice) do
+      faces[index] = die.face:IsShown() and tonumber(die.face.texture:match("%d$")) or 0
+    end
+    return table.concat(faces, ",")
+  end
+
+  -- Doubles: two are thrown, the other two put down once those have landed
+  dice:Show(roll("a", { 4, 4, 4, 4 }))
+  equal("4,4,4,4", shown(), "a roll that isn't thrown just lies there")
+  dice:Throw(0.1)
+  equal(true, dice:Busy())
+  equal("0,0,0,0", shown(), "nothing is on the table until it is thrown")
+  settle()
+  equal(false, dice:Busy())
+  equal("4,4,4,4", shown())
+  equal("dieThrow", Client.sounds[#Client.sounds])
+  for _, die in ipairs(dice.dice) do
+    equal(false, die.glow:IsShown(), "the light of doubles goes out again")
+  end
+
+  -- Shown again, the same roll stays where it came to rest and only the die used up changes
+  local rested = dice.dice[1].face.anchors[1][4]
+  dice:Show(roll("a", { 4, 4, 4, 4 }, { true }))
+  settle()
+  equal(rested, dice.dice[1].face.anchors[1][4])
+  assert(dice.dice[1].face:GetAlpha() < 1)
+  equal(1, dice.dice[2].face:GetAlpha())
+
+  -- In hand: they wait for the player, shake while the button is held and fly when it comes up
+  dice:Show(roll("b", { 6, 2 }))
+  local thrown = 0
+  dice:Hold(function()
+    thrown = thrown + 1
+  end)
+  equal(true, dice:Holding())
+  equal(false, dice:Busy())
+  dice.hand:Fire("OnMouseDown", "RightButton")
+  equal(0, #Client.stopped, "only the left button shakes them")
+  dice.hand:Fire("OnMouseDown", "LeftButton")
+  equal("dieShuffle", Client.sounds[#Client.sounds])
+  -- A table that goes away holds them still, still in hand
+  dice.frame:Hide()
+  equal("dieShuffle", Client.stopped[1])
+  equal(true, dice:Holding())
+  dice.frame:Show()
+  dice.hand:Fire("OnMouseUp", "LeftButton")
+  equal(0, thrown, "letting go of a button that went down before doesn't throw them")
+  dice.hand:Fire("OnMouseDown", "LeftButton")
+  dice.hand:Fire("OnMouseUp", "LeftButton")
+  equal(1, thrown)
+  equal(false, dice:Holding())
+  equal(false, dice.hand:IsShown())
+  settle()
+  equal("6,2,0,0", shown())
+
+  -- A new roll takes the place of one still in the air, and a hand still full is put away
+  dice:Show(roll("c", { 3, 1 }))
+  dice:Throw()
+  dice:Show(roll("d", { 5, 5, 5, 5 }))
+  equal(false, dice:Busy())
+  equal("5,5,5,5", shown())
+  dice:Hold(function() end)
+  dice:Hide()
+  equal(false, dice:Holding())
+  equal("0,0,0,0", shown())
 end
 
 function tests.BoardTellsARightClickOnASquareAndColoursWhatItWrites()

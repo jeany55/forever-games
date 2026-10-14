@@ -151,16 +151,26 @@ end
 
 --- Plays a sound, unless the player turned the addon's sounds off
 --- @param name string? One of the addon's own (SOUNDS above), or a key in SOUNDKIT for one of the client's. Ones this client doesn't have are skipped
+--- @return number? handle For Widgets.StopSound, if it is playing
 function Widgets.PlaySound(name)
   if not name or not ForeverGames.db.profile.sound then
-    return
+    return nil
   end
   local takes = SOUNDS[name]
   if takes then
     -- Which take is played is nobody's business but the ear's, the client's own dice will do
-    PlaySoundFile(SOUND_FILES .. name .. math.random(takes) .. ".ogg", "SFX")
+    return select(2, PlaySoundFile(SOUND_FILES .. name .. math.random(takes) .. ".ogg", "SFX"))
   elseif SOUNDKIT[name] then
-    PlaySound(SOUNDKIT[name])
+    return select(2, PlaySound(SOUNDKIT[name]))
+  end
+  return nil
+end
+
+--- Cuts a sound short, fading it out quickly
+--- @param handle number? What Widgets.PlaySound gave back
+function Widgets.StopSound(handle)
+  if handle then
+    StopSound(handle, 120)
   end
 end
 

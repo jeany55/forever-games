@@ -4,7 +4,7 @@
 -- and catch the mistakes a typo or a wrong assumption about the engine would cause, it says
 -- nothing about how any of it looks.
 
-local Client = { cursor = { 0, 0 }, mouseDown = false, combat = false, over = true, sounds = {}, widgets = {} }
+local Client = { cursor = { 0, 0 }, mouseDown = false, combat = false, over = true, sounds = {}, stopped = {}, widgets = {} }
 
 local Widget = {}
 
@@ -25,6 +25,15 @@ function methods:SetScript(name, handler)
   if handler and MOUSE_SCRIPTS[name] then
     self.mouse = true
   end
+end
+
+-- A hook runs after whatever handler there was
+function methods:HookScript(name, handler)
+  local before = self.scripts[name]
+  self:SetScript(name, before and function(...)
+    before(...)
+    handler(...)
+  end or handler)
 end
 
 function methods:EnableMouse(enabled)
@@ -226,7 +235,7 @@ end
 
 --- Defines the globals the addon expects from the client
 function Client.Install()
-  Client.widgets, Client.sounds = {}, {}
+  Client.widgets, Client.sounds, Client.stopped = {}, {}, {}
   Client.cursor, Client.mouseDown = { 0, 0 }, false
   Client.combat, Client.over = false, true
 
@@ -262,13 +271,21 @@ function Client.Install()
     end,
   })
 
+  -- A sound's handle is where it is in the list
   function PlaySound(kit)
     Client.sounds[#Client.sounds + 1] = kit
+    return true, #Client.sounds
   end
 
   -- One of the addon's own sounds: remembered by what it is, whichever take was played
   function PlaySoundFile(path)
     Client.sounds[#Client.sounds + 1] = path:match("([%a]+)%d*%.ogg$")
+    return true, #Client.sounds
+  end
+
+  -- Sounds cut short, by what they were
+  function StopSound(handle)
+    Client.stopped[#Client.stopped + 1] = Client.sounds[handle]
   end
 
   function GetCursorPosition()
