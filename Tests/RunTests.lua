@@ -16570,13 +16570,24 @@ function tests.TriviaPageAnswersAndShowsTheRightOne()
   equal(true, Party.IsOpen())
 end
 
+-- The checks every game is put through, a test for each
+dofile("Tests/EveryGame.lua")(tests, loadEngine)
+
 -----------------------------
 -- Runner
 -----------------------------
+-- Every test, or with words given on the command line only the ones whose names have one of
+-- them in: lua Tests/RunTests.lua EveryGame_chess Codec
 
 local names = {}
 for name in pairs(tests) do
-  names[#names + 1] = name
+  local wanted = #arg == 0
+  for _, word in ipairs(arg) do
+    wanted = wanted or name:find(word, 1, true) ~= nil
+  end
+  if wanted then
+    names[#names + 1] = name
+  end
 end
 table.sort(names)
 

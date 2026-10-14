@@ -207,6 +207,30 @@ local function validate(state, seat, move)
   return false, "invalid_move"
 end
 
+--- Every way of keeping some of the dice and rolling the rest, while there is a roll left, and
+--- every box that is still open
+--- @param state YachtState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  if state.rolls < ROLLS then
+    -- All but keeping all five, which wouldn't roll anything
+    for pattern = 0, 2 ^ DICE - 2 do
+      local kept = {}
+      for index = 1, DICE do
+        kept[index] = math.floor(pattern / 2 ^ (DICE - index)) % 2
+      end
+      list[#list + 1] = "r" .. table.concat(kept)
+    end
+  end
+  for _, box in ipairs(BOXES) do
+    if state.card[box.id] == nil then
+      list[#list + 1] = "s" .. box.id
+    end
+  end
+  return list
+end
+
 --- @param state YachtState
 --- @param seat number
 --- @param move string
@@ -786,6 +810,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     if state.over then
       return { winner = totalOf(state) >= TARGET and 1 or 0 }

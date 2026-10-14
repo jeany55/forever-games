@@ -1013,6 +1013,20 @@ local function apply(state, _, move)
   return { found = state.found }
 end
 
+--- Every class to be, and once the player is somebody the two ways out of the monastery
+--- @param state WarcraftsteinState
+--- @return string[]
+local function moves(state)
+  if state.class then
+    return { EXIT, DEAD }
+  end
+  local list = {}
+  for _, class in ipairs(CLASS_ORDER) do
+    list[#list + 1] = CLASS .. class
+  end
+  return list
+end
+
 --- @param state WarcraftsteinState
 --- @return { winner: number }?
 local function result(state)
@@ -3256,6 +3270,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   progress = function(state)
     return L["warcraftstein_progress"]:format(state.size)

@@ -189,6 +189,53 @@ local function validate(state, seat, move)
   return true
 end
 
+-- How many fleets a player who hasn't put theirs down is offered
+local LAYOUTS = 12
+
+--- Fleets laid out at random, the same ones every time: they are worked out from nothing but
+--- their number, so that every client offers the same
+--- @type string[]
+local layouts = {}
+for layout = 1, LAYOUTS do
+  local dice = private.Random.New(private.Random.Seed("battleship fleet " .. layout))
+  local ships, taken = {}, {}
+  for index, kind in ipairs(SHIPS) do
+    repeat
+      local vertical = dice:Roll(2) == 1
+      local cells = cellsOf(kind.size, dice:Roll(SIZE * SIZE) - 1, vertical)
+      local free = cells ~= nil
+      for _, cell in ipairs(cells or {}) do
+        free = free and not taken[cell]
+      end
+      if free then
+        for _, cell in ipairs(cells) do
+          taken[cell] = true
+        end
+        ships[index] = { square = cells[1], vertical = vertical }
+      end
+    until ships[index]
+  end
+  layouts[layout] = fleetMove(ships)
+end
+
+--- A few fleets to put down, for a player who hasn't yet, and after that every square of the
+--- other sea that hasn't been fired at
+--- @param state BattleshipState
+--- @param seat number
+--- @return string[]
+local function moves(state, seat)
+  if not state.placed[seat] then
+    return { unpack(layouts) }
+  end
+  local list, shots = {}, state.shots[other(seat)]
+  for square = 0, SIZE * SIZE - 1 do
+    if not shots[square] then
+      list[#list + 1] = squareName(square)
+    end
+  end
+  return list
+end
+
 --- @param state BattleshipState
 --- @param seat number
 --- @param move string
@@ -855,6 +902,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   visible = visible,
   result = function(state)
     return state.outcome

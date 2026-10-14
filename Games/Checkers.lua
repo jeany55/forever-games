@@ -280,6 +280,18 @@ local function apply(state, seat, moveString)
   }
 end
 
+--- Every move the side to move has, taking where taking is compulsory, in order
+--- @param state CheckersState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for move in pairs(state.legal) do
+    list[#list + 1] = move
+  end
+  table.sort(list)
+  return list
+end
+
 -----------------------------
 -- View
 -----------------------------
@@ -511,6 +523,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

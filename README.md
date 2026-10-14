@@ -185,6 +185,16 @@ runs the tests with a stock `lua` (5.1), no game client needed. The engine is te
 window is clicked through against a stand-in for the client (`Tests/FakeClient.lua`) that draws
 nothing: that catches mistakes in what the window does, not in how it looks.
 
+Every game is also put through the same checks, a test of its own each (`EveryGame_<id>`, see
+`Tests/EveryGame.lua`): the same seed deals the same game, the rules never ask the client for the
+time or a random number, and what the game shows by name is in the locale. A game that lists its
+moves (`moves`, see `Engine/Games.lua`) is played out at random from a few seeds as well: every
+move it lists has to be legal and fit in a message, and the log has to replay to the same
+position on another client. A new game is checked the moment it is registered.
+
+Words after it run only the tests whose names have one of them in:
+`./Tests/RunTests.sh EveryGame_chess Codec`.
+
 ### Layout
 
 - `Engine/` rules of play and the sync protocol. No WoW API in here, which is what makes it testable

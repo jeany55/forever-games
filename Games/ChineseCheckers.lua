@@ -268,6 +268,27 @@ local function apply(state, seat, move)
   return { from = from, to = to, path = path, notation = move }
 end
 
+--- Every hole each of a seat's marbles could go to, hole by hole
+--- @param state ChineseCheckersState
+--- @param seat number
+--- @return string[]
+local function moves(state, seat)
+  local list = {}
+  for from = 1, #holes do
+    if state.board[from] == seat then
+      local ends = {}
+      for to in pairs(reachable(state, from)) do
+        ends[#ends + 1] = to
+      end
+      table.sort(ends)
+      for _, to in ipairs(ends) do
+        list[#list + 1] = from .. "-" .. to
+      end
+    end
+  end
+  return list
+end
+
 --- A player resigned: their marbles come off the board
 --- @param state ChineseCheckersState
 --- @param seat number
@@ -492,6 +513,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

@@ -1310,6 +1310,45 @@ local function validate(state, seat, move)
   return err == nil, err
 end
 
+-- How every square is written in a move, by row and column: "52"
+local SQUARES = {}
+for cell = 1, CELLS do
+  SQUARES[cell] = (math.floor((cell - 1) / SIDE) + 1) .. ((cell - 1) % SIDE + 1)
+end
+
+--- Every move there is in every square the player may still change: each digit written into
+--- it, rubbing it out, each note pencilled in or rubbed out, and having it filled in. The same as
+--- what refusal lets through, worked out square by square rather than move by move: a random
+--- game asks for all of them after every move
+--- @param state SudokuState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  if state.outcome then
+    return list
+  end
+  for cell = 1, CELLS do
+    if not state.given[cell] and not state.hinted[cell] then
+      local square, there = SQUARES[cell], state.grid[cell]
+      for digit = 1, SIDE do
+        if digit ~= there then
+          list[#list + 1] = square .. digit
+        end
+        if there == 0 then
+          list[#list + 1] = "n" .. square .. digit
+        end
+      end
+      if there ~= 0 or hasNotes(state, cell) then
+        list[#list + 1] = square .. "0"
+      end
+      if there ~= state.solution[cell] then
+        list[#list + 1] = "h" .. square
+      end
+    end
+  end
+  return list
+end
+
 --- The squares of a row, a column or a box, by the name moves and events have for it
 --- @param name string "r4" for the fourth row from the top, "c7" for the seventh column, "b2" for the second box, which are counted the way squares are
 --- @return number[]
@@ -2033,6 +2072,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

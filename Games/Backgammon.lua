@@ -394,6 +394,51 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every turn the roll can be played as, one way of making each position it can lead to. Two
+--- turns that leave the checkers where they are on both sides are the same turn, whichever
+--- order the steps were made in. Doubles are only tried with each checker moved no further
+--- back than the one before it: any turn of them can be made in that order
+--- @param state BackgammonState
+--- @param seat number
+--- @return string[]
+local function everyTurn(state, seat)
+  local position = scratch(state)
+  local doubles = state.dice[1] == state.dice[2]
+  local list, reached, steps = {}, {}, {}
+
+  local function search(dice, highest)
+    if #steps == state.playable then
+      local key = table.concat(position.points[seat], ",") .. ":" .. table.concat(position.points[other(seat)], ",") .. ":" .. table.concat(position.bar, ",")
+      if not reached[key] then
+        reached[key] = true
+        list[#list + 1] = moveName(steps)
+      end
+      return
+    end
+    local tried = {}
+    for index, die in ipairs(dice) do
+      -- With only one die to play it has to be the right one
+      if not tried[die] and (not state.must or die == state.must) then
+        tried[die] = true
+        local rest = without(dice, index)
+        for from = doubles and highest or BAR, 1, -1 do
+          local to = landing(position, seat, from, die)
+          if to then
+            local hit = step(position, seat, from, to)
+            steps[#steps + 1] = { from = from, to = to }
+            search(rest, from)
+            steps[#steps] = nil
+            unstep(position, seat, from, to, hit)
+          end
+        end
+      end
+    end
+  end
+
+  search(rolls(state.dice), BAR)
+  return list
+end
+
 --- How the game was won: a gammon if the loser has borne nothing off, a backgammon if they
 --- also still have a checker on the bar or in the winner's home
 --- @param state BackgammonState
@@ -1030,6 +1075,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = everyTurn,
   result = function(state)
     return state.outcome
   end,

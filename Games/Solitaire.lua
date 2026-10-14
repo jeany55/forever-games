@@ -192,6 +192,33 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every move there is: turning the stock, playing the rest out where that can be done, and
+--- every card or run of cards that has somewhere to go
+--- @param state SolitaireState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for _, move in ipairs({ DRAW, FINISH }) do
+    if allowed(state, move) then
+      list[#list + 1] = move
+    end
+  end
+  for from in ("w1234567" .. SUITS):gmatch(".") do
+    local cards, column = cardsOf(state, from), state.columns[tonumber(from)]
+    -- As many as lie face up, and only from a column more than one
+    local most = column and #cards - column.down or math.min(1, #cards)
+    for to in ("f1234567"):gmatch(".") do
+      for count = 1, most do
+        local move = from .. to .. (count > 1 and count or "")
+        if allowed(state, move) then
+          list[#list + 1] = move
+        end
+      end
+    end
+  end
+  return list
+end
+
 --- @param state SolitaireState
 --- @param points number
 local function score(state, points)
@@ -606,6 +633,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

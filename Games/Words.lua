@@ -600,6 +600,183 @@ local function visible(state, seat)
   return seen
 end
 
+-- The longest word the moves are looked for with, how many ways of laying tiles they list at
+-- most, and how many they try before they make do with what they found
+local SHORTEST, LONGEST, MOST_LAID, MOST_TRIED = 2, 3, 25, 200
+-- The English words that short, by length, and by length, place and the letter there. Found the
+-- first time moves are asked for, by asking the list about every string of letters there is
+local short, shortWith
+
+--- @param prefix string
+--- @param length number
+local function findShort(prefix, length)
+  if #prefix == length then
+    if Lexicon.Has("english", prefix) then
+      local word = prefix
+      short[length][#short[length] + 1] = word
+      for place = 1, length do
+        local letter = word:sub(place, place)
+        local byPlace = shortWith[length][place]
+        byPlace[letter] = byPlace[letter] or {}
+        byPlace[letter][#byPlace[letter] + 1] = word
+      end
+    end
+    return
+  end
+  for code = 65, 90 do
+    findShort(prefix .. string.char(code), length)
+  end
+end
+
+--- @return table<number, string[]>, table<number, table<number, table<string, string[]>>>
+local function shortWords()
+  if not short then
+    short, shortWith = {}, {}
+    for length = SHORTEST, LONGEST do
+      short[length], shortWith[length] = {}, {}
+      for place = 1, length do
+        shortWith[length][place] = {}
+      end
+      findShort("", length)
+    end
+  end
+  return short, shortWith
+end
+
+--- How a word goes down on a stretch of squares, from the tiles a rack holds
+--- @param word string
+--- @param fixed table<number, string> Letters already on the board, by place in the word
+--- @param counts table<string, number> The rack's tiles, by letter, blanks under BLANK
+--- @return string? tiles As a move writes them, from the first tile laid to the last, nil if the rack can't
+local function fill(word, fixed, counts)
+  local spent, parts, first, last = {}, {}, nil, nil
+  for place = 1, #word do
+    local letter = word:sub(place, place)
+    if fixed[place] then
+      if fixed[place] ~= letter then
+        return nil
+      end
+      parts[place] = BLANK
+    else
+      local tile = letter
+      if (counts[letter] or 0) - (spent[letter] or 0) <= 0 then
+        tile = BLANK
+        if (counts[BLANK] or 0) - (spent[BLANK] or 0) <= 0 then
+          return nil
+        end
+      end
+      spent[tile] = (spent[tile] or 0) + 1
+      parts[place] = tile == BLANK and letter:lower() or letter
+      first, last = first or place, place
+    end
+  end
+  return first and table.concat(parts, "", first, last) or nil, first
+end
+
+--- What a seat could do: pass, swap all its tiles or the first of them, and lay a good few of the
+--- short words there is room for, two or three letters long, across and down. A real player
+--- has longer words than these, but these are enough to play a game out with
+--- @param state WordsState
+--- @param seat number
+--- @return string[]
+local function moves(state, seat)
+  local list = { PASS }
+  local rack = state.racks[seat]
+  if #state.bag >= RACK and #rack > 0 then
+    local all = { unpack(rack) }
+    table.sort(all)
+    list[#list + 1] = "x." .. table.concat(all)
+    if #all > 1 then
+      list[#list + 1] = "x." .. all[1]
+    end
+  end
+
+  local words, withLetter = shortWords()
+  local counts = {}
+  for _, tile in ipairs(rack) do
+    counts[tile] = (counts[tile] or 0) + 1
+  end
+  -- The words the rack can make on its own, for where nothing on the board is part of them
+  local fromRack = {}
+  for length = SHORTEST, LONGEST do
+    fromRack[length] = {}
+    for _, word in ipairs(words[length]) do
+      if fill(word, {}, counts) then
+        fromRack[length][#fromRack[length] + 1] = word
+      end
+    end
+  end
+  local board, empty = state.board, next(state.board) == nil
+  local laid, tried, listed = 0, 0, {}
+  --- @param column number
+  --- @param row number
+  --- @return boolean
+  local function taken(column, row)
+    return column >= 0 and column < SIZE and row >= 0 and row < SIZE and board[row * SIZE + column] ~= nil
+  end
+
+  for _, across in ipairs({ true, false }) do
+    for line = 0, SIZE - 1 do
+      for start = 0, SIZE - SHORTEST do
+        for length = SHORTEST, math.min(LONGEST, SIZE - start) do
+          --- @return number column, number row Of a place in the stretch, 0 for the square before it
+          local function at(place)
+            local along = start + place - 1
+            if across then
+              return along, line
+            end
+            return line, along
+          end
+          -- The stretch is the whole word: nothing lies right before or after it
+          local beforeColumn, beforeRow = at(0)
+          local afterColumn, afterRow = at(length + 1)
+          if not taken(beforeColumn, beforeRow) and not taken(afterColumn, afterRow) then
+            local fixed, open, joined, letter, place = {}, 0, false, nil, nil
+            for index = 1, length do
+              local column, row = at(index)
+              local tile = board[row * SIZE + column]
+              if tile then
+                fixed[index], joined = tile:upper(), true
+                letter, place = fixed[index], index
+              else
+                open = open + 1
+                local besideA, besideB
+                if across then
+                  besideA, besideB = taken(column, row - 1), taken(column, row + 1)
+                else
+                  besideA, besideB = taken(column - 1, row), taken(column + 1, row)
+                end
+                joined = joined or besideA or besideB or (empty and row * SIZE + column == CENTRE)
+              end
+            end
+            if open > 0 and open <= #rack and joined then
+              local candidates = place and (withLetter[length][place][letter] or {}) or fromRack[length]
+              for _, word in ipairs(candidates) do
+                local tiles, first = fill(word, fixed, counts)
+                if tiles then
+                  local column, row = at(first)
+                  local move = (across and "a" or "d") .. nameOf(row * SIZE + column) .. "." .. tiles
+                  if not listed[move] then
+                    listed[move], tried = true, tried + 1
+                    if validate(state, seat, move) then
+                      list[#list + 1] = move
+                      laid = laid + 1
+                    end
+                    if laid == MOST_LAID or tried == MOST_TRIED then
+                      return list
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return list
+end
+
 -----------------------------
 -- View
 -----------------------------
@@ -2249,6 +2426,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

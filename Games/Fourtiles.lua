@@ -220,6 +220,56 @@ local function apply(state, seat, move)
   }
 end
 
+-- Every word a puzzle's tiles spell, as the first move found that spells it, for the last puzzle
+-- that was asked about: going through every way of putting one to four tiles together takes a
+-- while, and the tiles stay the same for as long as the game lasts
+local spelled = { tiles = nil, words = {} }
+
+--- @param state FourtilesState
+--- @return { word: string, move: string }[]
+local function wordsIn(state)
+  local tiles = table.concat(state.tiles, ".")
+  if spelled.tiles ~= tiles then
+    local words, seen, used = {}, {}, {}
+    local function extend(move, text)
+      for tile = 1, #state.tiles do
+        if not used[tile] then
+          local longer, word = move .. string.char(FIRST + tile - 1), text .. state.tiles[tile]
+          if not seen[word] and Lexicon.Has(LIST, word) then
+            seen[word] = true
+            words[#words + 1] = { word = word, move = longer }
+          end
+          if #longer < MOST then
+            used[tile] = true
+            extend(longer, word)
+            used[tile] = nil
+          end
+        end
+      end
+    end
+    extend("", "")
+    spelled.tiles, spelled.words = tiles, words
+  end
+  return spelled.words
+end
+
+--- The words still to be found, a way of putting each of them together, and calling it done
+--- once that may be
+--- @param state FourtilesState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for _, found in ipairs(wordsIn(state)) do
+    if not state.found[found.word] then
+      list[#list + 1] = found.move
+    end
+  end
+  if canWrapUp(state) then
+    list[#list + 1] = WRAP_UP
+  end
+  return list
+end
+
 --- @param state FourtilesState
 local function result(state)
   if not state.done then
@@ -825,6 +875,7 @@ private.Games.Register({
   newState = newState,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   progress = progress,
   createView = createView,

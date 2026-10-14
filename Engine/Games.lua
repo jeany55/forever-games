@@ -33,6 +33,12 @@
 -- puzzle is solved between them. It has no `turn`, and it has to take its moves in whatever order
 -- they happen to arrive: what two players did at the same moment is put one after the other, and
 -- a move that is no longer legal by then (the other one found that word first) is dropped.
+--
+-- Every game is put through the same checks by the tests (Tests/EveryGame.lua): that the same
+-- seed always deals the same game, that its rules never ask the client for the time or a random
+-- number of its own, and that everything it shows the players is in the locale. A game that can
+-- list the moves there are (`moves`) is also played out at random, many times over: every move
+-- it lists has to be legal, and the log has to replay to the same position on another client.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -92,6 +98,7 @@ local _, private = ...
 --- @field visible (fun(state: table, seat: number): table)? For games where players don't all know the same: what a seat may see of a position. Returns a copy with the rest blanked out, shaped like the state itself so the view has only one thing to draw. Views are never shown anything else while the game is on. This is good manners rather than a secret kept: the log every player holds has all of it
 --- @field result fun(state: table): { winner: number, detail: string?, all: boolean? }? nil while in progress, winner 0 for a draw. Winner 0 and `all` where the players were on the same side and made it together. detail names how it ended and is shown as L["result_" .. detail]
 --- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two, unless they are played together. The engine ends the game itself once only one player is left
+--- @field moves (fun(state: table, seat: number): string[])? The moves a seat could make, each of them legal and none twice. All of them where that is practical; where there are far too many (every word that could be laid) enough of them for a game played with nothing else to get somewhere. Asked only while the game is on, of a seat that may move: the one whose turn it is, or anyone still in a game played together. The tests play every game that has it out at random to see that its rules hold together (Tests/EveryGame.lua)
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game
@@ -327,6 +334,7 @@ function Games.Register(definition)
     assert(type(definition[key]) == "function", "Game " .. definition.id .. " is missing " .. key)
   end
   assert(definition.together or type(definition.turn) == "function", "Game " .. definition.id .. " is missing turn")
+  assert(definition.moves == nil or type(definition.moves) == "function", "Game " .. definition.id .. " has moves that aren't a function")
   local seen = {}
   for _, option in ipairs(definition.options or {}) do
     local named = type(option.id) == "string" and option.id:match("^%w+$") ~= nil and not seen[option.id]

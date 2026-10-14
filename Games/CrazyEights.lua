@@ -167,6 +167,32 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every card in the hand that can go on the pile, an eight once with each suit it could call,
+--- and drawing or passing where the player may. Nothing in it but what the player can see
+--- @param state CrazyEightsState
+--- @param seat number
+--- @return string[]
+local function moves(state, seat)
+  local list = {}
+  for _, card in ipairs(state.hands[seat]) do
+    if playable(state, card) then
+      if parts(card) == WILD then
+        for suit in SUITS:gmatch(".") do
+          list[#list + 1] = card .. suit
+        end
+      else
+        list[#list + 1] = card
+      end
+    end
+  end
+  if not state.drew and canDraw(state) then
+    list[#list + 1] = DRAW
+  else
+    list[#list + 1] = PASS
+  end
+  return list
+end
+
 --- @param state CrazyEightsState
 --- @param seat number
 --- @param move string
@@ -690,6 +716,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

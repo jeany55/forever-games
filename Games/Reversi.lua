@@ -147,6 +147,19 @@ local function apply(state, seat, move)
   return { square = square, flipped = flipped, passed = state.passed ~= nil, notation = move }
 end
 
+--- Every square the side to move may place on, in order from a1
+--- @param state ReversiState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for square = 0, SIZE * SIZE - 1 do
+    if state.legal[square] then
+      list[#list + 1] = squareName(square)
+    end
+  end
+  return list
+end
+
 -----------------------------
 -- View
 -----------------------------
@@ -279,6 +292,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

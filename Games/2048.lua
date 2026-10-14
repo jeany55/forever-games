@@ -174,6 +174,19 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every way the tiles can be pushed that changes something
+--- @param state TwentyFortyEightState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for _, way in ipairs({ "u", "d", "l", "r" }) do
+    if shifts(state, way) then
+      list[#list + 1] = way
+    end
+  end
+  return list
+end
+
 --- @param state TwentyFortyEightState
 --- @param seat number
 --- @param move string
@@ -707,6 +720,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   progress = function(state)
     return L["2048_progress"]:format(state.score, state.best)

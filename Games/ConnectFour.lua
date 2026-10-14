@@ -103,6 +103,19 @@ local function apply(state, seat, move)
   return { square = square }
 end
 
+--- Every column that still has room for a disc
+--- @param state ConnectFourState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for column = 1, COLUMNS do
+    if state.heights[column] < ROWS then
+      list[#list + 1] = tostring(column)
+    end
+  end
+  return list
+end
+
 --- @param state ConnectFourState
 --- @return { winner: number }?
 local function result(state)
@@ -218,6 +231,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   createView = createView,
   seatLabel = function(seat)

@@ -391,6 +391,19 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every legal move for the side to move, worked out already with every position (evaluate).
+--- In order, so that the list is the same whatever order the table keeps them in
+--- @param state ChessState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for name in pairs(state.legal) do
+    list[#list + 1] = name
+  end
+  table.sort(list)
+  return list
+end
+
 --- What a move did, for drawing it and writing it down
 --- @class ChessEvent: MatchEvent
 --- @field from number
@@ -812,6 +825,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,

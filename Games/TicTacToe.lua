@@ -69,6 +69,19 @@ local function apply(state, seat, move)
   return { cell = cell }
 end
 
+--- Every cell that is still empty
+--- @param state TicTacToeState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for cell = 1, 9 do
+    if not state.board[cell] then
+      list[#list + 1] = tostring(cell)
+    end
+  end
+  return list
+end
+
 --- @param state TicTacToeState
 --- @return { winner: number }?
 local function result(state)
@@ -200,6 +213,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   createView = createView,
   seatLabel = function(seat)

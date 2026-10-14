@@ -1353,44 +1353,55 @@ function Sim:lieAll()
   local bodies = self.state.bodies
   for index = #bodies, 1, -1 do
     local body = bodies[index]
-    if body.air then
-      local hit = self:fly(body, 2)
-      if hit == "ground" then
-        body.vx, body.vy = 0, 0
-        body.air = not self:settle(body)
-      elseif hit == "wall" then
-        body.vx = -div(body.vx, 2)
-      elseif hit == "roof" then
-        body.vy = 0
-      end
-    elseif self.shaken and not self:standing(body) then
-      body.air = true
+    -- A trap that went off smashes the crates near it, and the list is shorter than it was
+    if body then
+      self:lie(bodies, index, body)
     end
-    if body.kind == "trap" then
-      if body.armed > 0 then
-        body.armed = body.armed - 1
-      elseif not body.fuse then
-        for _, unit in ipairs(self.state.units) do
-          local dx, dy = unit.x - body.x, unit.y - body.y
-          if unit.alive and dx * dx + dy * dy <= TRIP * TRIP * SUB * SUB then
-            body.fuse = TPS
-            self:tell("trip", { x = body.x, y = body.y })
-            break
-          end
+  end
+end
+
+--- A tick of one thing lying about
+--- @param bodies table[]
+--- @param index number Where it is among them
+--- @param body table
+function Sim:lie(bodies, index, body)
+  if body.air then
+    local hit = self:fly(body, 2)
+    if hit == "ground" then
+      body.vx, body.vy = 0, 0
+      body.air = not self:settle(body)
+    elseif hit == "wall" then
+      body.vx = -div(body.vx, 2)
+    elseif hit == "roof" then
+      body.vy = 0
+    end
+  elseif self.shaken and not self:standing(body) then
+    body.air = true
+  end
+  if body.kind == "trap" then
+    if body.armed > 0 then
+      body.armed = body.armed - 1
+    elseif not body.fuse then
+      for _, unit in ipairs(self.state.units) do
+        local dx, dy = unit.x - body.x, unit.y - body.y
+        if unit.alive and dx * dx + dy * dy <= TRIP * TRIP * SUB * SUB then
+          body.fuse = TPS
+          self:tell("trip", { x = body.x, y = body.y })
+          break
         end
-      else
-        body.fuse = body.fuse - 1
-        if body.fuse <= 0 then
-          table.remove(bodies, index)
-          local weapon = WEAPONS[body.id]
-          self:explode(body.x, body.y - 2 * SUB, weapon.radius, weapon.damage, weapon.knock)
-        end
+      end
+    else
+      body.fuse = body.fuse - 1
+      if body.fuse <= 0 then
+        table.remove(bodies, index)
+        local weapon = WEAPONS[body.id]
+        self:explode(body.x, body.y - 2 * SUB, weapon.radius, weapon.damage, weapon.knock)
       end
     end
-    if bodies[index] == body and div(body.y, SUB) > self.state.sea + 8 then
-      table.remove(bodies, index)
-      self:tell("splash", { x = body.x, y = self.state.sea * SUB })
-    end
+  end
+  if bodies[index] == body and div(body.y, SUB) > self.state.sea + 8 then
+    table.remove(bodies, index)
+    self:tell("splash", { x = body.x, y = self.state.sea * SUB })
   end
 end
 
@@ -1832,6 +1843,97 @@ local function drop(state, seat)
       state.turn = nextSeat(state, seat) or seat
     end
   end
+end
+
+-- Everything a squad can have, in the order a list of moves goes through them: what is learned
+-- and found, then what a class has of its own
+local EVERY_WEAPON = { unpack(ARSENAL) }
+EVERY_WEAPON[#EVERY_WEAPON + 1] = "rs"
+for _, class in ipairs(CLASS_ORDER) do
+  EVERY_WEAPON[#EVERY_WEAPON + 1] = CLASSES[class].signature
+end
+
+--- A few of the turns a squad could have, nothing like all of them: the turn passed where they
+--- stand, or after a walk and a jump, and every weapon they have fired a few ways, from where
+--- they stand and from a little way off, at the others where it is aimed at a place. Alone,
+--- the player makes the computer's turns too, so it is whoever's turn it is
+--- @param state WormcraftState
+--- @param seat number
+--- @return string[]
+local function moves(state, seat)
+  local list, listed = {}, {}
+  local function offer(move)
+    if not listed[move] and validate(state, seat, move) then
+      listed[move] = true
+      list[#list + 1] = move
+    end
+  end
+  local team = state.turn
+  if state.picking then
+    for _, class in ipairs(CLASS_ORDER) do
+      offer(CLASS .. class)
+    end
+    return list
+  end
+
+  local arsenal = state.teams[team].arsenal
+  local squad = squadOf(state, team)
+  for slot = 1, state.squad do
+    local unit = squad[slot]
+    if unit and unit.alive then
+      local x, y = div(unit.x, SUB), div(unit.y, SUB)
+      offer(slot .. "S")
+      offer(slot .. "R30JS")
+      offer(slot .. "L30BS")
+      -- Where the others are, for whatever comes down on a place
+      local targets = {}
+      for _, other in ipairs(state.units) do
+        if other.alive and other.team ~= team then
+          targets[#targets + 1] = { clamp(div(other.x, SUB), 0, WIDTH - 1), clamp(div(other.y, SUB) - 40, 0, HEIGHT - 1) }
+        end
+      end
+      for _, id in ipairs(EVERY_WEAPON) do
+        local had, weapon = arsenal[id], WEAPONS[id]
+        if had and had ~= 0 then
+          local aims = {}
+          if weapon.aim == "none" then
+            aims = { "" }
+          elseif weapon.aim == "angle" then
+            aims = { ".0", ".180", ".45" }
+          elseif weapon.aim == "power" then
+            aims = { ".45.70", ".135.70", ".60.40" }
+          elseif weapon.aim == "fuse" then
+            aims = { ".45.60.3", ".135.60.2" }
+          elseif weapon.kind == "teleport" then
+            -- Not too far for a blink
+            aims = { "." .. clamp(x + 80, 0, WIDTH - 1) .. "." .. clamp(y - 20, 0, HEIGHT - 1), "." .. clamp(x - 80, 0, WIDTH - 1) .. "." .. clamp(y - 20, 0, HEIGHT - 1) }
+            if not weapon.range then
+              for _, target in ipairs(targets) do
+                aims[#aims + 1] = "." .. target[1] .. "." .. target[2]
+              end
+            end
+          else
+            for _, target in ipairs(targets) do
+              aims[#aims + 1] = "." .. target[1]
+            end
+          end
+          for _, aim in ipairs(aims) do
+            if weapon.utility then
+              -- It doesn't end the turn, so something has to
+              offer(slot .. "U" .. id .. aim .. "S")
+              offer(slot .. "U" .. id .. aim .. "R20S")
+            elseif weapon.kind == "sheep" then
+              offer(slot .. "F" .. id .. aim .. "W30X")
+            else
+              offer(slot .. "F" .. id .. aim)
+              offer(slot .. "R24F" .. id .. aim .. "L15")
+            end
+          end
+        end
+      end
+    end
+  end
+  return list
 end
 
 -----------------------------
@@ -3974,6 +4076,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = result,
   drop = drop,
   createView = createView,

@@ -261,6 +261,26 @@ local function validate(state, seat, move)
   return true
 end
 
+--- Every move there is: opening or flagging any square that isn't open, and a chord on every
+--- number that has its flags
+--- @param state MinesweeperState
+--- @return string[]
+local function moves(state)
+  local list = {}
+  for square = 0, state.columns * state.rows - 1 do
+    if canReveal(state, square) then
+      list[#list + 1] = REVEAL .. square
+    end
+    if canFlag(state, square) then
+      list[#list + 1] = FLAG .. square
+    end
+    if canChord(state, square) then
+      list[#list + 1] = CHORD .. square
+    end
+  end
+  return list
+end
+
 --- Lays the mines, anywhere but on the square the player began with and the ones touching it
 --- @param state MinesweeperState
 --- @param square number
@@ -1062,6 +1082,7 @@ private.Games.Register({
   end,
   validate = validate,
   apply = apply,
+  moves = moves,
   result = function(state)
     return state.outcome
   end,
