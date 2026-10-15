@@ -259,7 +259,13 @@ local function describeRace(match, game)
   elseif outcome == "drawn" then
     return mine and L["status_race_tied"]:format(rival, raceTimeText(mine)) or L["status_race_neither"]:format(rival)
   elseif race.declined then
-    return match.status == "active" and L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival) or nil
+    -- A run played for the race goes on as a game for one, a best that was sent is only the race
+    if match.status ~= "active" and not race.best then
+      return nil
+    elseif race.declined == "nogame" and game.addon then
+      return L["status_declined_addon"]:format(rival, game.addon)
+    end
+    return L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival)
   elseif mine ~= nil then
     return mine and L["status_race_waiting"]:format(raceTimeText(mine), rival) or L["status_race_waiting_none"]:format(rival)
   end
@@ -585,7 +591,10 @@ local function raceActionsFor(match)
   local function forget()
     session:Forget(id)
   end
-  if race.declined and (race.declined ~= "gone" or match.status == "active") then
+  if race.declined and race.best then
+    -- A best that was sent has nothing to go on with once it isn't raced
+    return { { text = L["remove"], onClick = forget } }
+  elseif race.declined and (race.declined ~= "gone" or match.status == "active") then
     -- No race any more, a game for one like any other
     return soloActionsFor(match)
   end

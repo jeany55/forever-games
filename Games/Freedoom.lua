@@ -480,7 +480,11 @@ function View:Update(view)
     self.said:SetText("")
     self.message = nil
   end
-  -- Getting out is shown by the screen a map is finished with
+  -- Getting out is shown by the screen a map is finished with, also one that was finished before
+  -- it was looked at here (after a reload, or a best sent to race): its time without the counting
+  if state.out and not run.finished then
+    run.finished = { seconds = view.clock and view.clock() or 0, at = 0, recalled = true, banged = true }
+  end
   self.said:SetText(state.dead and L["freedoom_dead"] or "")
   self.race = view.race
   self:raceGhost()
@@ -1027,7 +1031,8 @@ function View:drawFinish()
     return total > 0 and math.floor(found * 100 / total) or 100
   end
   local lines = math.floor(pictures.WINUM0.height * 3 / 2)
-  for index, row in ipairs({ { "WIOSTK", run.kills, run.totalKills }, { "WIOSTI", run.items, run.totalItems }, { "WISCRT2", run.secrets, run.totalSecrets } }) do
+  -- What was killed, picked up and found isn't known of a run that wasn't played here
+  for index, row in ipairs(finished.recalled and {} or { { "WIOSTK", run.kills, run.totalKills }, { "WIOSTI", run.items, run.totalItems }, { "WISCRT2", run.secrets, run.totalSecrets } }) do
     local y = FINISH.statsY + (index - 1) * lines
     self:patch(row[1], FINISH.statsX, y)
     local x = SCREEN_WIDTH - FINISH.statsX

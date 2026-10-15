@@ -131,6 +131,9 @@ function ForeverGames:OnEnable()
     notify = function(event, match)
       self:OnMatchEvent(event, match)
     end,
+    lacks = function(game, sender)
+      self:Print(L["lacks_addon"]:format(Transport.DisplayName(sender), game.name, game.addon))
+    end,
   })
 
   private.presence = private.Presence.New({

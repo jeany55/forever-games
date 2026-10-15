@@ -19387,6 +19387,19 @@ do
     return view, private
   end
 
+  function tests.FreedoomShowsAMapFinishedBeforeAsItsFinishScreen()
+    local view, private = freedoomView("e1m2")
+    local game = private.Games.Get("freedoom")
+    local state = game.newState(1, nil, { map = "e1m2" })
+    game.apply(state, 1, "x")
+    view:Update({ match = { id = "sent" }, state = state, seat = 1, canMove = false, submit = function() end, changed = true, clock = function()
+      return 48.9
+    end })
+    local finished = assert(view.run.finished, "the finish screen, not the map's start")
+    equal(48.9, finished.seconds, "with the time it took")
+    equal(true, finished.recalled, "and nothing counted that wasn't played here")
+  end
+
   function tests.FreedoomPlaysEveryMapOfTheEpisode()
     -- Doom's scrolling walls are only for the look of them
     local cosmetic = { [48] = true }
@@ -20811,6 +20824,27 @@ do
     world:Deliver()
     equal(4250, Race.Theirs(theirs.race))
     equal("abc+def", table.concat(Race.Ghost(theirs.race), "+"))
+  end
+
+  function tests.BestSentToSomebodyWithoutTheGameSaysWhy()
+    local world = World.New()
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    bob.private.Games.SetAddOnCheck(function()
+      return false
+    end)
+    local lacked = {}
+    bob.session.env.lacks = function(game, sender)
+      lacked[#lacked + 1] = game.id .. " from " .. sender
+    end
+    alice.session.env.records.freedoom = { run = 42.5 }
+    alice.session.env.ghosts.freedoom = { run = "abc+def" }
+    local MainFrame = openWindow(alice)
+    local mine = assert(alice.session:Invite("Bob-Realm", "freedoom", { best = true }))
+    world:Deliver()
+    equal("nogame", mine.race.declined)
+    equal("freedoom from Alice-Realm", lacked[1], "Bob is told what he is missing")
+    equal(nil, next(bob.matches), "and has no game of it")
+    equal("status_declined_addon", MainFrame.Describe(mine), "Alice is told why, not shown a game for one")
   end
 
   function tests.WindowShowsARaceFromTheChallengeToWhoWon()

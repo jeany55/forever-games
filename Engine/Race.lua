@@ -46,6 +46,7 @@ local _, private = ...
 --- player's own like any game for one: only its id, which the deal comes from, is the rival's too
 --- @class MatchRace
 --- @field rival string Full name of whoever the race is against
+--- @field best boolean? The local player's run is the one that set their best, sent as it is rather than played for the race (InviteSetup.best): there is nothing of the game but the race
 --- @field unanswered boolean? The local player challenged the rival, who hasn't answered yet. Their run isn't told until they do
 --- @field declined string? The rival turned the race down, or no longer has it: why, the way a DEC says it, "declined" if it doesn't. The game goes on as a game for one
 --- @field trail string? The ghost of the local player's run so far, its samples joined by "+", for a game that has one

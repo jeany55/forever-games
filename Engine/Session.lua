@@ -77,6 +77,7 @@ local _, private = ...
 --- @field ghosts table<string, table<string, string>>? For a game with a ghost (GameDefinition.ghost): the run that set each of those bests, its samples joined by "+", by game id and key. Persisted. Forgotten with the session if left out
 --- @field offers table<string, Offer>? The games the player linked in chat that nobody took yet, by game id. Persisted. Forgotten with the session if left out
 --- @field onRefused (fun(host: string, gameId: string, reason: string))? Called when a game the player asked for isn't to be had
+--- @field lacks (fun(game: GameDefinition, sender: string))? Somebody challenged the player to a game whose addon isn't there (GameDefinition.addon). It is turned down, and this says so, for the player to be told what they are missing
 --- @field takes (fun(sender: string): boolean)? Whether the player takes challenges from this player. From everyone if left out
 --- @field clock (fun(): number)? Milliseconds from some time or other, for the computer to tell how long it has been thinking. Without it the computer thinks until it knows, however long that takes
 --- @field versus table<string, table<string, VersusTally>>? How the player's games against the computer went, by game id and level. Persisted. Forgotten with the session if left out
@@ -1465,6 +1466,7 @@ function Session:startRace(game, rival, setup)
   local race = { rival = rival, unanswered = true, told = 0, heard = {} }
   local match
   if setup.best then
+    race.best = true
     local trail
     match, trail = self:bestRun(game, setup.options)
     if not match then
@@ -1655,6 +1657,9 @@ function Session:onRace(sender, message)
   local game = Games.Get(message.game)
   -- A game whose addon isn't here can't be played here any more than one that isn't at all
   if not game or not Games.Offered(game) then
+    if game and self.env.lacks then
+      self.env.lacks(game, sender)
+    end
     return refuse("nogame")
   end
   -- A game that can't be raced here is from a version that could
@@ -1952,6 +1957,9 @@ function Session:onInvite(sender, message)
   local game = Games.Get(message.game)
   -- A game whose addon isn't here can't be played here any more than one that isn't at all
   if not game or not Games.Offered(game) then
+    if game and self.env.lacks then
+      self.env.lacks(game, sender)
+    end
     return refuse("nogame")
   end
   if game.version ~= message.gameVersion then
