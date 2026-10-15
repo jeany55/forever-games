@@ -58,6 +58,10 @@ local RECENT_MOST = 6
 local RULES_WIDTH, RULES_INSET = 400, 12
 local OPTIONS_TOP, OPTION_ROW_HEIGHT, OPTION_NAME_WIDTH = 146, 30, 142
 local CHOICE_PADDING = 16
+-- An option of more choices than MOST_BUTTONS is a dropdown rather than its choices side by side
+-- when they would take more rows than MOST_CHOICE_ROWS. A few choices are better seen all at once,
+-- even over a few rows. Under the options, room is kept for the note on how the rules are set
+local MOST_BUTTONS, MOST_CHOICE_ROWS, NOTE_ROOM = 5, 2, 40
 local SOLO_GENRE = "solo"
 -- What the games for a room (Engine/Rooms.lua) are listed as
 local PARTY_GENRE = "party"
@@ -110,6 +114,8 @@ local chosenSeat
 local problem
 
 local refresh
+--- @type fun(best: number?, rival: string?)
+local showBest
 --- @type fun(): WizardPlayer[], string?
 local listing
 
@@ -348,12 +354,13 @@ local function whoIsAt(seats)
   return names, levels
 end
 
-local function send()
+--- @param best boolean? Race the run that set the player's best by these rules, see InviteSetup.best
+local function send(best)
   local seats, size = sitting()
   local names, levels = whoIsAt(seats)
   -- A race is played alone on both sides
   local players = raceable() and 1 or size
-  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, players), seat = (size == 2 and not raceable()) and chosenSeat or nil }
+  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, players), seat = (size == 2 and not raceable()) and chosenSeat or nil, best = best }
   if #levels > 0 then
     setup.computer = { levels = levels }
   end
@@ -1298,9 +1305,12 @@ local function refreshRules()
   end
 
   -- Every line of the rules under the one before, as tall as it takes for its choices to fit
-  -- across: whatever doesn't fit next to the others goes on underneath them
-  local top, first, room = OPTIONS_TOP, OPTION_NAME_WIDTH + FILTER_GAP, RULES_WIDTH - 2 * RULES_INSET
+  -- across: whatever doesn't fit next to the others goes on underneath them. A line of many
+  -- choices that would take more than MOST_CHOICE_ROWS rows of them is a dropdown instead, and so
+  -- are more of them, the tallest first, while the rules would be too tall for the panel
+  local first, room = OPTION_NAME_WIDTH + FILTER_GAP, RULES_WIDTH - 2 * RULES_INSET
   local inset = (OPTION_ROW_HEIGHT - FILTER_HEIGHT) / 2
+  local laid = {}
   for index = 1, math.max(#lines, #rules.rows) do
     local row, line = rules.rows[index], lines[index]
     if line and not row then
@@ -1313,33 +1323,75 @@ local function refreshRules()
     if line then
       row.tip = line.tip
       row.name:SetText(line.name)
-      local x, y = first, inset
+      local x, y, places = first, inset, {}
       for position = 1, math.max(#line.choices, #row.choices) do
         local choice, spec = row.choices[position], line.choices[position]
         if spec and not choice then
           choice = createChoice(row)
           row.choices[position] = choice
         end
-        if choice then
-          choice:SetShown(spec ~= nil)
-        end
         if spec then
           fillChoice(choice, spec.text, spec.on, spec.pick, spec.tip)
           if x > first and x + choice:GetWidth() > room then
             x, y = first, y + FILTER_HEIGHT + FILTER_GAP
           end
-          choice:ClearAllPoints()
-          choice:SetPoint("TOPLEFT", x, -y)
+          places[position] = { x, y }
           x = x + choice:GetWidth() + FILTER_GAP
         end
       end
-      local height = y + FILTER_HEIGHT + inset
-      row:ClearAllPoints()
-      row:SetPoint("TOPLEFT", RULES_INSET, -top)
-      row:SetPoint("TOPRIGHT", -RULES_INSET, -top)
-      row:SetHeight(height)
-      top = top + height
+      local rows = math.floor((y - inset) / (FILTER_HEIGHT + FILTER_GAP) + 0.5) + 1
+      laid[index] = { row = row, line = line, places = places, rows = rows, height = y + FILTER_HEIGHT + inset, listed = rows > MOST_CHOICE_ROWS and #line.choices > MOST_BUTTONS }
     end
+  end
+  local function total()
+    local height = OPTIONS_TOP + NOTE_ROOM
+    for _, each in ipairs(laid) do
+      height = height + (each.listed and OPTION_ROW_HEIGHT or each.height)
+    end
+    return height
+  end
+  local panelHeight = rules:GetHeight() or 0
+  while panelHeight > 0 and total() > panelHeight do
+    local tallest
+    for _, each in ipairs(laid) do
+      if not each.listed and each.rows > 1 and (not tallest or each.rows > tallest.rows) then
+        tallest = each
+      end
+    end
+    if not tallest then
+      break
+    end
+    tallest.listed = true
+  end
+
+  local top = OPTIONS_TOP
+  for _, each in ipairs(laid) do
+    local row, line = each.row, each.line
+    for position, choice in ipairs(row.choices) do
+      local place = each.places[position]
+      choice:SetShown(place ~= nil and not each.listed)
+      if place then
+        choice:ClearAllPoints()
+        choice:SetPoint("TOPLEFT", place[1], -place[2])
+      end
+    end
+    if each.listed and not row.dropdown then
+      row.dropdown = Widgets.Dropdown(row, FILTER_HEIGHT)
+      row.dropdown:SetPoint("TOPLEFT", first, -inset)
+      row.dropdown:SetWidth(room - first)
+    end
+    if row.dropdown then
+      row.dropdown:SetShown(each.listed)
+      if each.listed then
+        row.dropdown:SetChoices(line.choices, refresh)
+      end
+    end
+    local height = each.listed and OPTION_ROW_HEIGHT or each.height
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", RULES_INSET, -top)
+    row:SetPoint("TOPRIGHT", -RULES_INSET, -top)
+    row:SetHeight(height)
+    top = top + height
   end
 
   local changed = (seated and chosenSeat ~= nil) or Games.Chosen(chosenGame, chosenRules) ~= nil
@@ -1531,12 +1583,30 @@ end
 -- Shell
 -----------------------------
 
+--- Offers the run that set the player's best by the rules as they are set, next to the challenge,
+--- for a race whose game can send one as it is (Session:BestToRace)
+--- @param best number? Seconds it took, nil for no best to send
+--- @param rival string? Who it would go to
+showBest = function(best, rival)
+  local button = panel.bestButton
+  button:SetShown(best ~= nil)
+  button.rival = rival
+  panel.summary:ClearAllPoints()
+  panel.summary:SetPoint("RIGHT", best and button or panel.sendButton, "LEFT", -12, 0)
+  if best then
+    -- To the hundredth, as a race's times are
+    local hundredths = math.floor(best * 100 + 0.5)
+    button:SetText(L["wizard_race_best"]:format(L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)))
+  end
+end
+
 refresh = function()
   local choosingOpponent = chosenGame ~= nil
   panel.gameStep:SetShown(not choosingOpponent)
   panel.opponentStep:SetShown(choosingOpponent)
   panel.backButton:SetShown(choosingOpponent)
   panel.sendButton:SetShown(choosingOpponent)
+  showBest(nil)
   panel.error:SetText(problem and L[problem] or "")
   problem = nil
 
@@ -1580,6 +1650,9 @@ refresh = function()
     panel.sendButton:SetText(L[#levels == 0 and "wizard_play_alone" or "wizard_play"])
   elseif raceable() then
     panel.sendButton:SetText(L["wizard_race"])
+  end
+  if raceable() and #names == 1 and open == 0 then
+    showBest(private.session:BestToRace(chosenGame.id, Games.ForPlayers(chosenGame, chosenRules, 1)), names[1])
   end
   local summary
   if open > 0 then
@@ -1636,7 +1709,21 @@ function Wizard.Init(parent, closed)
 
   panel.sendButton = Widgets.Button(panel, L["wizard_send"], 150, 28)
   panel.sendButton:SetPoint("BOTTOMRIGHT", -4, 4)
-  panel.sendButton:SetScript("OnClick", send)
+  panel.sendButton:SetScript("OnClick", function()
+    send()
+  end)
+
+  panel.bestButton = Widgets.Button(panel, "", 170, 28)
+  panel.bestButton:SetPoint("RIGHT", panel.sendButton, "LEFT", -6, 0)
+  panel.bestButton:SetScript("OnClick", function()
+    send(true)
+  end)
+  panel.bestButton:SetScript("OnEnter", function(button)
+    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+    GameTooltip:SetText(L["wizard_race_best_tip"]:format(Transport.DisplayName(button.rival or "")), 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  panel.bestButton:SetScript("OnLeave", GameTooltip_Hide)
 
   local cancelButton = Widgets.Button(panel, CANCEL, 90, 28)
   cancelButton:SetPoint("BOTTOMLEFT", 4, 4)

@@ -51,6 +51,9 @@ local DOOR_GAP = 4
 --- @field tic integer Tics the world has had
 --- @field leaving number? Seconds since the player got to an exit
 --- @field dead integer? The tic the player died on
+--- @field level string Which map, "run" or "e1m1" to "e1m9"
+--- @field key string What its best time is kept under: the map and the skill (see Games/Freedoom.lua)
+--- @field halfDamage boolean? The player takes half of every blow: the easiest skill, as in Doom
 
 -- Made later, with what lives: the flash of a teleport
 local teleportFlash
@@ -1292,6 +1295,9 @@ function damage(run, target, inflictor, source, amount)
   end
   if target == run.player then
     local inventory = run.inventory
+    if run.halfDamage then
+      amount = math.floor(amount / 2)
+    end
     if inventory.armorClass > 0 then
       local saved = math.floor(amount / (inventory.armorClass == 1 and 3 or 2))
       if inventory.armor <= saved then

@@ -16050,6 +16050,43 @@ function tests.WizardWrapsWhatAnOptionCanBe()
   equal(true, says("wizard_summary_with_computer"))
 end
 
+function tests.WizardListsAnOptionWithTooManyChoicesToShow()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  openWizard(alice)
+  pickGame("freedoom")
+  local function mapRow()
+    return Client.Find(function(widget)
+      return widget.choices ~= nil and widget.name ~= nil and widget.name.text == "freedoom_option_map" and widget:IsVisible()
+    end)[1]
+  end
+  local row = assert(mapRow(), "the map can be picked")
+  for _, choice in ipairs(row.choices) do
+    equal(false, choice:IsVisible(), "not with a button for every map, rows of them")
+  end
+  local dropdown = row.dropdown
+  assert(dropdown and dropdown:IsVisible(), "but from a list")
+  equal("freedoom_map_run", dropdown.label.text, "saying which is picked")
+  equal(30, row.height, "one line tall")
+  equal(false, dropdown.list:IsVisible(), "shut until it is clicked")
+  dropdown:Fire("OnClick")
+  assert(dropdown.list:IsVisible(), "open")
+  local shown = {}
+  for _, line in ipairs(dropdown.list.rows) do
+    if line:IsVisible() then
+      shown[#shown + 1] = line
+    end
+  end
+  equal(10, #shown, "every map")
+  equal("freedoom_map_e1m2", shown[3].label.text)
+  shown[3]:Fire("OnClick")
+  equal(false, dropdown.list:IsVisible(), "shut again once one is picked")
+  equal("freedoom_map_e1m2", mapRow().dropdown.label.text, "and that one is picked")
+  dropdown:Fire("OnClick")
+  dropdown:Fire("OnClick")
+  equal(false, dropdown.list:IsVisible(), "a second click shuts it too")
+end
+
 function tests.WindowPlaysWormcraftAgainstTheComputer()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
@@ -19003,6 +19040,15 @@ do
       local y = (seg.y1 + seg.y2) / 2 - (seg.x2 - seg.x1) / length * 0.5
       assert(e1m1:SectorAt(x, y) == seg.front, "seg " .. index .. " looks into another sector")
     end
+    -- And for Run, whose nodes Tools/mapkit.py built
+    assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))(ADDON_NAME, private)
+    local run = private.SectorMap.Load("freedoom_run")
+    for index, seg in ipairs(run.segs) do
+      local length = math.sqrt((seg.x2 - seg.x1) ^ 2 + (seg.y2 - seg.y1) ^ 2)
+      local x = (seg.x1 + seg.x2) / 2 + (seg.y2 - seg.y1) / length * 0.5
+      local y = (seg.y1 + seg.y2) / 2 - (seg.x2 - seg.x1) / length * 0.5
+      assert(run:SectorAt(x, y) == seg.front, "Run's seg " .. index .. " looks into another sector")
+    end
   end
 
   function tests.SectorMapStepsUpAStepButNotAWall()
@@ -19049,6 +19095,12 @@ do
     line, front = map:Trace(160, 64, math.pi, 64)
     equal(true, front, "and from in front")
     equal(nil, (map:Trace(64, 64, 0, 20)), "out of reach")
+    -- A walker that is one of the map's things, as the player is, all the same
+    map = twoRooms(mapEngine(), 0)
+    walker, crossed = player(64, 64), {}
+    map:AddThing(walker)
+    map:Slide(walker, 90, 0, crossed)
+    equal(1, #crossed, "a thing walks over it too")
   end
 
   function tests.SectorMapMovesFloorsAndKeepsTime()
@@ -19312,13 +19364,17 @@ do
 
   --- Freedoom's view on the fake client, showing a game just begun on a map
   --- @param level string? "e1m1" if left out
-  local function freedoomView(level)
+  --- @param skill string? Doom's middle one if left out
+  local function freedoomView(level, skill)
     Client.Install()
     local private = loadEngine()
     for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Strips.lua", "GUI/SectorView.lua", "ForeverGames_Freedoom/Hud.lua" }) do
       assert(loadfile(file))(ADDON_NAME, private)
     end
-    -- As the maps' own addon puts them, when it is loaded
+    -- As the maps' own addon puts them, when it is loaded (Run only when it is played, to be quicker)
+    if level == "run" then
+      assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))()
+    end
     for map = 1, 9 do
       assert(loadfile("ForeverGames_Freedoom/Maps/E1M" .. map .. ".lua"))()
     end
@@ -19326,7 +19382,7 @@ do
     local stage = CreateFrame("Frame", nil, UIParent)
     local view = game.createView(stage)
     view:Layout(800, 600)
-    local state = game.newState(1, nil, { map = level })
+    local state = game.newState(1, nil, { map = level or "e1m1", skill = skill })
     view:Update({ match = { id = level or "m1" }, state = state, seat = 1, canMove = true, submit = function() end, changed = true })
     return view, private
   end
@@ -19334,8 +19390,8 @@ do
   function tests.FreedoomPlaysEveryMapOfTheEpisode()
     -- Doom's scrolling walls are only for the look of them
     local cosmetic = { [48] = true }
-    for map = 1, 9 do
-      local level = "e1m" .. map
+    for map = 0, 9 do
+      local level = map == 0 and "run" or "e1m" .. map
       local view, private = freedoomView(level)
       local run = view.run
       equal(level, run.level, "the map picked")
@@ -19363,7 +19419,100 @@ do
     local records = game.record(state, 100)
     equal("e1m5", records[1].key, "kept under the map")
     assert(records[1].lower, "the less time the better")
-    equal("e1m1", game.newState(1, nil, {}).level, "the first map unless another is picked")
+    equal("run", game.newState(1, nil, {}).level, "Run unless another is picked")
+  end
+
+  function tests.FreedoomSkillsPutInFewerOrMoreAndKeepTheirOwnBests()
+    local game = loadEngine().Games.Get("freedoom")
+    local state = game.newState(1, nil, { map = "run", skill = "hard" })
+    equal("hard", state.skill)
+    equal("medium", game.newState(1, nil, { map = "run" }).skill, "Doom's middle skill unless another is picked")
+    equal("medium", game.newState(1, nil, { map = "run", skill = "nightmare" }).skill, "and one there isn't")
+    state.out = true
+    equal("run_hard", game.record(state, 60)[1].key, "a best time for each skill")
+    state.skill = "medium"
+    equal("run", game.record(state, 60)[1].key, "the middle one's under the map alone, as before there were skills")
+
+    local monsters = {}
+    for _, skill in ipairs({ "baby", "easy", "medium", "hard" }) do
+      local view, private = freedoomView("run", skill)
+      local run = view.run
+      local Freedoom = private.Freedoom
+      local count = 0
+      for _, actor in ipairs(run.actors) do
+        count = count + ((actor.info and not actor.info.barrel) and 1 or 0)
+      end
+      monsters[skill] = count
+      if skill == "baby" then
+        -- Half of every blow, twice the ammunition
+        local health = run.inventory.health
+        Freedoom.damage(run, run.player, nil, nil, 20)
+        equal(health - 10, run.inventory.health, "half of a blow on the easiest skill")
+        local bullets = run.inventory.ammo.bullets
+        Freedoom.PickUp(run.inventory, 2007)
+        equal(bullets + 20, run.inventory.ammo.bullets, "a clip counts twice")
+        equal("run_baby", run.key)
+      elseif skill == "medium" then
+        local health = run.inventory.health
+        Freedoom.damage(run, run.player, nil, nil, 20)
+        equal(health - 20, run.inventory.health, "all of it otherwise")
+      end
+    end
+    equal(monsters.baby, monsters.easy, "the two easiest have the same monsters")
+    assert(monsters.easy < monsters.medium and monsters.medium < monsters.hard,
+      ("more monsters the harder: %d, %d, %d"):format(monsters.easy, monsters.medium, monsters.hard))
+  end
+
+  function tests.FreedoomRunIsTheFirstMapAndCanBeWalkedToTheExit()
+    local view, private = freedoomView("run")
+    local run = view.run
+    local map, player = run.map, run.player
+    equal("run", private.Games.Get("freedoom").options[1].default, "picked unless another is")
+    -- Nobody in the way and nothing that hurts: only the map, to be walked through
+    for _, actor in ipairs(run.actors) do
+      map:RemoveThing(actor)
+    end
+    run.actors = {}
+    player.shootable = false
+    local submitted
+    view.view.submit = function(move)
+      submitted = move
+    end
+    view.draw = function() end
+    -- The one way through, as somebody running it goes: through the doors, onto the lift and off it
+    -- again at the top, and over the line that ends the map
+    local route = {
+      { 360, 192 }, { 440, 192 }, { 1216, 192 }, { 1216, 740 }, { 1280, 900 }, { 1500, 1024 }, { 1900, 1024 }, { 1980, 1024 },
+      { 2112, 1024 }, { 2336, 992 }, { 2576, 1088 }, { 2768, 1264 }, { 2864, 1504 }, { 2864, 1776 }, { 2768, 2048 },
+      { 2672, 2288 }, { 2656, 2500 }, { 2656, 2912 }, { 2912, 2912 }, { 2912, 3240 }, { 2912, 3330 }, { 2912, 3456 },
+      { 2480, 3456 }, { 2368, 3456 }, { 1856, 3456 }, { 1856, 3712 }, { 2240, 3712 }, { 2240, 3968 }, { 1856, 3968 },
+      { 1856, 4210 }, { 1856, 4870 }, { 1856, 4950 }, { 1856, 5900 }, { 1856, 5990 },
+    }
+    local shift = IsShiftKeyDown
+    IsShiftKeyDown = function()
+      return true
+    end
+    local tics, most = 0, 35 * 120
+    for _, point in ipairs(route) do
+      local x, y = point[1], point[2]
+      local still = 0
+      while not submitted and (player.x - x) ^ 2 + (player.y - y) ^ 2 > 20 ^ 2 do
+        run.angle = math.atan2(y - player.y, x - player.x)
+        view.down.W = true
+        local fromX, fromY = player.x, player.y
+        view:tick(1 / 35)
+        tics = tics + 1
+        assert(tics < most, ("stuck at %.0f, %.0f on the way to %d, %d"):format(player.x, player.y, x, y))
+        -- In the way: a door to be opened, or a lift to wait for
+        still = (player.x - fromX) ^ 2 + (player.y - fromY) ^ 2 < 1 and still + 1 or 0
+        if still % 35 == 34 then
+          view:use()
+        end
+      end
+    end
+    IsShiftKeyDown = shift
+    equal("x", submitted, "out at the end")
+    assert(tics < 35 * 60, "in under a minute of running, monsters aside: " .. tics / 35)
   end
 
   function tests.FreedoomGhostSamplesAreFiveLetters()
@@ -19454,7 +19603,7 @@ do
       return clock
     end
     local game = private.Games.Get("freedoom")
-    local state = game.newState(1, nil, {})
+    local state = game.newState(1, nil, { map = "e1m1" })
     local function show()
       view:Update({ match = { id = "m1" }, state = state, seat = 1, canMove = true, changed = true,
         submit = function(move)
@@ -19521,6 +19670,21 @@ do
     show()
     assert(picturesShown(view.hud).STCFN087, "and a new best when it was one")
     GetTime = nil
+  end
+
+  function tests.FreedoomRunFinishesWithItsNameWritten()
+    local view, private = freedoomView("run")
+    local run = view.run
+    local game = private.Games.Get("freedoom")
+    local state = game.newState(1, nil, { map = "run" })
+    run.finished = { seconds = 75, at = 0 }
+    state.out = true
+    view:Update({ match = { id = "run" }, state = state, seat = 1, canMove = true, changed = true, submit = function() end })
+    local shown = picturesShown(view.hud)
+    assert(shown.WIF and shown.WIMAP0, "finished, over the episode's map")
+    assert(not shown.WILV00, "not E1M1's name")
+    -- The tests' locale hands back its keys: FREEDOOM_MAP_RUN_TITLE, an R among it
+    assert(shown.STCFN082, "its own name written")
   end
 
   function tests.FreedoomRacesTheBestRunThenTheRivals()
@@ -20052,6 +20216,14 @@ do
         assert(stats.pieces > 0 and stats.segs > 0, "something was drawn")
       end
     end
+    -- Run, from every other thing in it, looking every which way
+    assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))(ADDON_NAME, private)
+    local run = private.SectorMap.Load("freedoom_run")
+    for index, thing in ipairs(run.data.things) do
+      if index % 2 == 0 then
+        coverage(private, run, thing.x, thing.y, run:SectorAt(thing.x, thing.y).floor + 41, index * 1.3)
+      end
+    end
   end
 end
 
@@ -20072,7 +20244,9 @@ do
       version = 1,
       seats = 1,
       clock = "open",
-      ghost = { every = 0.5 },
+      ghost = { every = 0.5, course = function()
+        return { "w" }
+      end },
       newState = function()
         return {}
       end,
@@ -20351,6 +20525,50 @@ do
     equal("won", Race.Outcome(mine.race))
   end
 
+  function tests.RaceCanBeTheRunThatSetTheBest()
+    local world = World.New()
+    world.prepare = function(private)
+      registerCounting(private)
+      registerDash(private)
+    end
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local Race = alice.private.Race
+    equal(nil, alice.session:BestToRace("dash"), "no best yet")
+    equal("no_best", select(2, alice.session:Invite("Bob-Realm", "dash", { best = true })))
+    local solo = assert(alice.session:Invite({}, "dash"))
+    for half = 0, 5 do
+      alice.session:Spend(solo.id, half == 0 and 0 or 0.5)
+      alice.session:Sample(solo.id, "a" .. half)
+    end
+    alice.session:Spend(solo.id, 0.5)
+    assert(alice.session:Move(solo.id, "w"))
+    equal(3, alice.session:BestToRace("dash"))
+    equal(nil, alice.session:BestToRace("counting"), "a game whose runs aren't one course can't")
+
+    local mine = assert(alice.session:Invite("Bob-Realm", "dash", { best = true }))
+    equal("finished", mine.status, "nothing for Alice to play")
+    equal(3, mine.played)
+    equal(300, Race.Mine(mine.race))
+    equal(true, mine.race.unanswered)
+    world:Deliver()
+    local theirs = bob.matches[mine.id]
+    equal("incoming", theirs.status)
+    equal(nil, Race.Theirs(theirs.race), "told once Bob takes it up")
+    assert(bob.session:Accept(theirs.id))
+    world:Deliver()
+    equal(300, Race.Theirs(theirs.race))
+    local ghost = assert(Race.Ghost(theirs.race), "her best's ghost came with it")
+    equal("a0+a1+a2+a3+a4+a5", table.concat(ghost, "+"))
+    equal(3, alice.session:Best("dash", "time"), "sending it isn't another best")
+
+    alice.session:Spend(theirs.id, 0)
+    bob.session:Spend(theirs.id, 2)
+    assert(bob.session:Move(theirs.id, "w"))
+    world:Deliver()
+    equal("lost", Race.Outcome(mine.race))
+    equal("won", Race.Outcome(theirs.race))
+  end
+
   function tests.GameThatNeedsAnAddonIsOnlyOfferedWithIt()
     local Games = loadEngine().Games
     local freedoom = Games.Get("freedoom")
@@ -20552,6 +20770,47 @@ do
     equal(mine.id, theirs.id)
     equal("incoming", theirs.status)
     equal("expert", theirs.options.level, "by the rules it was set up with")
+  end
+
+  function tests.WizardSendsTheBestToRace()
+    local world = World.New()
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local Race = alice.private.Race
+    alice.session.env.records.freedoom = { run = 42.5, e1m1_hard = 80 }
+    alice.session.env.ghosts.freedoom = { run = "abc+def" }
+    openWizard(alice)
+    pickGame("freedoom")
+    local function bestShown()
+      return #Client.Find(function(widget)
+        return widget.kind == "Button" and widget.text == "wizard_race_best" and widget:IsVisible()
+      end) == 1
+    end
+    equal(false, bestShown(), "nobody to send it to yet")
+    local box = Client.Find(function(widget)
+      return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+    end)[1]
+    box:SetText("Bob-Realm")
+    box:Fire("OnTextChanged", true)
+    equal(true, bestShown(), "the best on the Run")
+    ruleChoices("freedoom_option_skill")["freedoom_skill_hard"]:Fire("OnClick")
+    equal(false, bestShown(), "a best without a ghost isn't sent")
+    ruleChoices("freedoom_option_skill")["freedoom_skill_medium"]:Fire("OnClick")
+    Client.Button("wizard_race_best"):Fire("OnClick")
+    world:Deliver()
+    local mine, theirs
+    for _, match in pairs(alice.matches) do
+      mine = match
+    end
+    for _, match in pairs(bob.matches) do
+      theirs = match
+    end
+    equal("finished", mine.status)
+    equal(4250, Race.Mine(mine.race))
+    equal("run", bob.private.Match.State(theirs).level, "on the map it was set")
+    assert(bob.session:Accept(theirs.id))
+    world:Deliver()
+    equal(4250, Race.Theirs(theirs.race))
+    equal("abc+def", table.concat(Race.Ghost(theirs.race), "+"))
   end
 
   function tests.WindowShowsARaceFromTheChallengeToWhoWon()

@@ -28,6 +28,8 @@ private.Party = Party
 local ABOUT_WIDTH, ABOUT_INSET, PANEL_GAP = 400, 12, 12
 local OPTIONS_TOP, OPTION_ROW_HEIGHT, OPTION_NAME_WIDTH = 146, 30, 142
 local CHOICE_HEIGHT, CHOICE_PADDING, CHOICE_GAP = 24, 16, 6
+-- An option of more choices than this is a dropdown when they don't fit across, as in the wizard
+local MOST_BUTTONS = 5
 -- Who a room can be for, and how high the button for each is
 local AUDIENCES = { "GUILD", "GROUP", "FRIENDS" }
 local AUDIENCE_HEIGHT, AUDIENCE_GAP = 50, 6
@@ -240,6 +242,33 @@ local function fillOptionRow(row, option)
         Party.Refresh()
       end)
     end
+  end
+  -- Many choices that don't fit across the line are a dropdown instead
+  local room = ABOUT_WIDTH - 2 * ABOUT_INSET
+  local listed = x - CHOICE_GAP > room and #option.choices > MOST_BUTTONS
+  for index, choice in ipairs(row.choices) do
+    choice:SetShown(option.choices[index] ~= nil and not listed)
+  end
+  if listed and not row.dropdown then
+    row.dropdown = Widgets.Dropdown(row, CHOICE_HEIGHT)
+    row.dropdown:SetPoint("LEFT", OPTION_NAME_WIDTH + 6, 0)
+    row.dropdown:SetWidth(room - OPTION_NAME_WIDTH - 6)
+  end
+  if row.dropdown then
+    row.dropdown:SetShown(listed)
+  end
+  if listed then
+    local choices = {}
+    for _, value in ipairs(option.choices) do
+      choices[#choices + 1] = {
+        text = option.label and option.label(value) or tostring(value),
+        on = chosenRules[option.id] == value,
+        pick = function()
+          chosenRules[option.id] = value
+        end,
+      }
+    end
+    row.dropdown:SetChoices(choices, Party.Refresh)
   end
 end
 

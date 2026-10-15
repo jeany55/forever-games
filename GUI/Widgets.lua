@@ -127,6 +127,141 @@ function Widgets.Button(parent, text, width, height)
   return button
 end
 
+-- A dropdown's list: how tall a line of it is, how much wider than its words, the arrow
+local DROPDOWN_ROW, DROPDOWN_PADDING = 22, 24
+local DROPDOWN_ARROW = "Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up"
+
+--- @class DropdownChoice
+--- @field text string
+--- @field on boolean Whether it is what is chosen
+--- @field pick fun()
+--- @field tip string?
+
+--- What is chosen, on a button that, clicked, lists everything it could be under it (or over it,
+--- where there is no room under it): for a choice between more things than there is room to show
+--- side by side. A click on one picks it and closes the list, and so does a click anywhere else.
+--- Made the addon's own way rather than with the client's dropdowns, which aren't the same in
+--- every client
+--- @param parent Frame
+--- @param height number
+--- @return Button dropdown With SetChoices(choices, onPick), onPick called after a choice's own pick
+function Widgets.Dropdown(parent, height)
+  local dropdown = Widgets.Panel(parent, "Button")
+  dropdown:SetHeight(height)
+  dropdown.label = Widgets.Label(dropdown, "GameFontHighlightSmall")
+  dropdown.label:SetPoint("LEFT", 8, 0)
+  dropdown.label:SetPoint("RIGHT", -(height + 2), 0)
+  dropdown.label:SetWordWrap(false)
+  dropdown.label:SetTextColor(unpack(Widgets.GOLD))
+  dropdown.arrow = dropdown:CreateTexture(nil, "ARTWORK")
+  dropdown.arrow:SetTexture(DROPDOWN_ARROW)
+  dropdown.arrow:SetSize(height - 4, height - 4)
+  dropdown.arrow:SetPoint("RIGHT", -2, 0)
+  dropdown:SetBackdropBorderColor(1, 0.82, 0, 0.9)
+  local hover = dropdown:CreateTexture(nil, "HIGHLIGHT")
+  hover:SetAllPoints()
+  hover:SetColorTexture(1, 0.82, 0, 0.12)
+
+  -- The list, over everything else in the window
+  local list = Widgets.Panel(dropdown)
+  list:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+  list:SetBackdropBorderColor(1, 0.82, 0, 0.5)
+  list:SetFrameStrata("FULLSCREEN_DIALOG")
+  list:EnableMouse(true)
+  list:Hide()
+  list.rows = {}
+  dropdown.list = list
+
+  local function place()
+    list:ClearAllPoints()
+    local bottom, scale = dropdown:GetBottom(), dropdown:GetEffectiveScale()
+    if bottom and bottom * scale < list:GetHeight() * list:GetEffectiveScale() then
+      list:SetPoint("BOTTOMLEFT", dropdown, "TOPLEFT", 0, 2)
+    else
+      list:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
+    end
+  end
+
+  dropdown:SetScript("OnClick", function()
+    if not list:IsShown() then
+      place()
+    end
+    list:SetShown(not list:IsShown())
+  end)
+  dropdown:SetScript("OnHide", function()
+    list:Hide()
+  end)
+  -- A click anywhere but the list or the button closes it. Not every client says so; there it
+  -- closes on a pick or a click on the button
+  list:SetScript("OnShow", function(self)
+    pcall(self.RegisterEvent, self, "GLOBAL_MOUSE_DOWN")
+  end)
+  list:SetScript("OnHide", function(self)
+    pcall(self.UnregisterEvent, self, "GLOBAL_MOUSE_DOWN")
+  end)
+  list:SetScript("OnEvent", function(self)
+    if not self:IsMouseOver() and not dropdown:IsMouseOver() then
+      self:Hide()
+    end
+  end)
+
+  --- @param choices DropdownChoice[]
+  --- @param onPick fun()?
+  function dropdown:SetChoices(choices, onPick)
+    local widest = 0
+    dropdown.label:SetText("")
+    for index = 1, math.max(#choices, #list.rows) do
+      local row, choice = list.rows[index], choices[index]
+      if choice and not row then
+        row = CreateFrame("Button", nil, list)
+        row:SetHeight(DROPDOWN_ROW)
+        row:SetPoint("TOPLEFT", 1, -1 - (index - 1) * DROPDOWN_ROW)
+        row:SetPoint("TOPRIGHT", -1, -1 - (index - 1) * DROPDOWN_ROW)
+        row.label = Widgets.Label(row, "GameFontHighlightSmall")
+        row.label:SetPoint("LEFT", 8, 0)
+        local lit = row:CreateTexture(nil, "HIGHLIGHT")
+        lit:SetAllPoints()
+        lit:SetColorTexture(1, 0.82, 0, 0.15)
+        row:SetScript("OnClick", function(self)
+          list:Hide()
+          self.choice.pick()
+          if dropdown.onPick then
+            dropdown.onPick()
+          end
+        end)
+        row:SetScript("OnEnter", function(self)
+          if self.choice.tip then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(self.choice.text)
+            GameTooltip:AddLine(self.choice.tip, 1, 1, 1, true)
+            GameTooltip:Show()
+          end
+        end)
+        row:SetScript("OnLeave", GameTooltip_Hide)
+        list.rows[index] = row
+      end
+      if row then
+        row:SetShown(choice ~= nil)
+      end
+      if choice then
+        row.choice = choice
+        row.label:SetText(choice.text)
+        if choice.on then
+          row.label:SetTextColor(unpack(Widgets.GOLD))
+          dropdown.label:SetText(choice.text)
+        else
+          row.label:SetTextColor(1, 1, 1)
+        end
+        widest = math.max(widest, row.label:GetStringWidth())
+      end
+    end
+    dropdown.onPick = onPick
+    list:SetSize(math.max(dropdown:GetWidth(), widest + DROPDOWN_PADDING), #choices * DROPDOWN_ROW + 2)
+  end
+
+  return dropdown
+end
+
 --- @param parent Frame
 --- @param font string Font object name
 --- @param text string?

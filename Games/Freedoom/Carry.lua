@@ -46,6 +46,7 @@ local MOST_HEALTH, MOST_BONUS = 100, 200
 --- @field pending string? What they are changing to
 --- @field keys table<string, boolean> By colour and kind: "bluecard", "redskull"
 --- @field powers table<string, boolean>
+--- @field ammoTimes number? Ammunition picked up counts this many times over: twice on the easiest skill, as in Doom
 --- @field backpack boolean
 
 --- What the player has at the start of a map
@@ -73,7 +74,7 @@ local function giveAmmo(inventory, kind, amount)
   if inventory.ammo[kind] >= inventory.max[kind] then
     return false
   end
-  inventory.ammo[kind] = math.min(inventory.max[kind], inventory.ammo[kind] + amount)
+  inventory.ammo[kind] = math.min(inventory.max[kind], inventory.ammo[kind] + amount * (inventory.ammoTimes or 1))
   return true
 end
 

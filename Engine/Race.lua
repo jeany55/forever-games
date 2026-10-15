@@ -40,6 +40,7 @@ local _, private = ...
 --- What a game keeps of a run for the other racer to race against
 --- @class GameGhost
 --- @field every number Seconds of the clock between two samples of where the player is. Two or four a second is plenty
+--- @field course (fun(options: table<string, any>): string[])? For a game whose every run by the same rules is the same course, whatever its deal (a map, not a field of mines): the log of a run by these rules that got to the end. The run that set the player's best can then be sent to somebody to race as it is (InviteSetup.best)
 
 --- What a game for one that is raced against somebody keeps of the race. The match is the
 --- player's own like any game for one: only its id, which the deal comes from, is the rival's too

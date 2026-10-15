@@ -570,16 +570,17 @@ function SectorMap:TryMove(actor, x, y, crossed)
   if blocked or ceiling - floor < actor.height or ceiling - actor.z < actor.height or floor - actor.z > (actor.step or STEP) then
     return false
   end
-  if actor.block then
-    -- One of the map's things: where it is in the grid goes with it
-    self:relink(actor, x, y)
-  end
+  -- Which lines its middle went over, from where it was: before it is moved there
   if crossed then
     for _, line in ipairs(touched) do
       if line.special ~= 0 and behind(line.x1, line.y1, line.dx, line.dy, actor.x, actor.y) ~= behind(line.x1, line.y1, line.dx, line.dy, x, y) then
         crossed[#crossed + 1] = line
       end
     end
+  end
+  if actor.block then
+    -- One of the map's things: where it is in the grid goes with it
+    self:relink(actor, x, y)
   end
   actor.x, actor.y, actor.floor, actor.ceiling = x, y, floor, ceiling
   return true

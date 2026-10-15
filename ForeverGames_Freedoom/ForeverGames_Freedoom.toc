@@ -7,6 +7,7 @@
 ## LoadOnDemand: 1
 
 Hud.lua
+Maps\Run.lua
 Maps\E1M1.lua
 Maps\E1M2.lua
 Maps\E1M3.lua

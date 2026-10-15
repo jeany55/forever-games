@@ -1,8 +1,10 @@
 --------------------------
 --  Freedoom
 --------------------------
--- The first episode of Freedoom (freedoom.github.io), a Doom made free to share: whichever of its
--- nine maps is picked (the "map" option), fight through it to the exit, in the best time you can. It is the sector maps of the engine (Engine/SectorMap.lua) seen
+-- The first episode of Freedoom (freedoom.github.io), a Doom made free to share, and Run, a map of
+-- the addon's own that is one way through with no turnings (Tools/make_run.py): whichever map is
+-- picked (the "map" option), on whichever of Doom's skills (the "skill" option), fight through it
+-- to the exit, in the best time you can. It is the sector maps of the engine (Engine/SectorMap.lua) seen
 -- through its view of them (GUI/SectorView.lua), and what this game adds is Doom's: how the
 -- player walks, what the lines of a Doom map do when they are used or walked over (SPECIALS):
 -- doors, lifts, a floor that lowers and the switch that ends the map, what can be picked up and
@@ -34,13 +36,21 @@ local TWO_PI, EIGHTH, MOST_BOB, WEAPON_TOP = Freedoom.TWO_PI, Freedoom.EIGHTH, F
 local damage, trigger, populate = Freedoom.damage, Freedoom.trigger, Freedoom.populate
 local liveTic, gunTic, gunAct = Freedoom.liveTic, Freedoom.gunTic, Freedoom.gunAct
 
--- The maps there are to pick from, the first episode's, and the addon they are in
-local LEVELS = { "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8", "e1m9" }
+-- The maps there are to pick from, Run first and then the first episode's, and the addon they are in
+local LEVELS = { "run", "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8", "e1m9" }
 local MAPS_ADDON = "ForeverGames_Freedoom"
 local EXIT, DEAD = "x", "d"
+-- Doom's skills, the easiest first, and which of the things of a map are there on each (Doom's
+-- thing flags: the two easiest, the middle one, the hardest). On the easiest the player also takes
+-- half of every blow and gets twice the ammunition, as in Doom. Best times are kept for each skill,
+-- the middle one's under the map alone, as they were before there were skills to pick
+local SKILLS = { "baby", "easy", "medium", "hard" }
+local SKILL_FLAGS = { baby = 1, easy = 1, medium = 2, hard = 4 }
+local USUAL_SKILL = "medium"
 
 --- @class FreedoomState
---- @field level string Which map, "e1m1" to "e1m9", which is also what its best time is kept under
+--- @field level string Which map, "run" or "e1m1" to "e1m9"
+--- @field skill string One of SKILLS
 --- @field map string The sector map's id
 --- @field out boolean The player got to the exit
 --- @field dead boolean? They didn't
@@ -48,7 +58,20 @@ local EXIT, DEAD = "x", "d"
 --- @return FreedoomState
 local function newState(_, _, rules)
   local level = rules and rules.map or LEVELS[1]
-  return { level = level, map = "freedoom_" .. level, out = false }
+  local skill = rules and SKILL_FLAGS[rules.skill] and rules.skill or USUAL_SKILL
+  return { level = level, skill = skill, map = "freedoom_" .. level, out = false }
+end
+
+--- What a map's best time (and the run that set it) is kept under: the map, and the skill
+--- unless it is the middle one
+--- @param state FreedoomState
+--- @return string
+local function recordKey(state)
+  local level = state.level or LEVELS[1]
+  if state.skill and state.skill ~= USUAL_SKILL then
+    return level .. "_" .. state.skill
+  end
+  return level
 end
 
 local function validate(state, seat, move)
@@ -114,9 +137,8 @@ local ASPECT = 4 / 3
 local STATS_EVERY, LOG_EVERY = 0.25, 2
 -- The view's textures are made ahead of time, this many a frame until there are this many
 local RESERVE, RESERVE_A_FRAME = 3500, 250
--- The things of the map that are there on Doom's middle skill, and not only with others, and
--- where a teleport lands
-local SKILL, MULTIPLAYER, TELEPORT_LANDING = 2, 16, 14
+-- The things of the map that are there only with others, and where a teleport lands
+local MULTIPLAYER, TELEPORT_LANDING = 16, 14
 -- What the floor of a sector does to whoever stands on it, by its special, every so many tics,
 -- unless they wear the suit, for so long
 local HURTING_FLOORS = { [4] = 20, [5] = 10, [7] = 5, [16] = 20 }
@@ -174,13 +196,14 @@ local GHOST = {
   near = 160, smallest = 0.6, largest = 1.2,
 }
 -- The screen a map is finished with, Doom's intermission (its wi_stuff.c): where everything on
--- it goes, how fast the counts go up (two percent a tic, three seconds of the time), Doom's par
--- times for the first episode's maps, the kinds of thing that count as items, and the special of a
--- sector that is a secret. And where the lines under it are written, in Doom's font
+-- it goes, how fast the counts go up (two percent a tic, three seconds of the time), the par
+-- times (Doom's for the first episode's maps), the kinds of thing that count as items, and the
+-- special of a sector that is a secret. And where the lines under it are written, in Doom's font,
+-- and how much bigger the name of a map is written that has no picture of its name, as Run hasn't
 local FINISH = {
-  statsX = 50, statsY = 50, timeX = 16, timeY = 168, titleY = 2,
+  statsX = 50, statsY = 50, timeX = 16, timeY = 168, titleY = 2, titleScale = 2,
   percentStep = 2, timeStep = 3,
-  pars = { 30, 75, 120, 90, 165, 180, 180, 30, 165 },
+  pars = { run = 90, e1m1 = 30, e1m2 = 75, e1m3 = 120, e1m4 = 90, e1m5 = 165, e1m6 = 180, e1m7 = 180, e1m8 = 30, e1m9 = 165 },
   items = { [2014] = true, [2015] = true, [2013] = true, [83] = true, [2022] = true, [2023] = true, [2024] = true, [2026] = true, [2045] = true },
   secret = 9,
   notesY = 128, notesGap = 12,
@@ -275,12 +298,13 @@ local function newRun(state)
   local start
   local animated, here, totalItems, totalSecrets = {}, {}, 0, 0
   local kinds = map.data.kinds or {}
+  local skill = SKILL_FLAGS[state.skill] or SKILL_FLAGS[USUAL_SKILL]
   for _, thing in ipairs(map.data.things) do
     if thing.type == 1 and not start then
       start = thing
     end
     local kind = kinds[thing.type]
-    if kind and thing.flags % (SKILL * 2) >= SKILL and thing.flags % (MULTIPLAYER * 2) < MULTIPLAYER then
+    if kind and thing.flags % (skill * 2) >= skill and thing.flags % (MULTIPLAYER * 2) < MULTIPLAYER then
       if MONSTERS[thing.type] then
         here[#here + 1] = thing
       else
@@ -306,6 +330,8 @@ local function newRun(state)
   map:AddThing(player)
   map:Settle(player)
   local inventory = newInventory()
+  local easiest = state.skill == SKILLS[1]
+  inventory.ammoTimes = easiest and 2 or nil
   --- @type FreedoomRun
   for _, sector in ipairs(map.sectors) do
     if sector.special == FINISH.secret then
@@ -319,7 +345,8 @@ local function newRun(state)
     end
   end
   local run = {
-    map = map, level = state.level, teleports = teleports, items = 0, totalItems = totalItems, secrets = 0, totalSecrets = totalSecrets,
+    map = map, level = state.level, key = recordKey(state), halfDamage = easiest or nil, teleports = teleports, items = 0,
+    totalItems = totalItems, secrets = 0, totalSecrets = totalSecrets,
     player = player, angle = math.rad(start.angle), inventory = inventory, animated = animated, actors = {}, tic = 0, time = 0,
     refire = 0, light = 0, gunY = WEAPON_TOP, gunMoving = 0, bonus = 0, hurt = 0, eye = EYE, bob = 0,
     shows = function()
@@ -471,8 +498,8 @@ function View:raceGhost()
   if race and race.ghost then
     samples, name, of = race.ghost, (race.rival or ""):match("^[^%-]+") or "", "race"
   elseif not run.ghostOf and view.ghost then
-    samples, of = view.ghost(run.level), "best"
-    local best = view.best and view.best(run.level)
+    samples, of = view.ghost(run.key), "best"
+    local best = view.best and view.best(run.key)
     name = best and L["freedoom_ghost_best"]:format(preciseTime(best)) or ""
   end
   if not samples then
@@ -816,16 +843,18 @@ function View:worldTic()
   end
 end
 
---- A picture of the status bar's, with its own offsets from where it is put
-function View:patch(name, x, y)
+--- A picture of the status bar's, with its own offsets from where it is put, so many times as big
+--- (once if left out). How wide it is put
+function View:patch(name, x, y, scale)
   local picture = self.pictures.pictures[name]
   if not picture then
     return 0
   end
-  local left, top = x - picture.left, y - picture.top
-  self.hud:Quad(left, top, left + picture.width, top + picture.height, self.pictures.folder .. "\\" .. name,
+  scale = scale or 1
+  local left, top = x - picture.left * scale, y - picture.top * scale
+  self.hud:Quad(left, top, left + picture.width * scale, top + picture.height * scale, self.pictures.folder .. "\\" .. name,
     0, picture.width / picture.fileWidth, 0, picture.height / picture.fileHeight, 1, 1, 1)
-  return picture.width
+  return picture.width * scale
 end
 
 --- A number, its last digit ending where it is put, in digits named prefix0 to prefix9
@@ -839,14 +868,14 @@ function View:number(value, x, y, prefix)
   until value == 0
 end
 
---- Writes in Doom's font, which has only capitals
-function View:write(text, x, y)
+--- Writes in Doom's font, which has only capitals, so many times as big (once if left out)
+function View:write(text, x, y, scale)
   for index = 1, #text do
     local code = text:upper():byte(index)
     if code >= FONT_FIRST and code <= FONT_LAST then
-      x = x + self:patch(("STCFN%03d"):format(code), x, y)
+      x = x + self:patch(("STCFN%03d"):format(code), x, y, scale)
     else
-      x = x + SPACE_WIDTH
+      x = x + SPACE_WIDTH * (scale or 1)
     end
   end
 end
@@ -943,15 +972,19 @@ function View:bigTime(x, y, seconds)
   until math.floor(seconds / unit) == 0
 end
 
---- Writes a line in Doom's font across the middle of the screen
-function View:writeMiddle(text, y)
-  local width = 0
+--- Writes a line in Doom's font across the middle of the screen, so many times as big (once if
+--- left out). How tall it is
+function View:writeMiddle(text, y, scale)
+  scale = scale or 1
+  local width, height = 0, 0
   for index = 1, #text do
     local code = text:upper():byte(index)
     local picture = code >= FONT_FIRST and code <= FONT_LAST and self.pictures.pictures[("STCFN%03d"):format(code)]
     width = width + (picture and picture.width or SPACE_WIDTH)
+    height = math.max(height, picture and picture.height or 0)
   end
-  self:write(text, math.floor((SCREEN_WIDTH - width) / 2), y)
+  self:write(text, math.floor((SCREEN_WIDTH - width * scale) / 2), y, scale)
+  return height * scale
 end
 
 --- The screen a map is finished with, Doom's: the episode's map behind, the map's name and that
@@ -965,14 +998,21 @@ function View:drawFinish()
   end
   local run, hud, pictures = self.run, self.hud, self.pictures.pictures
   local finished = run.finished
-  local map = tonumber(run.level:match("(%d+)$")) or 1
   hud:Begin()
   self:patch("WIMAP0", 0, 0)
   hud:SetLevel(private.Strips.LOWEST + 1)
-  local title, done = pictures["WILV0" .. (map - 1)], pictures.WIF
-  if title and done then
-    self:patch("WILV0" .. (map - 1), math.floor((SCREEN_WIDTH - title.width) / 2), FINISH.titleY)
-    self:patch("WIF", math.floor((SCREEN_WIDTH - done.width) / 2), FINISH.titleY + math.floor(title.height * 5 / 4))
+  -- The first episode's maps have pictures of their names; any other has its name written
+  local number = tonumber(run.level:match("^e1m(%d)$"))
+  local title, done = number and pictures["WILV0" .. (number - 1)], pictures.WIF
+  local tall
+  if title then
+    self:patch("WILV0" .. (number - 1), math.floor((SCREEN_WIDTH - title.width) / 2), FINISH.titleY)
+    tall = title.height
+  else
+    tall = self:writeMiddle(L["freedoom_map_" .. run.level .. "_title"], FINISH.titleY, FINISH.titleScale)
+  end
+  if done then
+    self:patch("WIF", math.floor((SCREEN_WIDTH - done.width) / 2), FINISH.titleY + math.floor(tall * 5 / 4))
   end
 
   -- What has counted up by now, each count after the last, a tic at a time
@@ -997,7 +1037,7 @@ function View:drawFinish()
   self:patch("WITIME", FINISH.timeX, FINISH.timeY)
   self:bigTime(SCREEN_WIDTH / 2 - FINISH.timeX, FINISH.timeY, counted(finished.seconds, FINISH.timeStep))
   self:patch("WIPAR", SCREEN_WIDTH / 2 + FINISH.timeX, FINISH.timeY)
-  self:bigTime(SCREEN_WIDTH - FINISH.timeX, FINISH.timeY, counted(FINISH.pars[map] or 0, FINISH.timeStep))
+  self:bigTime(SCREEN_WIDTH - FINISH.timeX, FINISH.timeY, counted(FINISH.pars[run.level] or 0, FINISH.timeStep))
 
   -- Doom's counting goes off as the numbers go up, and once they have a bang
   if left <= 0 then
@@ -1014,7 +1054,7 @@ function View:drawFinish()
     notes[#notes + 1] = L["freedoom_finish_time"]:format(preciseTime(finished.seconds))
     local best, set
     if view.best then
-      best, set = view.best(run.level)
+      best, set = view.best(run.key)
     end
     if set then
       notes[#notes + 1] = L["freedoom_finish_best_new"]
@@ -1173,7 +1213,7 @@ private.Games.Register({
   genre = "solo",
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\freedoom",
   addon = MAPS_ADDON,
-  version = 3,
+  version = 4,
   seats = 1,
   options = {
     {
@@ -1184,6 +1224,16 @@ private.Games.Register({
       default = LEVELS[1],
       label = function(value)
         return L["freedoom_map_" .. value]
+      end,
+    },
+    {
+      id = "skill",
+      name = L["freedoom_option_skill"],
+      description = L["freedoom_option_skill_tip"],
+      choices = SKILLS,
+      default = USUAL_SKILL,
+      label = function(value)
+        return L["freedoom_skill_" .. value]
       end,
     },
   },
@@ -1197,14 +1247,22 @@ private.Games.Register({
   moves = moves,
   result = result,
   progress = function(state)
-    return L["freedoom_map_" .. (state.level or LEVELS[1])]
+    local map = L["freedoom_map_" .. (state.level or LEVELS[1])]
+    if state.skill and state.skill ~= USUAL_SKILL then
+      return L["freedoom_progress_skill"]:format(map, L["freedoom_skill_" .. state.skill])
+    end
+    return map
   end,
   record = function(state, seconds)
     if state.out then
-      return { { key = state.level or LEVELS[1], value = seconds, lower = true } }
+      return { { key = recordKey(state), value = seconds, lower = true } }
     end
     return nil
   end,
   createView = createView,
-  ghost = { every = GHOST.every },
+  -- Every map is the same whoever plays it, so a best can be raced as it is: the way to the end of
+  -- one is getting out of it
+  ghost = { every = GHOST.every, course = function()
+    return { EXIT }
+  end },
 })

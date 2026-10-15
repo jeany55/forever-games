@@ -433,9 +433,21 @@ end
 --- @param race MatchRace? The race it is a run in
 --- @return Match
 function Session:startSolo(game, options, daily, race)
+  local match = self:newSolo(game, options)
+  match.daily, match.race = daily, race
+  self.env.matches[match.id] = match
+  self.env.notify("changed", match)
+  return match
+end
+
+--- A new game for one, not yet on the player's list
+--- @param game GameDefinition
+--- @param options table<string, any>? How the rules are set, the usual way if left out
+--- @return Match
+function Session:newSolo(game, options)
   local now = self.env.now()
   --- @type Match
-  local match = {
+  return {
     id = string.format("%x%06x", now, self.env.random(0xFFFFFF)),
     game = game.id,
     gameVersion = game.version,
@@ -447,12 +459,7 @@ function Session:startSolo(game, options, daily, race)
     seen = {},
     created = now,
     updated = now,
-    daily = daily,
-    race = race,
   }
-  self.env.matches[match.id] = match
-  self.env.notify("changed", match)
-  return match
 end
 
 -----------------------------
@@ -599,6 +606,7 @@ end
 --- @field seat number? For a game of two, the seat the local player takes. At random if left out
 --- @field id string? The id of a match that was asked for, which it goes by
 --- @field computer { levels: string[]?, level: string?, count: number? }? The computer plays too: how well it plays each seat it takes, or how well it plays (Computer.DEFAULT_LEVEL if left out) and in how many seats (one if left out). With nobody challenged the game is against it alone, and with people it sits at the table with them. Which seat is which is drawn like everyone's
+--- @field best boolean? A race is challenged with the run that set the player's best by these rules, its time and its ghost, rather than with one they play for it (Session:BestToRace)
 
 --- Challenges one player, or several to a game for more than two. With nobody to challenge it
 --- starts a game for one, where the game is one, or against the computer, where that is asked for.
@@ -1454,9 +1462,75 @@ function Session:startRace(game, rival, setup)
   if self:openMatchesWith(rival) >= MAX_OPEN_PER_PEER then
     return nil, "too_many_matches"
   end
-  local match = self:startSolo(game, setup.options, nil, { rival = rival, unanswered = true, told = 0, heard = {} })
+  local race = { rival = rival, unanswered = true, told = 0, heard = {} }
+  local match
+  if setup.best then
+    local trail
+    match, trail = self:bestRun(game, setup.options)
+    if not match then
+      return nil, "no_best"
+    end
+    -- Over before it is sent: the rival has the run to hear as soon as they take the race up
+    race.run = Race.Run(Race.Time(game, Match.State(match), match.played, Match.Result(match)) or false, trail)
+    match.race = race
+    self.env.matches[match.id] = match
+    self.env.notify("changed", match)
+  else
+    match = self:startSolo(game, setup.options, nil, race)
+  end
   self:sendRace(match)
   return match
+end
+
+-- A game whose every run by the same rules is the same course, whatever its deal (GameGhost.course),
+-- can have the run that set the player's best sent to somebody to race as it is, rather than
+-- played again for them. What is sent is all a race ever tells about a run: its time and its
+-- ghost. The player's side of the race is a game for one that is over already, the course's way
+-- to the end in its log and the best's time on its clock.
+
+--- The run that set the player's best at a game by these rules, as a game for one that got to
+--- the end, not yet on their list, and its ghost
+--- @param game GameDefinition
+--- @param options table<string, any>?
+--- @return Match?, string? trail nil if the game's runs aren't all the one course, or the player has no best with a ghost by these rules
+function Session:bestRun(game, options)
+  local course = game.ghost and game.ghost.course
+  if not course or not Race.Has(game) then
+    return nil
+  end
+  local match = self:newSolo(game, options)
+  for _, entry in ipairs(course(match.options) or {}) do
+    if not Match.Append(match, entry) then
+      return nil
+    end
+  end
+  local result = Match.Result(match)
+  if not result then
+    return nil
+  end
+  for _, record in ipairs(game.record(Match.State(match), 0, result) or {}) do
+    if record.lower then
+      local best = self:Best(game.id, record.key)
+      local trail = self.env.ghosts[game.id] and self.env.ghosts[game.id][record.key]
+      if not best or not trail then
+        return nil
+      end
+      match.played = best
+      return match, trail
+    end
+  end
+  return nil
+end
+
+--- How long the run that set the player's best at a game by these rules took, if it can be sent
+--- to somebody to race as it is (InviteSetup.best)
+--- @param gameId string
+--- @param options table<string, any>?
+--- @return number? seconds
+function Session:BestToRace(gameId, options)
+  local game = Games.Get(gameId)
+  local match = game and self:bestRun(game, options)
+  return match and match.played
 end
 
 --- Keeps where the player is now for the ghost of their run, in a game for one that has one

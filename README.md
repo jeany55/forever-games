@@ -67,7 +67,9 @@ solve on your own or the two of you together, both at once.
   the other, and the quicker one wins: a run that didn't finish (a mine, a death, a Sudoku with
   a hint in it) loses to any that did. The race shows both times beside the game, the one to
   beat while you play, and who won once both are in. **Race Again** deals another. Pick nobody
-  and the game is yours alone, as ever
+  and the game is yours alone, as ever. In Freedoom, where every map is the same for everyone,
+  you can send your best instead of playing again: **Send My Best** beside the challenge sends
+  the run that set your best time on that map and skill, its time and its ghost, for them to race
 - A game that can be played alone or together, like Fourtiles, is played alone if you pick
   nobody: **Play Alone**. Played together it has no turns. Both of you play whenever you like,
   online together or not, and what each of you did is put together when you next meet
@@ -201,8 +203,12 @@ solve on your own or the two of you together, both at once.
   Where you are isn't, and nor are your talents: a game you come back to after logging out
   begins at the start again
 - Freedoom is the first episode of [Freedoom](https://freedoom.github.io), the free Doom, drawn
-  the way Doom drew it: pick one of its nine maps when you set the game up and fight your way to
-  its exit, against the clock; your best time on every map is kept. Every map is finished with
+  the way Doom drew it, and Run, a map of the addon's own: one long way from start to exit with
+  no wrong turns, through a base, a canyon under a red sky, a nukage plant, a warehouse of crates
+  and a gate over lava. Pick Run or one of the episode's nine maps when you set the game up, and
+  one of Doom's four skills (the easier, the fewer monsters; on the easiest you take half damage
+  and get twice the ammo), and fight your way to the exit against the clock; your best time on
+  every map at every skill is kept. Every map is finished with
   Doom's screen for it, what you killed, picked up and found counting up, your time to the
   hundredth and how it stands. Play a map again and the ghost of your best run on it runs beside
   you, a glowing marine; race a friend on it and theirs does, with their name over its head,
@@ -354,8 +360,8 @@ Words after it run only the tests whose names have one of them in:
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`
 - `ForeverGames_Freedoom/` an addon of its own, loaded when a game of Freedoom is first shown:
-  its maps, the pictures they are drawn with and its status bar, too much to load at every login.
-  Made by `Tools/import_freedoom.sh` from `freedoom1.wad`; `install.sh` and `build.sh` take it along
+  its maps, Run among them, the pictures they are drawn with and its status bar, too much to load
+  at every login. Made by `Tools/import_freedoom.sh` from `freedoom1.wad`; `install.sh` and `build.sh` take it along
 
 ### Adding a game
 
@@ -396,8 +402,11 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
   see `Engine/Race.lua`. A game can send a ghost of the run along with the time (`ghost`, with
   `every` the seconds between samples): its view is handed `view.race`, whose `sample(text)`
   keeps where the player is now and whose `ghost` is the rival's samples, one every `every`
-  seconds of their run, to show while the player races them. Every game that can be raced is
-  checked to deal a race the same on the rival's client
+  seconds of their run, to show while the player races them. A game whose every run by the same
+  rules is the same course, whatever its deal, can also say how such a run gets to the end
+  (`ghost.course(options)`, its log): the run that set the player's best can then be sent as the
+  challenge itself (`Session:BestToRace`, `best` in the setup), their side of the race over
+  already. Every game that can be raced is checked to deal a race the same on the rival's client
 - **Together**: a game with `together = true` has no turns and no `turn`. Everyone moves whenever
   they like, also while the others are offline, and `view.canMove` is true for as long as the
   game lasts. What the players did at the same moment, or apart, ends up one after the other in
@@ -427,7 +436,9 @@ functions described at the top of `Engine/Games.lua`. A game has two halves:
 A game can let whoever sets it up change some of its rules with `options`: each has an `id`, a
 `name`, a `default` and the `choices` it can be set to (leave those out for something that is on
 or off). `newState` is handed what they are all set to as its third argument, and keeps what the
-rules need of it in the state. The wizard, the challenge and the rematch are the engine's. See
+rules need of it in the state. The wizard, the challenge and the rematch are the engine's: the
+wizard shows a few choices as buttons side by side, and an option of many (more than five that
+don't fit in two rows, as Freedoom's maps) as a dropdown (`Widgets.Dropdown`). See
 `Games/Words.lua`. An option marked `alone` is only offered for a game played alone, of one that
 can be played with others too, and never sent with a challenge.
 
@@ -493,7 +504,11 @@ ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
 `Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
 are drawn by `Tools/make_wormcraft.py`. Freedoom's maps, the pictures they are drawn with, the
 sprites of what lies about in them, the status bar and the icon are taken from `freedoom1.wad` by
-`Tools/import_freedoom.sh`, with `Tools/import_wad.py`, which takes any map of a Doom WAD.
+`Tools/import_freedoom.sh`, with `Tools/import_wad.py`, which takes any map of a Doom WAD. Run is
+written rather than drawn, by `Tools/make_run.py` with `Tools/mapkit.py`, which builds a Doom map
+from sectors given as outlines, lines, pictures and nodes and all, into a WAD of its own.
+`Tools/render_view.lua` draws the view from any spot of a sector map outside the game, as a
+picture to look at (`Tools/ppm_to_png.py` makes PNGs of them).
 
 ## Credits
 

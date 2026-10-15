@@ -381,6 +381,8 @@ function Games.Register(definition)
     assert(private.Race.Has(definition), "Game " .. definition.id .. " has a ghost and can't be raced")
     local every = definition.ghost.every
     assert(type(every) == "number" and every > 0, "Game " .. definition.id .. " has a ghost without a time between its samples")
+    local course = definition.ghost.course
+    assert(course == nil or type(course) == "function", "Game " .. definition.id .. " has a ghost whose course isn't a function")
   end
   local seen = {}
   for _, option in ipairs(definition.options or {}) do

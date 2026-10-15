@@ -240,14 +240,20 @@ HUD += [f"WILV0{map}" for map in range(9)] + [f"WINUM{digit}" for digit in range
 
 class Wad:
     def __init__(self, path):
-        self.data = Path(path).read_bytes()
-        kind, count, offset = struct.unpack_from("<4sii", self.data, 0)
+        self.files = []
+        self.lumps = []
+        self.add(path)
+
+    def add(self, path):
+        """Another WAD's lumps after this one's, as Doom loads a PWAD over its IWAD"""
+        data = Path(path).read_bytes()
+        kind, count, offset = struct.unpack_from("<4sii", data, 0)
         if kind not in (b"IWAD", b"PWAD"):
             raise SystemExit(f"{path} is not a WAD")
-        self.lumps = []
+        self.files.append(data)
         for index in range(count):
-            position, size, name = struct.unpack_from("<ii8s", self.data, offset + 16 * index)
-            self.lumps.append((name.rstrip(b"\0").decode("ascii", "replace").upper(), position, size))
+            position, size, name = struct.unpack_from("<ii8s", data, offset + 16 * index)
+            self.lumps.append((name.rstrip(b"\0").decode("ascii", "replace").upper(), position, size, len(self.files) - 1))
 
     def index(self, name, start=0):
         for index in range(start, len(self.lumps)):
@@ -256,8 +262,8 @@ class Wad:
         return None
 
     def read(self, index):
-        _, position, size = self.lumps[index]
-        return self.data[position:position + size]
+        _, position, size, file = self.lumps[index]
+        return self.files[file][position:position + size]
 
     def named(self, name):
         index = self.index(name)
@@ -266,7 +272,7 @@ class Wad:
     def between(self, first, last):
         """Lumps between markers, by name: the later of two with the same name wins, as in Doom"""
         found, inside = {}, False
-        for index, (name, _, size) in enumerate(self.lumps):
+        for index, (name, _, size, _) in enumerate(self.lumps):
             if name in first:
                 inside = True
             elif name in last:
@@ -439,10 +445,13 @@ def main():
     parser.add_argument("--sounds", type=Path, default=None, help="Also write Doom's sound effects into this folder, as Ogg Vorbis (takes ffmpeg)")
     parser.add_argument("--hud", nargs=2, metavar=("ID", "PATH"), default=None, help="Also write the status bar's pictures, and a Lua file registering them under an id, e.g. freedoom_hud Games/Maps/FreedoomHud.lua")
     parser.add_argument("--icon", nargs=2, metavar=("PICTURE", "PATH"), default=None, help="Also write a 64 pixel icon of the middle of a wall picture, e.g. BIGDOOR2 Images/Icons/freedoom.tga")
+    parser.add_argument("--pwad", type=Path, default=None, help="A WAD of the map's own (Tools/mapkit.py makes them), read over the main one, as Doom loads a PWAD: the map from it, the pictures from either")
     parser.add_argument("--preview", type=Path, default=None)
     args = parser.parse_args()
 
     wad = Wad(args.wad)
+    if args.pwad:
+        wad.add(args.pwad)
     at = wad.index(args.map.upper())
     if at is None:
         raise SystemExit(f"No {args.map} in {args.wad}")
@@ -609,7 +618,7 @@ def main():
 
     data = {
         "name": args.map.upper(),
-        "source": Path(args.wad).name,
+        "source": (args.pwad or Path(args.wad)).name,
         "folder": folder,
         "sky": sky,
         "skyFlat": SKY_FLAT,
@@ -631,7 +640,7 @@ def main():
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    header = (f"-- {args.map.upper()} of {Path(args.wad).name}, as a sector map (Engine/SectorMap.lua).\n"
+    header = (f"-- {args.map.upper()} of {(args.pwad or Path(args.wad)).name}, as a sector map (Engine/SectorMap.lua).\n"
               f"-- Written by Tools/import_wad.py: run that again rather than change this.\n\n")
     if args.out_global:
         out.write_text(header + f"ForeverGamesSectorMaps = ForeverGamesSectorMaps or {{}}\nForeverGamesSectorMaps[{lua(args.id)}] = {lua(data)}\n")
