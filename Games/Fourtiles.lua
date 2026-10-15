@@ -280,6 +280,54 @@ local function result(state)
   return { winner = 0, all = true }
 end
 
+--- Which of the five words are found, in the order they were
+--- @param state FourtilesState
+--- @return number[]
+local function solvedWords(state)
+  local solved = {}
+  for _, find in ipairs(state.list) do
+    if find.size == MOST then
+      for index, word in ipairs(state.words) do
+        if word == find.word then
+          solved[#solved + 1] = index
+        end
+      end
+    end
+  end
+  return solved
+end
+
+--- The tiles one of the five words was cut from, in the order that spells it
+--- @param state FourtilesState
+--- @param word number Which of the five
+--- @return number[]
+local function tilesOf(state, word)
+  local tiles, text = {}, state.words[word]
+  for index, of in ipairs(state.of) do
+    if of == word then
+      tiles[#tiles + 1] = index
+    end
+  end
+  local order, used = {}, {}
+  local function extend(spelt)
+    if #order == #tiles then
+      return spelt == text
+    end
+    for _, tile in ipairs(tiles) do
+      local longer = spelt .. state.tiles[tile]
+      if not used[tile] and text:sub(1, #longer) == longer then
+        used[tile], order[#order + 1] = true, tile
+        if extend(longer) then
+          return true
+        end
+        used[tile], order[#order] = nil, nil
+      end
+    end
+    return false
+  end
+  return extend("") and order or tiles
+end
+
 --- @param state FourtilesState
 --- @return string
 local function progress(state)
@@ -295,6 +343,9 @@ local SIDE_MIN, SIDE_MAX = 190, 280
 local TRAY_HEIGHT, SAYS_HEIGHT, BUTTON_HEIGHT = 46, 20, 26
 local TILE_WIDEST, TILE_TALLEST = 150, 58
 local STAT_HEIGHT = 40
+-- The box that says whether a shuffle moves the words found too, and the room under the buttons
+-- it takes
+local CHECK_SIZE = 22
 local ROW_HEIGHT = 18
 local BUTTON_WIDTH = 96
 -- The tiles are white pictures with round corners, tinted (Tools/make_fourtiles.py)
@@ -337,7 +388,7 @@ end
 --- @return FourtilesView
 local function createView(stage)
   local Widgets = private.Widgets
-  local self = setmetatable({ stage = stage, tiles = {}, picked = {}, order = {}, width = 0, height = 0 }, View)
+  local self = setmetatable({ stage = stage, tiles = {}, picked = {}, order = {}, gathered = 0, mixFound = false, width = 0, height = 0 }, View)
 
   -- The word being put together
   self.tray = Widgets.Panel(stage)
@@ -401,6 +452,21 @@ local function createView(stage)
     GameTooltip:Show()
   end)
   self.buttons.wrap:SetScript("OnLeave", GameTooltip_Hide)
+
+  -- A shuffle leaves the words that were found be, unless this is ticked
+  local mix = CreateFrame("CheckButton", nil, stage, "UICheckButtonTemplate")
+  mix:SetSize(CHECK_SIZE, CHECK_SIZE)
+  mix.label = mix:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  mix.label:SetPoint("LEFT", mix, "RIGHT", 2, 1)
+  mix.label:SetText(L["fourtiles_shuffle_found"])
+  -- The words next to it tick it as well
+  mix:SetHitRectInsets(0, -(mix.label:GetStringWidth() + 4), 0, 0)
+  mix:SetScript("OnClick", function(button)
+    self.mixFound = not self.mixFound
+    button:SetChecked(self.mixFound)
+    Widgets.PlaySound(self.mixFound and "IG_MAINMENU_OPTION_CHECKBOX_ON" or "IG_MAINMENU_OPTION_CHECKBOX_OFF")
+  end)
+  self.mix = mix
 
   -- What is kept count of, and the words found so far
   self.score = Widgets.Stat(stage, L["stat_score"], SIDE_MIN, STAT_HEIGHT)
@@ -512,19 +578,36 @@ function View:place()
   end
 end
 
---- Lays the tiles out another way, which is how words get seen. They slide there, lifting a little
---- on the way, one just after the other
-function View:shuffle()
-  -- One that is still on its way from the last shuffle is where it was going
+--- Brings the tiles of each of the five words that was found together: a row each from the top, in
+--- the order they were found and spelling the word. The others keep their order after them
+--- @param state FourtilesState
+function View:gather(state)
+  local order, taken = {}, {}
+  local solved = solvedWords(state)
+  for _, word in ipairs(solved) do
+    for _, tile in ipairs(tilesOf(state, word)) do
+      order[#order + 1], taken[tile] = tile, true
+    end
+  end
+  for _, tile in ipairs(self.order) do
+    if not taken[tile] then
+      order[#order + 1] = tile
+    end
+  end
+  self.order, self.gathered = order, #solved
+end
+
+--- Changes the order the tiles lie in, and slides them there from where they were, lifting a
+--- little on the way, one just after the other
+--- @param change fun()
+function View:reorder(change)
+  -- One that is still on its way from before is where it was going
   self.slide:Stop()
   local was = {}
   for place, index in ipairs(self.order) do
     was[index] = self.spots and self.spots[place]
   end
-  for place = #self.order, 2, -1 do
-    local other = math.random(place)
-    self.order[place], self.order[other] = self.order[other], self.order[place]
-  end
+  change()
   for place, index in ipairs(self.order) do
     local tile, from, to = self.tiles[index], was[index], self.spots and self.spots[place]
     if from and from ~= to then
@@ -534,6 +617,26 @@ function View:shuffle()
       end, { ease = private.Widgets.Ease.inOut, delay = (place - 1) * SHUFFLE_AFTER })
     end
   end
+end
+
+--- Lays the tiles out another way, which is how words get seen. The words that were found stay
+--- together at the top, unless the player ticked the box to have them shuffled as well
+function View:shuffle()
+  local view = self.view
+  if not view then
+    return
+  end
+  self:reorder(function()
+    local first = 1
+    if not self.mixFound then
+      self:gather(view.state)
+      first = self.gathered * COLUMNS + 1
+    end
+    for place = #self.order, first + 1, -1 do
+      local other = math.random(first, place)
+      self.order[place], self.order[other] = self.order[other], self.order[place]
+    end
+  end)
   private.Widgets.PlaySound(PICK_SOUND)
   self:draw()
 end
@@ -611,11 +714,11 @@ function View:arrange()
   local width, height, stage = self.width, self.height, self.stage
   local side = math.max(SIDE_MIN, math.min(SIDE_MAX, math.floor(width * 0.28)))
   local room = width - side - MARGIN * 3
-  local tall = height - MARGIN * 2 - TRAY_HEIGHT - SAYS_HEIGHT - BUTTON_HEIGHT - GAP * 3
+  local tall = height - MARGIN * 2 - TRAY_HEIGHT - SAYS_HEIGHT - BUTTON_HEIGHT - CHECK_SIZE - GAP * 4
   local tileWidth = math.max(20, math.min(TILE_WIDEST, math.floor((room - GAP * (COLUMNS - 1)) / COLUMNS)))
   local tileHeight = math.max(14, math.min(TILE_TALLEST, math.floor((tall - GAP * (ROWS - 1)) / ROWS)))
   local board = tileWidth * COLUMNS + GAP * (COLUMNS - 1)
-  local used = TRAY_HEIGHT + SAYS_HEIGHT + BUTTON_HEIGHT + GAP * 3 + tileHeight * ROWS + GAP * (ROWS - 1)
+  local used = TRAY_HEIGHT + SAYS_HEIGHT + BUTTON_HEIGHT + CHECK_SIZE + GAP * 4 + tileHeight * ROWS + GAP * (ROWS - 1)
   local left, top = MARGIN + math.floor((room - board) / 2), math.floor((height - used) / 2)
 
   self.tray:SetSize(board, TRAY_HEIGHT)
@@ -659,6 +762,8 @@ function View:arrange()
   buttons.enter:SetPoint("TOPRIGHT", stage, "TOPLEFT", left + board, -buttonsTop)
   buttons.wrap:ClearAllPoints()
   buttons.wrap:SetPoint("TOP", stage, "TOPLEFT", left + board / 2, -buttonsTop)
+  self.mix:ClearAllPoints()
+  self.mix:SetPoint("TOPLEFT", stage, "TOPLEFT", left, -(buttonsTop + BUTTON_HEIGHT + GAP))
 
   -- Down the right: the score, the rank, how many words, and under them the words themselves
   local sideLeft = width - MARGIN - side
@@ -733,16 +838,10 @@ function View:draw()
   self.word:SetText(table.concat(parts, "|cff808080·|r"))
   self.hint:SetShown(#parts == 0 and view.canMove)
 
-  -- A long word that was found has its tiles marked, in the colour of whoever found it
+  -- A long word that was found has its tiles marked
   local solved = {}
-  for _, find in ipairs(state.list) do
-    if find.size == MOST then
-      for index, word in ipairs(state.words) do
-        if word == find.word then
-          solved[index] = find.seat
-        end
-      end
-    end
+  for _, word in ipairs(solvedWords(state)) do
+    solved[word] = true
   end
   for index, tile in ipairs(self.tiles) do
     local color = at[index] and PICKED or (solved[state.of[index]] and SOLVED) or PLAIN
@@ -757,6 +856,8 @@ function View:draw()
 
   local buttons = self.buttons
   buttons.shuffle:SetEnabled(view.canMove)
+  -- Only once there is something found to leave be
+  self.mix:SetShown(view.canMove and next(solved) ~= nil)
   buttons.clear:SetEnabled(view.canMove and #self.picked > 0)
   buttons.enter:SetEnabled(view.canMove and #self.picked > 0)
   buttons.wrap:SetShown(view.canMove and canWrapUp(state))
@@ -840,6 +941,7 @@ function View:Update(view)
     for place = 1, TILES do
       self.order[place] = place
     end
+    self:gather(state)
     self:place()
     self.effects:Clear()
     self.says:SetText("")
@@ -853,6 +955,12 @@ function View:Update(view)
   if not view.canMove then
     self.picked, self.asked = {}, nil
   end
+  -- A long word was found, by either player, or the view went back to before one was
+  if #solvedWords(state) ~= self.gathered then
+    self:reorder(function()
+      self:gather(state)
+    end)
+  end
   self:draw()
   if sameGame and view.changed and view.played and view.played.kind == "move" then
     self:play(view.played)
@@ -861,7 +969,7 @@ function View:Update(view)
   end
 end
 
-private.Fourtiles = { POINTS = POINTS, BONUS = BONUS, RANKS = RANKS, WRAP_UP = WRAP_UP, Parse = parse, Spell = spell, MostPoints = mostPoints, CanWrapUp = canWrapUp }
+private.Fourtiles = { POINTS = POINTS, BONUS = BONUS, RANKS = RANKS, WRAP_UP = WRAP_UP, Parse = parse, Spell = spell, MostPoints = mostPoints, CanWrapUp = canWrapUp, TilesOf = tilesOf }
 
 private.Games.Register({
   id = "fourtiles",

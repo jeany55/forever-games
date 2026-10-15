@@ -112,6 +112,36 @@ function Viewport:clamp(zoom, x, y)
   return along(self.width, self.contentWidth * zoom, x), along(self.height, self.contentHeight * zoom, y)
 end
 
+--- What is in the middle of the window, as how far across and down the content it is. A window
+--- that is resized, or content that is drawn bigger, goes on showing the same part of it
+--- @return number? across, number? down Nothing for content that has no size yet
+function Viewport:middle()
+  if self.contentWidth <= 0 or self.contentHeight <= 0 then
+    return nil, nil
+  end
+  -- Still where the last resize left it: what was in the middle before that is, even where an
+  -- edge kept it from being put there. Resizing the window and then what is in it goes on
+  -- showing the same spot as resizing both at once would
+  local kept = self.kept
+  if kept and kept.x == self.x and kept.y == self.y and kept.zoom == self.zoom then
+    return kept.across, kept.down
+  end
+  return (self.width / 2 - self.x) / (self.contentWidth * self.zoom), (self.height / 2 - self.y) / (self.contentHeight * self.zoom)
+end
+
+--- Puts the content back with this part of it in the middle of the window, at the zoom it is at
+--- @param across number?
+--- @param down number?
+function Viewport:keep(across, down)
+  local x, y = self.x, self.y
+  if across then
+    x, y = self.width / 2 - across * self.contentWidth * self.zoom, self.height / 2 - down * self.contentHeight * self.zoom
+  end
+  self.x, self.y = self:clamp(self.zoom, x, y)
+  self.kept = across and { across = across, down = down, x = self.x, y = self.y, zoom = self.zoom } or nil
+  self:place()
+end
+
 --- Shows the content where it is
 function Viewport:place()
   local content = self.content
@@ -211,22 +241,22 @@ end
 --- @param width number
 --- @param height number
 function Viewport:SetSize(width, height)
+  self:arrive()
+  local middleX, middleY = self:middle()
   self.width, self.height = width, height
   self.frame:SetSize(width, height)
-  self:arrive()
-  self.x, self.y = self:clamp(self.zoom, self.x, self.y)
-  self:place()
+  self:keep(middleX, middleY)
 end
 
 --- How big the content is when it all fits. The game sees to it that it does: no bigger than the window
 --- @param width number
 --- @param height number
 function Viewport:SetContentSize(width, height)
+  self:arrive()
+  local middleX, middleY = self:middle()
   self.contentWidth, self.contentHeight = width, height
   self.content:SetSize(width, height)
-  self:arrive()
-  self.x, self.y = self:clamp(self.zoom, self.x, self.y)
-  self:place()
+  self:keep(middleX, middleY)
 end
 
 --- Turns the wheel: towards whatever the cursor is over, or back away from it

@@ -409,7 +409,7 @@ local function invite()
   local box = page.room.name
   local name = private.Transport.Normalize(box:GetText() or "")
   if not name and UnitIsPlayer("target") and not UnitIsUnit("target", "player") then
-    name = private.Transport.Normalize(GetUnitName("target", true))
+    name = private.Transport.UnitPlayer("target")
   end
   local ok, err = private.rooms:Invite(name)
   if ok then
@@ -502,6 +502,12 @@ local function viewFor(room, parent)
   if not view then
     view = Rooms.Game(room.game).view(parent)
     views[room.game] = view
+  end
+  -- What showed the game of a room the player was in before is put away, not drawn under this
+  for _, other in pairs(views) do
+    if other ~= view then
+      other.frame:Hide()
+    end
   end
   if view.frame:GetParent() ~= parent then
     view.frame:SetParent(parent)

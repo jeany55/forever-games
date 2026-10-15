@@ -114,7 +114,8 @@ function Links.Init(onClick)
     if unreadable or type(text) ~= "string" or type(sender) ~= "string" then
       return false
     end
-    local host = private.Transport.Normalize(sender)
+    -- Who said it by the name they are heard by, and the player's own name for their own line
+    local host = private.Transport.Sender(sender)
     local decorated = host and Links.Decorate(text, host)
     if decorated then
       return false, decorated, sender, ...

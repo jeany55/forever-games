@@ -171,6 +171,8 @@ function ForeverGames:OnEnable()
     end,
   })
 
+  -- The name the player's own messages came back by last time, so they are known from the first
+  Transport.SetHeardAs(self.db.char.heardAs)
   Transport.Init({
     onMessage = function(sender, text, viaGuild, channel)
       if private.rooms:Handle(sender, text, channel) then
@@ -193,6 +195,9 @@ function ForeverGames:OnEnable()
       private.presence:Remove(peer)
       private.session:PeerOffline(peer)
       private.rooms:PeerOffline(peer)
+    end,
+    onHeardAs = function(name)
+      self.db.char.heardAs = name
     end,
   })
 
@@ -382,7 +387,7 @@ function ForeverGames:OnLinkClicked(host, gameId)
   end
   local game = Games.Get(gameId)
   local name = game and game.name or gameId
-  if host == Transport.PlayerName() then
+  if Transport.IsMe(host) then
     return self:Print(L[private.session:Offered(gameId) and "link_own_open" or "link_own_closed"]:format(name))
   end
   local ok, err = private.session:Ask(host, gameId)

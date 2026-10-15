@@ -313,8 +313,7 @@ local function targetName()
   if not UnitIsPlayer("target") or UnitIsUnit("target", "player") then
     return nil
   end
-  local character, characterRealm = UnitFullName("target")
-  return Transport.Normalize((characterRealm and characterRealm ~= "") and (character .. "-" .. characterRealm) or character)
+  return Transport.UnitPlayer("target")
 end
 
 --- Who sits at the table as it is to be sent: whoever the box over the list stands for takes the

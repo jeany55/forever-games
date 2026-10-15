@@ -6088,8 +6088,26 @@ function tests.ViewportKeepsToItsEdgesWhenItsRoomChanges()
   equal(50, viewport.x, "narrower than the window now")
   equal(25, viewport.y, "and less high")
   viewport:SetContentSize(450, 450)
-  equal(0, viewport.x, "wider again: no gap is left at its edge")
-  equal(0, viewport.y)
+  -- What was zoomed in on before it all fitted, not wherever the middle had to go meanwhile
+  equal(-312.5, viewport.x, "wider again: what was in the middle comes back there")
+  equal(-450, viewport.y, "as near as the edge allows, with no gap left at it")
+end
+
+function tests.ViewportShowsTheSamePartWhenTheWindowIsResized()
+  local viewport = viewportOnScreen()
+  viewport:SetSize(200, 200)
+  viewport:SetContentSize(200, 200)
+  viewport:ZoomTo(2, 60, 140, true)
+  equal(-20, viewport.x)
+  equal(-180, viewport.y)
+
+  -- The window and the board in it are drawn half as big again, the way a game lays itself out
+  -- in a window dragged bigger: still zoomed in on the same spot
+  viewport:SetSize(300, 300)
+  viewport:SetContentSize(300, 300)
+  equal(2, viewport.zoom)
+  equal(-30, viewport.x)
+  equal(-270, viewport.y)
 end
 
 function tests.ViewportFollowsTheCursorToAnEdge()
@@ -6737,6 +6755,104 @@ function tests.WindowShowsWhatTheOthersPlay()
   world:Deliver()
   equal(false, hasButton("words_play"), "nothing to play in a game that is over")
   equal("AEIOQQQ", heldOnScreen())
+end
+
+function tests.WindowListsLongMovesOnALineEach()
+  local world, _, second, id = wordsOnScreen({ "QQQAEIO", "THRALLX" }, "TTTTTTTTTT")
+  Client.Button("words_pass"):Fire("OnClick")
+  Client.Button("words_pass_sure"):Fire("OnClick")
+  world:Deliver()
+  assert(second.session:Move(id, "aD8.THRALL"))
+  world:Deliver()
+
+  -- A word and its score don't fit half a line, so each move has one, saying whose it is
+  local moves = listedMoves()
+  equal(2, #moves)
+  assert(moves[1].parent ~= moves[2].parent, "a line each")
+  assert(moves[2].parent.moves[1] == moves[2], "on the whole line, not in the second player's column")
+  assert(moves[2].text.text:find("^Bob[^:]*: D8 THRALL"), "says who made it: " .. moves[2].text.text)
+  equal(false, moves[2].parent.moves[2]:IsShown())
+end
+
+function tests.WindowShowsAnotherPlayersMoveOnlyOnce()
+  local world, _, second, id = wordsOnScreen({ "QQQAEIO", "THRALLX" }, "TTTTTTTTTT")
+  local widgets = wordsWidgets()
+  Client.Button("words_pass"):Fire("OnClick")
+  Client.Button("words_pass_sure"):Fire("OnClick")
+  world:Deliver()
+  assert(second.session:Move(id, "aD8.THRALL"))
+  world:Deliver()
+  for _ = 1, 6 do
+    wait(widgets.effects)
+  end
+  local function announced()
+    return #Client.Find(function(widget)
+      return widget.wordsFloat and widget.text and widget.text:find("Thrall", 1, true) and widget:IsShown()
+    end)
+  end
+  local function hidden()
+    return #Client.Find(function(widget)
+      return widget.wordsSquare and widget:IsVisible() and widget:GetAlpha() < 1
+    end)
+  end
+  equal(0, announced())
+
+  -- Whatever the player does with their own tiles, the move before isn't played out again
+  Client.Button("words_shuffle"):Fire("OnClick")
+  equal(0, announced(), "not on shuffling")
+  equal(0, hidden(), "and the tiles of it stay where they are")
+  dragTile(widgets, "A", "J8")
+  equal(0, announced(), "nor on laying a tile out")
+  equal(0, hidden())
+  Client.Button("words_recall"):Fire("OnClick")
+  equal(0, announced(), "nor on taking it back")
+  equal("D8=T E8=H F8=R G8=A H8=L I8=L", boardOnScreen())
+  equal(true, says("33"), "and the score isn't counted up again")
+end
+
+function tests.WindowFocusesOnTheGameAndBackOut()
+  local world, _, second, id = wordsOnScreen({ "QQQAEIO", "THRALLX" }, "TTTTTTTTTT")
+  local widgets = wordsWidgets()
+  local focus = Client.Button("words_focus")
+  equal(true, focus:IsVisible())
+  focus:Fire("OnClick")
+  wait(widgets.window)
+  equal(true, says("words_whole"), "it says it goes back out")
+  assert((widgets.board.scale or 1) > 1.5, "zoomed in, got " .. tostring(widgets.board.scale))
+
+  -- A window made bigger keeps the zoom, and what is beside the board moves out with it
+  local panel = Client.Find(function(widget)
+    return widget.wordsPlate == 1
+  end)[1]:GetParent()
+  local function panelLeft()
+    return panel.anchors[1][4]
+  end
+  local zoomed, before, side = widgets.board.scale, panelLeft(), widgets.window.width
+  local width, height = ForeverGamesFrame:GetWidth(), ForeverGamesFrame:GetHeight()
+  ForeverGamesFrame:SetSize(1400, 1000)
+  wait(widgets.window)
+  assert(widgets.window.width > side, "a bigger board")
+  near(zoomed, widgets.board.scale, "the zoom")
+  equal(true, says("words_whole"))
+  assert(panelLeft() > before, "the side moved over")
+  ForeverGamesFrame:SetSize(width, height)
+  wait(widgets.window)
+  equal(side, widgets.window.width)
+  near(zoomed, widgets.board.scale, "the zoom, back again")
+
+  Client.Button("words_whole"):Fire("OnClick")
+  wait(widgets.window)
+  equal(1, widgets.board.scale)
+  equal(true, says("words_focus"))
+
+  -- Even while it isn't the player's turn, or after the end
+  Client.Button("words_pass"):Fire("OnClick")
+  Client.Button("words_pass_sure"):Fire("OnClick")
+  world:Deliver()
+  assert(second.session:Resign(id))
+  world:Deliver()
+  equal(false, hasButton("words_play"))
+  equal(true, hasButton("words_focus"))
 end
 
 function tests.WindowKeepsTheRackInThePlayersOrder()
@@ -13091,6 +13207,144 @@ function tests.ChallengeNobodyAskedForIsStillAnswered()
   equal("incoming", bob.matches[other.id].status)
 end
 
+--- Loads Transport.lua over a fake client in a group on "Realm", where the player is "Jeany" to
+--- the client's units and heard by their whole name
+--- @return table Transport, table client What the test steers: what is sent, who is in the group, the clock
+local function transportInAGroup()
+  Client.Install()
+  local client = { sent = {}, now = 100, group = {}, heard = {} }
+  Enum = { SendAddonMessageResult = { Success = 0, TargetOffline = 1 } }
+  C_ChatInfo = {
+    RegisterAddonMessagePrefix = function() end,
+    SendAddonMessage = function(_, text, chatType, target)
+      client.sent[#client.sent + 1] = chatType .. " " .. (target or "") .. " " .. text
+      return 0
+    end,
+  }
+  C_FriendList = {
+    ShowFriends = function() end,
+    GetNumFriends = function()
+      return 0
+    end,
+  }
+  C_Timer = { After = function() end }
+  function GetNormalizedRealmName()
+    return "Realm"
+  end
+  function GetTime()
+    return client.now
+  end
+  function UnitName()
+    return "Jeany"
+  end
+  function IsInGuild()
+    return false
+  end
+  function IsInRaid()
+    return false
+  end
+  function IsInGroup()
+    return true
+  end
+  function GetNumGroupMembers()
+    return #client.group + 1
+  end
+  function UnitIsPlayer(unit)
+    return unit == "target" or client.group[tonumber(unit:match("^party(%d+)$") or 0)] ~= nil
+  end
+  -- The client's units go by the first word of a name only
+  function UnitFullName(unit)
+    return unit == "target" and client.target or client.group[tonumber(unit:match("^party(%d+)$") or 0)]
+  end
+  function UnitInParty()
+    return false
+  end
+  function UnitInRaid()
+    return nil
+  end
+  local frame
+  local create = CreateFrame
+  function CreateFrame(...)
+    frame = frame or create(...)
+    return frame
+  end
+  local private = { Log = function() end }
+  assert(loadfile("Transport.lua"))(ADDON_NAME, private)
+  CreateFrame = create
+  local Transport = private.Transport
+  Transport.Init({
+    onMessage = function(sender, text, _, channel)
+      client.heard[#client.heard + 1] = sender .. " " .. text .. " " .. tostring(channel)
+    end,
+    onReachable = function() end,
+    onOffline = function() end,
+    onHeardAs = function(name)
+      client.kept = name
+    end,
+  })
+  function client.hear(sender, text, chatType)
+    frame:GetScript("OnEvent")(frame, "CHAT_MSG_ADDON", "ForeverGames", text, chatType or "PARTY", sender)
+  end
+  return Transport, client
+end
+
+function tests.TransportKnowsThePlayerByTheNameTheyAreHeardBy()
+  local Transport, client = transportInAGroup()
+  equal("Jeany-Realm", Transport.PlayerName())
+
+  -- Somebody else who starts the same is somebody else, saying something the player didn't
+  client.hear("Jeany Other", "1:HI")
+  equal("Jeany Other-Realm 1:HI GROUP", client.heard[1])
+  equal(nil, Transport.HeardAs())
+
+  -- The player's own message comes back by the whole of their name: that is them
+  assert(Transport.BroadcastTo("GROUP", "1:ROOM:abc:OPEN:trivia:1:P:0"))
+  client.hear("Jeany Beany", "1:ROOM:abc:OPEN:trivia:1:P:0")
+  equal("Jeany-Realm 1:ROOM:abc:OPEN:trivia:1:P:0 GROUP", client.heard[2], "taken as the player's own")
+  equal("Jeany Beany-Realm", Transport.HeardAs())
+  equal("Jeany Beany-Realm", client.kept, "and kept for next time")
+  equal(true, Transport.IsMe("Jeany Beany-Realm"))
+  equal(true, Transport.IsMe("Jeany-Realm"))
+  equal(false, Transport.IsMe("Jeany Other-Realm"))
+
+  -- From then on whatever comes from that name is theirs, whatever it says
+  client.hear("Jeany Beany", "1:ROOM:abc:A:1:1:122:0")
+  equal("Jeany-Realm 1:ROOM:abc:A:1:1:122:0 GROUP", client.heard[3])
+  equal("Jeany-Realm", Transport.Sender("Jeany Beany"))
+
+  -- What somebody else says back a moment later isn't the player's, even word for word
+  client.hear("Marvin Al", "1:ROOM:abc:OPEN:trivia:1:P:0")
+  equal("Marvin Al-Realm 1:ROOM:abc:OPEN:trivia:1:P:0 GROUP", client.heard[4])
+  equal("Jeany Beany-Realm", Transport.HeardAs())
+end
+
+function tests.TransportMakesTheNamesOfUnitsWhole()
+  local Transport, client = transportInAGroup()
+  client.group = { "Marvin", "Bob" }
+  client.target = "Marvin"
+  equal("Marvin-Realm", Transport.UnitPlayer("target"), "nobody heard yet who could be more of it")
+  equal(false, Transport.Reaches("GROUP", "Marvin Al-Realm"))
+
+  -- Once heard by the whole of their name, the target and the group member are known by it
+  client.hear("Marvin Al", "1:ROOM:0:WHO")
+  equal("Marvin Al-Realm", Transport.UnitPlayer("target"))
+  equal(true, Transport.Reaches("GROUP", "Marvin Al-Realm"))
+  equal("Bob-Realm", Transport.UnitPlayer("party2"), "a name of one word is all there is to it")
+  equal("Marvin Al-Realm", Transport.Whole("Marvin"))
+  equal("Marvin Al-Realm", Transport.Whole("Marvin Al-Realm"))
+
+  -- Two who start the same can't be told apart from the first word
+  client.hear("Marvin Bo", "1:ROOM:0:WHO", "WHISPER")
+  equal("Marvin-Realm", Transport.UnitPlayer("target"))
+  equal("Marvin Bo-Realm", Transport.Whole("Marvin Bo"))
+
+  -- A name kept from last time is the player's from the start
+  Transport.SetHeardAs("Jeany Beany-Realm")
+  equal("Jeany-Realm", Transport.Sender("Jeany Beany"))
+  Transport.SetHeardAs("Somebody Else-Realm")
+  equal("Jeany Beany-Realm", Transport.HeardAs(), "never a name that isn't a longer one of the player's")
+end
+
 function tests.LinksInChatAreTurnedIntoLinks()
   local private = loadEngine()
   private.ADDON_NAME = ADDON_NAME
@@ -16039,6 +16293,96 @@ function tests.FourtilesScoresWordsByTheirTiles()
   equal(true, game.result(shared).all)
 end
 
+function tests.FourtilesGathersTheWordsFoundAndShufflesTheRest()
+  local world = World.New()
+  local player = world:AddPlayer("Alice-Realm")
+  openWindow(player)
+  local private = player.private
+  local game, Fourtiles = private.Games.Get("fourtiles"), private.Fourtiles
+  local state = game.newState(1, private.Random.New(3))
+  local stage = CreateFrame("Frame", nil, UIParent)
+  local view = game.createView(stage)
+  stage:SetSize(800, 600)
+  view:Layout(800, 600)
+  local function show(played, id)
+    view:Update({ match = { id = id or "fourtiles" }, state = state, seat = 1, names = { "Alice" }, canMove = true, changed = true, played = played, submit = function() end })
+    view.slide:Stop()
+  end
+  local function row(number)
+    local parts = {}
+    for place = (number - 1) * 4 + 1, number * 4 do
+      parts[#parts + 1] = state.tiles[view.order[place]]
+    end
+    return table.concat(parts)
+  end
+  local function rest(from)
+    local tiles = {}
+    for place = from, 20 do
+      tiles[#tiles + 1] = view.order[place]
+    end
+    table.sort(tiles)
+    return table.concat(tiles, " ")
+  end
+  show()
+  equal("1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20", table.concat(view.order, " "), "as they were dealt while nothing is found")
+  equal(false, view.mix:IsShown(), "nothing found to leave be")
+
+  -- Finding one of the five brings its tiles together on the top row, spelling it
+  local event = game.apply(state, 1, fourtilesMove(state, state.words[2]))
+  event.kind, event.seat = "move", 1
+  show(event)
+  equal(state.words[2], row(1))
+  equal(true, view.mix:IsShown())
+  for place, tile in ipairs(view.order) do
+    local spot, anchor = view.spots[place], view.tiles[tile].anchors[1]
+    equal(spot[1], anchor[4], "the tile has come to its place")
+    equal(-spot[2], anchor[5], "the tile has come to its place")
+  end
+
+  -- A shuffle leaves it there and moves the others
+  local others, moved = rest(5), false
+  for _ = 1, 5 do
+    local before = table.concat(view.order, " ")
+    view:shuffle()
+    view.slide:Stop()
+    equal(state.words[2], row(1), "the word found stays where it is")
+    equal(others, rest(5), "only the others are shuffled")
+    moved = moved or table.concat(view.order, " ") ~= before
+  end
+  equal(true, moved, "the others are shuffled")
+
+  -- Unless the box is ticked
+  view.mix:Fire("OnClick")
+  local mixed = false
+  for _ = 1, 10 do
+    view:shuffle()
+    view.slide:Stop()
+    mixed = mixed or row(1) ~= state.words[2]
+  end
+  equal(true, mixed, "with the box ticked the word found is shuffled too")
+  view.mix:Fire("OnClick")
+  view:shuffle()
+  equal(state.words[2], row(1), "untick it, and the word found comes back together")
+
+  -- The next one goes under it, and a match opened again is laid out the same way
+  event = game.apply(state, 1, fourtilesMove(state, state.words[5]))
+  event.kind, event.seat = "move", 1
+  show(event)
+  equal(state.words[2], row(1))
+  equal(state.words[5], row(2))
+  local again = game.createView(stage)
+  again:Layout(800, 600)
+  view = again
+  show(nil, "another")
+  equal(state.words[2], row(1), "opened again")
+  equal(state.words[5], row(2), "opened again")
+  local spelt = {}
+  for index, tile in ipairs(Fourtiles.TilesOf(state, 3)) do
+    spelt[index] = state.tiles[tile]
+  end
+  equal(state.words[3], table.concat(spelt), "a word's tiles are found in the order that spells it")
+end
+
 --- Starts a game of Fourtiles between two
 --- @return World, table first, table second, string id
 local function startedFourtiles()
@@ -16190,12 +16534,47 @@ function tests.WindowPlaysFourtiles()
     return widget.kind == "Button" and widget.text == "fourtiles_wrap_up" and widget:IsVisible()
   end), "the game can't be called done before the five are found and the top rank reached")
 
-  -- Shuffling moves the tiles about and loses none. They slide to where they go, and none of
-  -- them is anywhere yet before the slide is over
+  -- The two words found slid together, a row each in the order they were found
+  local slide = Client.Find(function(widget)
+    return widget.scripts.OnUpdate ~= nil and widget.parent == tiles[1].parent
+  end)
+  for _, frame in ipairs(slide) do
+    frame:Fire("OnUpdate", 1)
+  end
   local function spot(tile)
     local anchor = tile.anchors[1]
     return anchor[4] .. "," .. anchor[5]
   end
+  local function rows()
+    local byTop, tops = {}, {}
+    for index, tile in ipairs(tiles) do
+      local anchor = tile.anchors[1]
+      if not byTop[anchor[5]] then
+        byTop[anchor[5]], tops[#tops + 1] = {}, anchor[5]
+      end
+      table.insert(byTop[anchor[5]], { left = anchor[4], text = state.tiles[index] })
+    end
+    table.sort(tops, function(a, b)
+      return a > b
+    end)
+    local text = {}
+    for number, top in ipairs(tops) do
+      table.sort(byTop[top], function(a, b)
+        return a.left < b.left
+      end)
+      local parts = {}
+      for _, tile in ipairs(byTop[top]) do
+        parts[#parts + 1] = tile.text
+      end
+      text[number] = table.concat(parts)
+    end
+    return text
+  end
+  equal(state.words[2], rows()[1])
+  equal(state.words[4], rows()[2])
+
+  -- Shuffling moves the other tiles about and loses none. They slide to where they go, and none
+  -- of them is anywhere yet before the slide is over
   local before, spots = {}, {}
   for index, tile in ipairs(tiles) do
     before[index] = spot(tile)
@@ -16207,9 +16586,6 @@ function tests.WindowPlaysFourtiles()
     equal(state.tiles[index]:lower(), after[index].label.text)
     equal(before[index], spot(after[index]), "it hasn't set off yet")
   end
-  local slide = Client.Find(function(widget)
-    return widget.scripts.OnUpdate ~= nil and widget.parent == tiles[1].parent
-  end)
   for _, frame in ipairs(slide) do
     frame:Fire("OnUpdate", 0.2)
   end
@@ -16228,6 +16604,8 @@ function tests.WindowPlaysFourtiles()
     equal(nil, taken[at], "and no two in the same one")
     taken[at] = true
   end
+  equal(state.words[2], rows()[1], "the words found aren't shuffled")
+  equal(state.words[4], rows()[2], "the words found aren't shuffled")
   MainFrame.Refresh()
 end
 
@@ -16287,8 +16665,11 @@ end
 
 --- @param name string
 --- @param channels table<string, boolean>? The channels the player has, none if left out
-function RoomWorld:Add(name, channels)
+--- @param heardAs string? The name what they send comes from, if not the one they know themselves by
+function RoomWorld:Add(name, channels, heardAs)
   local player = { name = name, channels = channels or {}, events = {}, online = true, private = loadEngine() }
+  local from = heardAs or name
+  player.from = from
   player.Sketch = player.private.Sketch
   player.Trivia = player.private.Trivia
   player.rooms = player.private.Rooms.New({
@@ -16304,11 +16685,11 @@ function RoomWorld:Add(name, channels)
       if not player.channels[channel] then
         return false
       end
-      self.queue[#self.queue + 1] = { from = name, channel = channel, text = text }
+      self.queue[#self.queue + 1] = { from = from, channel = channel, text = text }
       return true
     end,
     send = function(target, text)
-      self.queue[#self.queue + 1] = { from = name, to = target, text = text }
+      self.queue[#self.queue + 1] = { from = from, to = target, text = text }
       return true
     end,
     onChannel = function(channel)
@@ -16326,7 +16707,7 @@ function RoomWorld:Add(name, channels)
       end
     end,
   })
-  self.players[name] = player
+  self.players[from] = player
   self.order[#self.order + 1] = player
   return player
 end
@@ -16339,7 +16720,7 @@ function RoomWorld:Deliver()
     local message = table.remove(self.queue, 1)
     self.sent[#self.sent + 1] = message.from .. ">" .. (message.to or message.channel) .. " " .. message.text
     for _, player in ipairs(self.order) do
-      local hears = message.to == player.name or (message.channel and player.channels[message.channel])
+      local hears = message.to == player.name or message.to == player.from or (message.channel and player.channels[message.channel])
       if hears and player.online then
         player.rooms:Handle(message.from, message.text, message.channel)
       end
@@ -16363,11 +16744,14 @@ function RoomWorld:Run(seconds)
 end
 
 --- A room of Sketch that Alice opened for her guild, with Bob and Carol in it
+--- @param heardAs table<string, string>? By first name, what the client says a player's messages come from
 --- @return RoomWorld, table alice, table bob, table carol
-local function sketchRoom()
+local function sketchRoom(heardAs)
+  heardAs = heardAs or {}
   local world = RoomWorld.New()
   local guild = { GUILD = true }
-  local alice, bob, carol = world:Add("Alice-Realm", guild), world:Add("Bob-Realm", guild), world:Add("Carol-Realm", guild)
+  local alice, bob = world:Add("Alice-Realm", guild, heardAs.Alice), world:Add("Bob-Realm", guild, heardAs.Bob)
+  local carol = world:Add("Carol-Realm", guild, heardAs.Carol)
   local room = assert(alice.rooms:Open("sketch", "GUILD"))
   world:Run(1)
   for _, player in ipairs({ bob, carol }) do
@@ -16639,6 +17023,39 @@ function tests.SketchPictureArrivesAsItWasDrawn()
   world:Run(3)
   equal("31:5,5,9,9", pictureOf(dave))
   equal(pictureOf(alice), pictureOf(bob))
+end
+
+-- The client may say a player's name another way than the player does ("Jeany" is heard as
+-- "Jeany Beany"): the room goes by how they are heard
+function tests.SketchIsSeenWhenTheHostIsHeardByAnotherName()
+  local world, alice, bob, carol = sketchRoom({ Alice = "Alice Smith-Realm", Bob = "Bob Jones-Realm" })
+  equal("Alice Smith-Realm", bob.rooms.room.host)
+  equal("Alice Smith-Realm", bob.rooms.room.members[1].name, "the host is who the host is heard as")
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  local drawer, word = sketchRound(world, { alice, bob, carol })
+  equal(alice, drawer)
+  local Sketch, room = alice.Sketch, alice.rooms.room
+  Sketch.Pen(room, 2, 2, 10, 10)
+  Sketch.Draw(room, 60, 80)
+  Sketch.Lift(room)
+  world:Run(3)
+  equal("22:10,10,60,80", pictureOf(bob), "the host's drawing gets there")
+  equal(pictureOf(alice), pictureOf(carol))
+
+  -- What Bob says himself is heard back by his other name, and is said once
+  assert(bob.Sketch.Guess(bob.rooms.room, "certainly not this"))
+  world:Run(1)
+  local said = 0
+  for _, entry in ipairs(bob.rooms.room.state.feed) do
+    said = said + (entry.text == "certainly not this" and 1 or 0)
+  end
+  equal(1, said)
+  local _, right = carol.Sketch.Guess(carol.rooms.room, word)
+  equal(true, right)
+  world:Run(1)
+  equal(scoresOf(alice), scoresOf(bob))
+  equal(scoresOf(alice), scoresOf(carol))
 end
 
 function tests.SketchSkipsWhoeverIsNotThere()
@@ -16989,14 +17406,16 @@ local TRIVIA_BANK = {
 --- the questions above to ask
 --- @param names string[]
 --- @param rules table?
+--- @param heardAs table<string, string>? By first name, what the client says a player's messages come from
 --- @return RoomWorld, table[] players Alice first
-local function triviaRoom(names, rules)
+local function triviaRoom(names, rules, heardAs)
+  heardAs = heardAs or {}
   local world = RoomWorld.New()
   local guild = { GUILD = true }
-  local players = { world:Add("Alice-Realm", guild) }
+  local players = { world:Add("Alice-Realm", guild, heardAs.Alice) }
   players[1].private.TriviaQuestions = TRIVIA_BANK
   for _, name in ipairs(names) do
-    players[#players + 1] = world:Add(name .. "-Realm", guild)
+    players[#players + 1] = world:Add(name .. "-Realm", guild, heardAs[name])
   end
   local room = assert(players[1].rooms:Open("trivia", "GUILD", rules or { pack = "m", count = 3, seconds = 10 }))
   world:Run(1)
@@ -17096,6 +17515,24 @@ function tests.TriviaQuizIsAskedAndScored()
   world:Run(0.25)
   equal("A0 B0 C0", scoresOf(bob))
   equal(0, bob.rooms.room.state.streak)
+end
+
+function tests.TriviaCountsTheHostHeardByAnotherName()
+  local world, players = triviaRoom({ "Bob" }, nil, { Alice = "Alice Smith-Realm", Bob = "Bob Jones-Realm" })
+  local alice, bob = players[1], players[2]
+  local room = alice.rooms.room
+  assert(alice.Trivia.Start(room))
+  world:Run(0.25)
+  untilOpen(world)
+  local right = rightAnswer(alice)
+  assert(alice.Trivia.Answer(room, right))
+  world:Run(0.25)
+  equal(1, (bob.Trivia.Answered(bob.rooms.room)), "Bob knows Alice answered")
+  assert(bob.Trivia.Answer(bob.rooms.room, right))
+  world:Run(0.5)
+  equal("reveal", bob.rooms.room.state.phase)
+  equal(true, bob.rooms.room.members[1].score > 0, "the host's points count for the host")
+  equal(scoresOf(alice), scoresOf(bob))
 end
 
 function tests.TriviaWorthLessTheLaterAndMoreInARow()
@@ -17373,6 +17810,57 @@ function tests.TriviaPageAnswersAndShowsTheRightOne()
   Client.combat = false
   Party.Refresh()
   equal(true, Party.IsOpen())
+end
+
+function tests.PartyPageShowsOnlyTheGameOfTheRoomItIsIn()
+  local world, players = triviaRoom({ "Bob" })
+  local alice = players[1]
+  Client.Install()
+  ForeverGames = { db = { profile = { sound = true } }, printed = {} }
+  function ForeverGames:Print(text)
+    self.printed[#self.printed + 1] = text
+  end
+  local private = alice.private
+  private.ICON = "icon"
+  private.rooms = alice.rooms
+  private.Transport = {
+    DisplayName = function(name)
+      return (name:gsub("%-.*", ""))
+    end,
+  }
+  private.MainFrame = {
+    Open = function() end,
+    Hide = function() end,
+    IsShown = function()
+      return true
+    end,
+    Refresh = function()
+      private.Party.Refresh()
+    end,
+  }
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/Party.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  local Party = private.Party
+  Party.Init(UIParent)
+  Party.Open()
+  Party.Refresh()
+  local function shown(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+  equal(true, shown("trivia_start"))
+
+  -- Trivia is over, and the next room is for Sketch
+  alice.rooms:Leave()
+  world:Run(1)
+  assert(alice.rooms:Open("sketch", "GUILD"))
+  Party.Open()
+  Party.Refresh()
+  equal(false, shown("trivia_start"), "nothing of the quiz is left on the page")
+  equal(false, shown("trivia_rules_line"))
+  equal(true, shown("sketch_start"))
 end
 
 -----------------------------

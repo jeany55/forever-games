@@ -1118,7 +1118,9 @@ local function stageSize(side)
   if side then
     width = width - side - GAP
   end
-  return width, height
+  -- In whole points: the view is laid out again only when that comes to something, not for every
+  -- sliver the window is dragged by, and what is centred on the stage sits on whole pixels
+  return math.floor(width), math.floor(height)
 end
 
 --- The position of a match that is on screen, as a number of log entries
@@ -1172,8 +1174,15 @@ local function reviewable()
   return nil
 end
 
+-- The longest move written down that two of fit on a line of the move list
+local MOVE_COLUMN_LETTERS = 8
+-- How wide a move is on a line of its own, and when it shares the line with the next player's
+local MOVE_WIDE_WIDTH = MOVES_WIDTH - 8 - 30
+local MOVE_COLUMN_WIDTH = MOVE_WIDE_WIDTH / 2
+
 --- One line of the move list: a move number and the move each player made. A player who had to
---- sit a turn out leaves a gap
+--- sit a turn out leaves a gap. A game for more than two, or one whose moves are long to write
+--- down, has a line for each move, with who made it
 --- @param content Frame
 --- @return Frame
 local function createMoveRow(content)
@@ -1183,12 +1192,11 @@ local function createMoveRow(content)
   row.number:SetWidth(24)
   row.number:SetJustifyH("RIGHT")
 
-  local width = (MOVES_WIDTH - 8 - 30) / 2
   row.moves = {}
   for index = 1, 2 do
     local button = CreateFrame("Button", nil, row)
-    button:SetSize(width, MOVE_ROW_HEIGHT)
-    button:SetPoint("LEFT", 30 + (index - 1) * width, 0)
+    button:SetSize(MOVE_COLUMN_WIDTH, MOVE_ROW_HEIGHT)
+    button:SetPoint("LEFT", 30 + (index - 1) * MOVE_COLUMN_WIDTH, 0)
 
     button.current = button:CreateTexture(nil, "BACKGROUND")
     button.current:SetAllPoints()
@@ -1197,8 +1205,12 @@ local function createMoveRow(content)
     hover:SetAllPoints()
     hover:SetColorTexture(1, 1, 1, 0.1)
 
+    -- Cut short rather than written over the move beside it
     button.text = Widgets.Label(button, "GameFontHighlightSmall")
     button.text:SetPoint("LEFT", 4, 0)
+    button.text:SetPoint("RIGHT", -2, 0)
+    button.text:SetJustifyH("LEFT")
+    button.text:SetWordWrap(false)
 
     button:SetScript("OnClick", function(self)
       local match = reviewable()
@@ -1212,9 +1224,10 @@ local function createMoveRow(content)
 end
 
 --- @param row Frame
---- @param item { number: number, moves: table<number, { ply: number, text: string, current: boolean }> } Moves by seat
+--- @param item { number: number, wide: boolean?, moves: table<number, { ply: number, text: string, current: boolean }> } Moves by seat, or the one move on a line of its own
 local function fillMoveRow(row, item)
   row.number:SetText(item.number .. ".")
+  row.moves[1]:SetWidth(item.wide and MOVE_WIDE_WIDTH or MOVE_COLUMN_WIDTH)
   for index, button in ipairs(row.moves) do
     local move = item.moves[index]
     button:SetShown(move ~= nil)
@@ -1231,18 +1244,33 @@ end
 local function refreshMoves(match, ply)
   local detail = frame.detail
   local rows, count, current = {}, 0, nil
+  local events = Match.Events(match)
+  -- Two moves to a line only where two players take turns and every move is short enough for
+  -- half of one
+  local wide = #match.players > 2
+  for index, event in ipairs(events) do
+    if event.kind == "move" and #(event.notation or match.log[index]) > MOVE_COLUMN_LETTERS then
+      wide = true
+    end
+  end
   local lastSeat = 2
-  for index, event in ipairs(Match.Events(match)) do
+  for index, event in ipairs(events) do
     if event.kind == "move" then
       count = count + 1
-      -- A line is one move by each player in turn. Players don't always alternate, so a new
-      -- line starts whenever the move doesn't fit behind the one before
-      if event.seat <= lastSeat then
-        rows[#rows + 1] = { number = #rows + 1, moves = {} }
+      local text = event.notation or match.log[index]
+      local move = { ply = index, text = text, current = false }
+      if wide then
+        move.text = MainFrame.PlayerName(match, event.seat) .. ": " .. text
+        rows[#rows + 1] = { number = count, wide = true, moves = { move } }
+      else
+        -- A line is one move by each player in turn. Players don't always alternate, so a new
+        -- line starts whenever the move doesn't fit behind the one before
+        if event.seat <= lastSeat then
+          rows[#rows + 1] = { number = #rows + 1, moves = {} }
+        end
+        lastSeat = event.seat
+        rows[#rows].moves[event.seat] = move
       end
-      lastSeat = event.seat
-      local move = { ply = index, text = event.notation or match.log[index], current = false }
-      rows[#rows].moves[event.seat] = move
       if index <= ply then
         current = { move = move, row = #rows }
       end
@@ -2362,12 +2390,19 @@ local function createResizeGrip()
   grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
   grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
   grip:SetScript("OnMouseDown", function()
+    -- A window held by its middle grows both ways at once, leaving the corner behind the cursor.
+    -- Held by the corner across from the grip it stays where it is and the grip follows the mouse
+    local left, top = frame:GetLeft(), frame:GetTop()
+    if left and top then
+      frame:ClearAllPoints()
+      frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+    end
     frame:StartSizing("BOTTOMRIGHT")
   end)
   grip:SetScript("OnMouseUp", function()
     frame:StopMovingOrSizing()
     local window = settings()
-    window.width, window.height = frame:GetWidth(), frame:GetHeight()
+    window.width, window.height = math.floor(frame:GetWidth() + 0.5), math.floor(frame:GetHeight() + 0.5)
     MainFrame.Refresh()
   end)
 
@@ -2445,13 +2480,7 @@ end
 -- Public
 -----------------------------
 
---- Redraws the window if it is open
-function MainFrame.Refresh()
-  if not frame or not frame:IsShown() or refreshing then
-    return
-  end
-  refreshing = true
-
+local function redraw()
   local inWizard = Wizard.IsOpen()
   local Party = private.Party
   local inParty = not inWizard and Party ~= nil and Party.OnPage()
@@ -2480,8 +2509,24 @@ function MainFrame.Refresh()
     end
     refreshDetail(selected, fresh)
   end
+end
 
+--- Redraws the window if it is open
+function MainFrame.Refresh()
+  if not frame or not frame:IsShown() or refreshing then
+    return
+  end
+  refreshing = true
+  -- A mistake in a game's view is reported, and the window goes on redrawing afterwards rather
+  -- than staying stuck the way it was
+  local ok, err = xpcall(redraw, function(message)
+    -- Where it went wrong, which is gone by the time the call has come back
+    return debugstack and tostring(message) .. "\n" .. debugstack(2) or debug.traceback(message, 2)
+  end)
   refreshing = false
+  if not ok then
+    error(err, 0)
+  end
 end
 
 --- Call when the player changed how big the window is drawn

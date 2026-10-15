@@ -7,6 +7,13 @@
 --
 -- There are two routes to a player. Battle.net friends are reached through Battle.net game data,
 -- which doesn't care about realm or faction. Everyone else gets a whispered addon message.
+--
+-- A player can be heard by more of their name than the client gives for them. Where characters
+-- have a second name, the one UnitName says is "Jeany" says things as "Jeany Beany". So the
+-- player learns the name they are heard by from their own messages coming back on the guild or
+-- group channel, and takes whatever comes from that name as their own. The names of others that
+-- come from the client's units (who is targeted, who is in the group) are made whole from the
+-- names they were heard by.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -15,6 +22,7 @@ local _, private = ...
 --- @field onMessage fun(sender: string, text: string, viaGuild: boolean, channel: RoomChannel?) `channel` is where it was said if that was to more than the player: the guild, or the group the player is in
 --- @field onReachable fun(peer: string?) Messages may get through again, to this player or to everyone
 --- @field onOffline fun(peer: string)
+--- @field onHeardAs (fun(name: string))? The player has found out the name others hear them by, to keep for next time
 
 --- @class Transport
 local Transport = {}
@@ -24,6 +32,8 @@ private.Transport = Transport
 local PREFIX = "ForeverGames"
 -- How long after a whisper a "player not found" system message is taken to be about that whisper
 local BOUNCE_WINDOW = 5
+-- How long after the player says something to the guild or group it is taken to have come back
+local ECHO_WINDOW = 10
 
 --- @type TransportHandlers
 local handlers
@@ -47,6 +57,13 @@ local gameAccounts = {}
 local accountNames = {}
 -- Who was heard on the guild channel, by full name. Only a guildmate can speak there
 local guildSenders = {}
+-- The name others hear the player by, when it isn't the one the client gives
+local heardAs
+-- What the player said to the guild or group lately, and when, to know it when it comes back
+local said = {}
+-- Everyone heard who has more of a name than its first word, by the first word and realm. False
+-- where two were heard who start the same
+local wholeNames = {}
 
 --- Turns a global format string like "%s has come online." into a pattern capturing its arguments
 --- @param format string?
@@ -107,6 +124,121 @@ end
 --- @return string
 function Transport.PlayerName()
   return UnitName("player") .. "-" .. realm()
+end
+
+--- @param name string Full player name
+--- @return string key The name's first word and its realm, the part of it the client always gives
+--- @return boolean longer There is more to the name than that
+local function firstWord(name)
+  local character, characterRealm = name:match("^([^-]*)-(.*)$")
+  character = character or name
+  local first = character:match("^(%S+)") or character
+  return first:lower() .. "-" .. (characterRealm or ""), first ~= character
+end
+
+--- Whether a name is the player's own, as the client gives it or as others hear it
+--- @param name string? Full player name
+--- @return boolean
+function Transport.IsMe(name)
+  return name ~= nil and (name == Transport.PlayerName() or name == heardAs)
+end
+
+--- The name the player has been heard by, if it isn't the one the client gives
+--- @return string?
+function Transport.HeardAs()
+  return heardAs
+end
+
+--- @param name string? Full player name, as kept from last time
+function Transport.SetHeardAs(name)
+  if name and name ~= Transport.PlayerName() and firstWord(name) == firstWord(Transport.PlayerName()) then
+    heardAs = name
+  end
+end
+
+--- Keeps a name of more than one word that a player was heard or listed by
+--- @param name string Full player name
+local function note(name)
+  local key, longer = firstWord(name)
+  if longer and wholeNames[key] ~= name then
+    wholeNames[key] = wholeNames[key] == nil and name or false
+  end
+end
+
+--- Who said something, by the full name they were heard by: the player's own name if it was them
+--- @param sender string? As the client gives it with the message
+--- @return string?
+function Transport.Sender(sender)
+  local name = Transport.Normalize(sender)
+  if not name then
+    return nil
+  end
+  if name == heardAs then
+    return Transport.PlayerName()
+  end
+  note(name)
+  return name
+end
+
+--- A player's whole name, for a name that came from the client's units and may be only the first
+--- word of it: the one name heard that starts with it, if there is one
+--- @param name string? Full player name
+--- @return string?
+function Transport.Whole(name)
+  name = Transport.Normalize(name)
+  if not name then
+    return nil
+  end
+  if Transport.IsMe(name) then
+    return Transport.PlayerName()
+  end
+  local key, longer = firstWord(name)
+  return (not longer and wholeNames[key]) or name
+end
+
+--- The full name of the player a unit is, made whole from who has been heard
+--- @param unit string
+--- @return string?
+function Transport.UnitPlayer(unit)
+  if not UnitIsPlayer(unit) then
+    return nil
+  end
+  local character, characterRealm = UnitFullName(unit)
+  if not character then
+    return nil
+  end
+  return Transport.Whole((characterRealm and characterRealm ~= "") and (character .. "-" .. characterRealm) or character)
+end
+
+--- Notes what the player says to everyone, so it is known as theirs when it comes back
+--- @param text string
+local function remember(text)
+  local now = GetTime()
+  for old, at in pairs(said) do
+    if now - at > ECHO_WINDOW then
+      said[old] = nil
+    end
+  end
+  said[text] = now
+end
+
+--- What was heard on the guild or group channel is the player's own when it is what they said a
+--- moment ago, from a name that starts the way theirs does. That name is the one they are heard by
+--- @param name string Full player name
+--- @param text string
+local function learnHeardAs(name, text)
+  local at = said[text]
+  if not at or GetTime() - at > ECHO_WINDOW or name == heardAs or Transport.IsMe(name) then
+    return
+  end
+  if firstWord(name) ~= firstWord(Transport.PlayerName()) then
+    return
+  end
+  heardAs = name
+  private.Log("heard as", name)
+  if handlers.onHeardAs then
+    handlers.onHeardAs(name)
+  end
 end
 
 --- Player name for display, without the realm when it is the player's own
@@ -190,6 +322,7 @@ end
 --- @param text string
 function Transport.Broadcast(text)
   if IsInGuild() and not Transport.IsLocked() then
+    remember(text)
     local result = C_ChatInfo.SendAddonMessage(PREFIX, text, "GUILD")
     private.Log("send GUILD", text, "->", resultName(result))
   end
@@ -221,6 +354,7 @@ function Transport.BroadcastTo(channel, text)
   if not type or Transport.IsLocked() then
     return false
   end
+  remember(text)
   local result = C_ChatInfo.SendAddonMessage(PREFIX, text, type)
   private.Log("send", type, text, "->", resultName(result))
   return succeeded(result)
@@ -311,6 +445,7 @@ function Transport.OnlineFriends()
   local function add(name)
     name = Transport.Normalize(name)
     if name and not seen[name] then
+      note(name)
       seen[name] = true
       names[#names + 1] = name
     end
@@ -374,7 +509,17 @@ function Transport.Reaches(channel, name)
     return isGuildmate(name)
   end
   local unit = Transport.DisplayName(name)
-  return UnitInParty(unit) == true or UnitInRaid(unit) ~= nil
+  if UnitInParty(unit) == true or UnitInRaid(unit) ~= nil then
+    return true
+  end
+  -- The client may know them by less of their name than they are heard by
+  local raid = IsInRaid()
+  for index = 1, GetNumGroupMembers() or 0 do
+    if Transport.UnitPlayer((raid and "raid" or "party") .. index) == name then
+      return true
+    end
+  end
+  return false
 end
 
 --- Whether a player is on the friends list, a Battle.net friend or in the player's guild
@@ -483,6 +628,10 @@ function Transport.Init(newHandlers)
       elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD" or channel == "PARTY" or channel == "RAID") then
         private.Log("recv", channel, sender, text)
         local name = Transport.Normalize(sender)
+        if name and channel ~= "WHISPER" then
+          learnHeardAs(name, text)
+        end
+        name = Transport.Sender(sender)
         if channel == "GUILD" and name then
           guildSenders[name] = true
         end
@@ -492,7 +641,7 @@ function Transport.Init(newHandlers)
     elseif event == "BN_CHAT_MSG_ADDON" then
       local prefix, text, _, account = ...
       if prefix == PREFIX then
-        local sender = nameOfAccount(account)
+        local sender = Transport.Sender(nameOfAccount(account))
         private.Log("recv battle.net", tostring(sender), text)
         if sender then
           handlers.onMessage(sender, text, false)

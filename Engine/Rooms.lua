@@ -26,7 +26,7 @@
 --   WELCOME:n:route:game:channel from the host: you are in, as member n. Route is "c" for a
 --                                member who talks on the channel and "d" for a guest
 --   IN:n:name:score[:n:name:score...]
---                                from the host: these are in the room
+--                                from the host: these are in the room. The host is member 1
 --   OUT:n                        member n has left, said by themselves or by the host
 --   SHUT                         from the host: the room is closed
 --   VIA:n:...                    from the host: what member n said, passed on
@@ -135,6 +135,8 @@ local LANES = 3
 local SEND_TRIES = 3
 -- How many messages wait in a line before the oldest are let go. Never of the first line
 local LINE_LIMIT = 80
+-- What the host calls itself
+local HOST_N = 1
 local MAX_GUESTS = 5
 local MAX_MEMBERS = 40
 local LOOK_COOLDOWN = 10
@@ -502,8 +504,8 @@ function Rooms:Open(gameId, channel, rules)
     id = id .. ("0123456789abcdefghijklmnopqrstuvwxyz"):sub(digit, digit)
   end
   local room = self:newRoom(id, gameId, self.env.me, channel)
-  room.invited, room.nextN, room.me = {}, 2, 1
-  self:addMember(room, 1, self.env.me, 0)
+  room.invited, room.nextN, room.me = {}, HOST_N + 1, HOST_N
+  self:addMember(room, HOST_N, self.env.me, 0)
   room.state = game.new(room, rules)
   self.room, self.joining = room, nil
   if channel then
@@ -651,9 +653,15 @@ function Rooms:deliver(room, member, kind, fields)
       return
     end
     for index = 1, #fields - 2, 3 do
-      local n, score = tonumber(fields[index]), tonumber(fields[index + 2])
-      if n and score and fields[index + 1] ~= "" then
-        self:addMember(room, n, fields[index + 1], score)
+      local n, score, name = tonumber(fields[index]), tonumber(fields[index + 2]), fields[index + 1]
+      if n == HOST_N and fromHost then
+        -- The host goes by the name its messages come from. The client doesn't always say a
+        -- player's name the way they would say it themselves ("Jeany" may be heard as "Jeany
+        -- Beany"), and whoever is in the room is told apart by how they are heard
+        name = room.host
+      end
+      if n and score and name ~= "" then
+        self:addMember(room, n, name, score)
       end
     end
     self.env.notify("roster", room)
@@ -876,7 +884,8 @@ function Rooms:Handle(sender, text, channel)
   elseif channel then
     member = memberNamed(room, sender)
   end
-  if member then
+  -- What the player said themselves, heard back on the channel by a name that isn't quite theirs
+  if member and member.n ~= room.me then
     self:deliver(room, member, kind, fields)
   end
   return true

@@ -1138,6 +1138,8 @@ local RACK_GAP = 3
 -- How big a square should be to lay tiles on: a board drawn smaller is zoomed in on to that
 local COMFORTABLE = 36
 local MAX_ZOOM = 3
+-- How close the focus button goes in at the least
+local FOCUS_ZOOM = 2
 local PLATE_HEIGHT, BUTTON_HEIGHT = 38, 22
 -- How fast a tile in the rack closes in on where it belongs, as a share of the way a second
 local RACK_SPEED = 16
@@ -1356,6 +1358,7 @@ local function createView(stage)
       for _, tile in pairs(self.tiles) do
         tile:Sharpen()
       end
+      self:showFocus()
     end,
   })
   self.viewport.frame.wordsWindow = true
@@ -1517,7 +1520,7 @@ function View:buildPanel()
   self.note:SetSpacing(3)
 
   local buttons = {}
-  for _, name in ipairs({ "play", "recall", "shuffle", "swap", "pass" }) do
+  for _, name in ipairs({ "play", "recall", "shuffle", "swap", "pass", "focus" }) do
     buttons[name] = Widgets.Button(panel, L["words_" .. name], 60, BUTTON_HEIGHT)
   end
   buttons.play:SetHeight(BUTTON_HEIGHT + 6)
@@ -1527,6 +1530,8 @@ function View:buildPanel()
   buttons.recall:SetPoint("BOTTOMLEFT", buttons.swap, "TOPLEFT", 0, 3)
   buttons.play:SetPoint("BOTTOMLEFT", buttons.recall, "TOPLEFT", 0, 4)
   buttons.play:SetPoint("BOTTOMRIGHT", buttons.shuffle, "TOPRIGHT", 0, 4)
+  buttons.focus:SetPoint("BOTTOMLEFT", buttons.play, "TOPLEFT", 0, 4)
+  buttons.focus:SetPoint("BOTTOMRIGHT", buttons.play, "TOPRIGHT", 0, 4)
   buttons.play:SetScript("OnClick", function()
     self:play()
   end)
@@ -1541,6 +1546,9 @@ function View:buildPanel()
   end)
   buttons.pass:SetScript("OnClick", function()
     self:pass()
+  end)
+  buttons.focus:SetScript("OnClick", function()
+    self:focus()
   end)
   self.buttons = buttons
 end
@@ -1627,43 +1635,52 @@ function View:Layout(width, height)
   local side = cell * SIZE
   local left = math.floor((width - side - GAP - panelWidth) / 2)
   local top = math.floor((height - side - GAP - rackHeight) / 2)
+  local oldCell = self.cell
   self.cell, self.side = cell, side
 
+  -- The viewport keeps the zoom and what is in the middle of it as the window changes size
   local viewport = self.viewport
   viewport.frame:ClearAllPoints()
   viewport.frame:SetPoint("TOPLEFT", self.stage, "TOPLEFT", left, -top)
   viewport:SetSize(side, side)
   viewport:SetContentSize(side, side)
-  viewport:Fit(true)
 
-  local font = math.max(6, math.floor(cell * 0.3))
-  for square = 0, SIZE * SIZE - 1 do
-    local parts = self.squares[square]
-    local x, y = self:offsetOf(square)
-    parts.cell:ClearAllPoints()
-    parts.cell:SetPoint("TOPLEFT", x, -y)
-    parts.cell:SetSize(cell, cell)
-    if parts.label then
-      parts.label:SetFont(STANDARD_TEXT_FONT, font, "")
-      parts.label:SetText(L["words_square_" .. premiumAt(square)])
-      parts.label:ClearAllPoints()
-      parts.label:SetPoint("CENTER", self.board, "TOPLEFT", x + cell / 2, -(y + cell / 2))
+  -- The board only has to be drawn again when its squares are another size: while the window is
+  -- dragged to size, mostly they aren't
+  if cell ~= oldCell then
+    local font = math.max(6, math.floor(cell * 0.3))
+    local refont = font ~= self.labelFont
+    self.labelFont = font
+    for square = 0, SIZE * SIZE - 1 do
+      local parts = self.squares[square]
+      local x, y = self:offsetOf(square)
+      parts.cell:ClearAllPoints()
+      parts.cell:SetPoint("TOPLEFT", x, -y)
+      parts.cell:SetSize(cell, cell)
+      if parts.label then
+        if refont then
+          parts.label:SetFont(STANDARD_TEXT_FONT, font, "")
+          parts.label:SetText(L["words_square_" .. premiumAt(square)])
+        end
+        parts.label:ClearAllPoints()
+        parts.label:SetPoint("CENTER", self.board, "TOPLEFT", x + cell / 2, -(y + cell / 2))
+      end
+      if parts.star then
+        parts.star:ClearAllPoints()
+        parts.star:SetPoint("CENTER", self.board, "TOPLEFT", x + cell / 2, -(y + cell / 2))
+        parts.star:SetSize(cell * 0.7, cell * 0.7)
+      end
+      if self.tiles[square] then
+        self:placeTile(square)
+      end
+      if self.glows[square] then
+        self:placeGlow(square)
+      end
     end
-    if parts.star then
-      parts.star:ClearAllPoints()
-      parts.star:SetPoint("CENTER", self.board, "TOPLEFT", x + cell / 2, -(y + cell / 2))
-      parts.star:SetSize(cell * 0.7, cell * 0.7)
-    end
-    if self.tiles[square] then
-      self:placeTile(square)
-    end
-    if self.glows[square] then
-      self:placeGlow(square)
-    end
+    self.hoverMark:SetSize(cell, cell)
+    self.cursorMark:SetSize(cell, cell)
+    self.cursorArrow:SetSize(cell * 0.8, cell * 0.8)
   end
-  self.hoverMark:SetSize(cell, cell)
-  self.cursorMark:SetSize(cell, cell)
-  self.cursorArrow:SetSize(cell * 0.8, cell * 0.8)
 
   self.rack:ClearAllPoints()
   self.rack:SetPoint("TOPLEFT", self.stage, "TOPLEFT", left, -(top + side + GAP))
@@ -1689,7 +1706,6 @@ function View:Layout(width, height)
   for _, name in ipairs({ "recall", "shuffle", "swap", "pass" }) do
     self.buttons[name]:SetWidth(half)
   end
-  self.note:SetWidth(panelWidth)
 
   local letter = math.max(20, math.min(30, math.floor(side / 12)))
   local picker = self.picker
@@ -1702,11 +1718,13 @@ function View:Layout(width, height)
     button:ClearAllPoints()
     button:SetPoint("TOPLEFT", 10 + ((index - 1) % 7) * (letter + 3), -30 - math.floor((index - 1) / 7) * (letter + 3))
   end
-  self.banner:SetFont(STANDARD_TEXT_FONT, math.max(14, math.floor(side / 14)), "OUTLINE")
-
-  if self.view then
-    self:Update(self.view)
+  local bannerFont = math.max(14, math.floor(side / 14))
+  if bannerFont ~= self.bannerFont then
+    self.bannerFont = bannerFont
+    self.banner:SetFont(STANDARD_TEXT_FONT, bannerFont, "OUTLINE")
   end
+
+  self:refresh()
 end
 
 --- Where a square is drawn: the distance of its top left corner from the board's, right and down
@@ -1843,10 +1861,11 @@ function View:inRack()
   return entries
 end
 
---- Shows what was changed
+--- Shows what was changed. Only the position the view was last given is drawn again: the move
+--- that led to it was shown when it arrived, and isn't shown a second time
 function View:refresh()
   if self.view then
-    self:Update(self.view)
+    self:draw()
   end
 end
 
@@ -1938,6 +1957,48 @@ function View:recall()
   self:point(nil)
   self.viewport:Fit()
   self:refresh()
+end
+
+--- Goes close in on where the game is going on, or with the board zoomed already, back out to
+--- all of it
+function View:focus()
+  local viewport = self.viewport
+  if not viewport:Fits() then
+    viewport:Fit()
+    self:showFocus()
+    return
+  end
+  -- Around the tiles laid out, or else the move before, or else the middle of the board
+  local squares = {}
+  local draft = self.view and self:busy() and self:draft()
+  for _, entry in ipairs(draft and draft.entries or {}) do
+    if entry.square and entry ~= self.carried then
+      squares[#squares + 1] = entry.square
+    end
+  end
+  local last = self.view and self.view.events[self.view.ply]
+  if #squares == 0 then
+    for square in pairs(last and last.placed or {}) do
+      squares[#squares + 1] = square
+    end
+  end
+  if #squares == 0 then
+    squares[1] = CENTRE
+  end
+  local x, y = 0, 0
+  for _, square in ipairs(squares) do
+    local left, top = self:offsetOf(square)
+    x, y = x + left + self.cell / 2, y + top + self.cell / 2
+  end
+  viewport:ZoomTo(math.min(MAX_ZOOM, math.max(FOCUS_ZOOM, COMFORTABLE / self.cell)), x / #squares, y / #squares)
+  self:showFocus()
+end
+
+--- Says on the focus button which way it goes
+function View:showFocus()
+  if self.buttons then
+    self.buttons.focus:SetText(L[self.viewport:Fits() and "words_focus" or "words_whole"])
+  end
 end
 
 --- Puts the tiles in the rack in another order
@@ -2462,8 +2523,11 @@ function View:showPanel(draft)
   self.bagIcon:ClearAllPoints()
   self.bagIcon:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 8, -8)
   self.bag:SetText(L["words_bag"]:format(#state.bag))
+  -- Between the bag and the buttons, and what doesn't fit there is cut short rather than drawn
+  -- over them
   self.note:ClearAllPoints()
   self.note:SetPoint("TOPLEFT", last, "BOTTOMLEFT", 0, -34)
+  self.note:SetPoint("BOTTOMRIGHT", self.buttons.focus, "TOPRIGHT", 0, 6)
   self.note:SetText(self:noteText(draft))
 
   local buttons = self.buttons
@@ -2474,9 +2538,11 @@ function View:showPanel(draft)
     picked = picked + (draft.swap and draft.swap[entry] and 1 or 0)
   end
   local swapping = draft ~= nil and draft.swap ~= nil
-  for _, button in pairs(buttons) do
-    button:SetShown(draft ~= nil)
+  for name, button in pairs(buttons) do
+    -- The board can be looked at closer whatever else can be done with it
+    button:SetShown(draft ~= nil or name == "focus")
   end
+  self:showFocus()
   if not draft then
     return
   end
@@ -2510,7 +2576,16 @@ function View:Update(view)
     self.viewport:Fit(true)
     self.typing:ClearFocus()
   end
+  self:draw()
 
+  if view.played then
+    self:celebrate(view.played)
+  end
+end
+
+--- Draws the position on screen with whatever the player has laid out on it
+function View:draw()
+  local view = self.view
   local draft = self:busy() and self:draft() or nil
   if not draft and self.drag:Carrying() then
     self.drag:Cancel(true)
@@ -2528,10 +2603,6 @@ function View:Update(view)
   self:showPanel(draft)
   self:showMarks()
   self.picker:SetShown(draft ~= nil and draft.picking ~= nil)
-
-  if view.played then
-    self:celebrate(view.played)
-  end
 end
 
 -----------------------------
