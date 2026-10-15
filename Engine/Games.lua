@@ -72,6 +72,8 @@ local _, private = ...
 --- @field best fun(key: string): number?, boolean For a game that keeps records (`record`): the best there ever was under a key, and whether it was this match that set it
 --- @field played MatchEvent? The move to show being made: set when the position follows from the last one shown by that move, or when the opponent made it while the player wasn't looking
 --- @field catching boolean? The window is showing the player the moves the others made while they were away, one after the other, before the game as it stands. Not `live`, and nothing can be played, but `played` is to be shown being made as it would be in the game as it stands: the dice thrown, the turn played out. A view that says it is still showing a move (`Busy`) is waited for before the next
+--- @field sample (fun(text: string): boolean)? For a game for one with a `ghost`: where the player is now, for the ghost of their run, kept with their best if it is one (and in a race sent to the rival). As RaceView.sample
+--- @field ghost (fun(key: string): string[]?)? For a game for one with a `ghost`: the samples of the run that set the player's best under a key, nil if there is none, to race against
 --- @field race RaceView? The game for one is a race against somebody, who is playing the same deal on their own (Engine/Race.lua): who, how they did, and for a game with a `ghost` where they were as they played
 
 --- @class GameViewObject

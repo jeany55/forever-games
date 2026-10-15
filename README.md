@@ -202,9 +202,12 @@ solve on your own or the two of you together, both at once.
   begins at the start again
 - Freedoom is the first episode of [Freedoom](https://freedoom.github.io), the free Doom, drawn
   the way Doom drew it: pick one of its nine maps when you set the game up and fight your way to
-  its exit, against the clock; your best time on every map is kept. Race a friend on a map and
-  their ghost runs it beside you, a glowing marine with their name over its head, going where they
-  went when they did. Teleports, lifts, stairs that
+  its exit, against the clock; your best time on every map is kept. Every map is finished with
+  Doom's screen for it, what you killed, picked up and found counting up, your time to the
+  hundredth and how it stands. Play a map again and the ghost of your best run on it runs beside
+  you, a glowing marine; race a friend on it and theirs does, with their name over its head,
+  going where they went when they did. It sounds as Doom does too: guns, doors, lifts and
+  monsters, heard from where they are and only as far as Doom heard them. Ghosts make no sound. Teleports, lifts, stairs that
   build themselves, doors that open on a switch or a shot, and floors of slime that hurt. Its
   zombies, shotgun guys, imps, demons, spectres, lost souls and barons hear your shots from the
   rooms around and come for you, and barrels go up when they are shot. Fight back with your fists, the pistol, and

@@ -28,13 +28,21 @@ stretched but put in the corner of a picture big enough for it. The monsters com
 frame they have, for whatever game plays them to go through. Besides those, the kinds that turn
 up during play (DROPPED, what a monster leaves behind) and the sprites that aren't things at all
 (EFFECTS: smoke, blood and fireballs, and the player's weapons). And with --hud, Doom's status bar, its numbers, keys, faces and the small font messages are
-written in, under hud/, as a set of pictures of their own (SectorMap.RegisterPictures).
+written in, under hud/, as a set of pictures of their own (SectorMap.RegisterPictures). With
+--sounds, Doom's sound effects (SOUNDS) go into a folder as Ogg Vorbis, each as loud as it is
+heard close by, a way off and far off (1, 2 and 3: the client plays a file as loud as it is, so how
+far away something is heard is a choice of file). That takes ffmpeg; without it the sounds are left
+out, and say so.
 
 Only the standard library is used. Pass --preview <folder> to also get PNG copies there, which
 are easier to look at than TGA.
 """
 import argparse
+import shutil
 import struct
+import subprocess
+import tempfile
+import wave
 import zlib
 from pathlib import Path
 
@@ -174,6 +182,47 @@ DROPPED = [2007, 2001]
 EFFECTS = ["PLAY", "BAL1", "BAL7", "TFOG", "BEXP", "PUFF", "BLUD", "PUNG", "SAWG", "PISG", "PISF", "SHTG", "SHTF", "CHGG", "CHGF",
            "MISG", "MISF", "MISL", "PLSG", "PLSF", "PLSS", "PLSE", "BFGG", "BFGF", "BFS1", "BFE1", "BFE2"]
 
+# Doom's sound effects that are used, by their names without the DS, and how loud each of the three
+# files of one is
+SOUNDS = """pistol shotgn sawup sawidl sawful sawhit rlaunc rxplod firsht firxpl pstart pstop doropn dorcls bdopn
+bdcls swtchn swtchx plpain pldeth slop punch itemup wpnup oof telept posit1 posit2 posit3 bgsit1 bgsit2 sgtsit
+brssit sgtatk claw posact bgact dmact popain dmpain podth1 podth2 podth3 bgdth1 bgdth2 sgtdth brsdth sklatk
+getpow plasma bfg barexp noway stnmov""".split()
+LOUDNESS = [1.0, 0.55, 0.25]
+
+
+def sounds(wad, folder):
+    """Doom's sounds as Ogg Vorbis files, three of each: how many were written"""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        print("warning: no ffmpeg, so no sounds: install it and run this again")
+        return 0
+    folder.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with tempfile.TemporaryDirectory() as scratch:
+        for name in SOUNDS:
+            raw = wad.named("DS" + name.upper())
+            if raw is None:
+                print(f"warning: no sound {name}")
+                continue
+            # Doom's own: a format, the rate, how many samples, then the samples, eight bits and
+            # unsigned, with sixteen of padding at either end
+            _, rate, count = struct.unpack_from("<HHI", raw, 0)
+            samples = raw[8 + 16:8 + count - 16]
+            plain = Path(scratch) / (name + ".wav")
+            with wave.open(str(plain), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(1)
+                out.setframerate(rate)
+                out.writeframes(samples)
+            for level, loudness in enumerate(LOUDNESS, 1):
+                path = folder / f"{name}{level}.ogg"
+                subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-i", str(plain), "-filter:a", f"volume={loudness}", "-ar", "22050",
+                                "-c:a", "libvorbis", "-q:a", "3", str(path)], check=True)
+                written += 1
+    return written
+
+
 # Doom's status bar: its back, the big red numbers and the small ones, the keys, the faces and
 # the font messages are written in
 HUD = ["STBAR", "STARMS", "STTMINUS", "STTPRCNT", "STFDEAD0", "STFGOD0"]
@@ -183,6 +232,10 @@ HUD += [f"{face}{level}" for level in range(5) for face in ("STFTL", "STFTR", "S
 HUD = [name if not name.startswith(("STFTL", "STFTR")) else name + "0" for name in HUD]
 HUD += [f"STFST{level}{look}" for level in range(5) for look in range(3)]
 HUD += [f"STCFN{code:03d}" for code in range(33, 96)]
+# And the screen a map is finished with: the episode's map behind, the map's name and "finished",
+# what was killed, picked up and found, the time and the par, and their big numbers
+HUD += ["WIMAP0", "WIF", "WIOSTK", "WIOSTI", "WISCRT2", "WITIME", "WIPAR", "WIPCNT", "WICOLON", "WIMINUS", "WISUCKS"]
+HUD += [f"WILV0{map}" for map in range(9)] + [f"WINUM{digit}" for digit in range(10)]
 
 
 class Wad:
@@ -383,6 +436,7 @@ def main():
     parser.add_argument("--addon-path", default=None, help="The pictures' folder as the client knows it, Interface\\AddOns\\ForeverGames\\<images> if left out")
     parser.add_argument("--sky", default=None, help="The sky's picture, SKY1 for E1 maps and SKY1 to SKY3 by MAPxx if left out")
     parser.add_argument("--global", dest="out_global", action="store_true", help="Write the map (and the status bar) for an addon of its own, loaded on demand: into ForeverGamesSectorMaps (and ForeverGamesSectorPictures), where SectorMap finds them, rather than registered with the addon")
+    parser.add_argument("--sounds", type=Path, default=None, help="Also write Doom's sound effects into this folder, as Ogg Vorbis (takes ffmpeg)")
     parser.add_argument("--hud", nargs=2, metavar=("ID", "PATH"), default=None, help="Also write the status bar's pictures, and a Lua file registering them under an id, e.g. freedoom_hud Games/Maps/FreedoomHud.lua")
     parser.add_argument("--icon", nargs=2, metavar=("PICTURE", "PATH"), default=None, help="Also write a 64 pixel icon of the middle of a wall picture, e.g. BIGDOOR2 Images/Icons/freedoom.tga")
     parser.add_argument("--preview", type=Path, default=None)
@@ -541,6 +595,9 @@ def main():
             out_hud.write_text(header + f"ForeverGamesSectorPictures = ForeverGamesSectorPictures or {{}}\nForeverGamesSectorPictures[{lua(hud_id)}] = {pictures_set}\n")
         else:
             out_hud.write_text(header + "--- @type nil, ForeverGamesPrivate\nlocal _, private = ...\n\n" + f"private.SectorMap.RegisterPictures({lua(hud_id)}, {pictures_set})\n")
+
+    if args.sounds:
+        print(f"{sounds(wad, args.sounds)} sound files in {args.sounds}")
 
     if args.icon:
         name, path = args.icon

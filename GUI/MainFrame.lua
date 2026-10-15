@@ -1757,6 +1757,12 @@ local function refreshDetail(match, fresh)
       best = function(key)
         return private.session:Best(match.game, key), private.session:SetBest(match, key)
       end,
+      sample = game.ghost and function(text)
+        return private.session:Sample(match.id, text)
+      end or nil,
+      ghost = game.ghost and function(key)
+        return private.session:Ghost(match.game, key)
+      end or nil,
       ply = ply,
       live = live,
       events = events,

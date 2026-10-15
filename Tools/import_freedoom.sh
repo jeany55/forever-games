@@ -1,7 +1,7 @@
 #!/bin/bash
 # Makes ForeverGames_Freedoom, the addon of Freedoom's maps that Forever Games loads when a game
-# of Freedoom is played: every map of the first episode, the pictures they are drawn with and the
-# status bar, from freedoom1.wad. Its icon goes into Forever Games itself, to be shown before.
+# of Freedoom is played: every map of the first episode, the pictures they are drawn with, the
+# status bar and the sounds (which take ffmpeg), from freedoom1.wad. Its icon goes into Forever Games itself, to be shown before.
 #   Tools/import_freedoom.sh path/to/freedoom1.wad
 # Run from the repository root.
 set -e
@@ -19,7 +19,7 @@ rm -rf "$OUT/Images" "$OUT/Maps"
 for map in 1 2 3 4 5 6 7 8 9; do
   extra=()
   if [ "$map" = 1 ]; then
-    extra=(--icon BIGDOOR2 Images/Icons/freedoom.tga --hud freedoom_hud "$OUT/Hud.lua")
+    extra=(--icon BIGDOOR2 Images/Icons/freedoom.tga --hud freedoom_hud "$OUT/Hud.lua" --sounds "$OUT/Sounds")
   fi
   python3 -I Tools/import_wad.py "$WAD" "E1M$map" "freedoom_e1m$map" "$OUT/Images" "$OUT/Maps/E1M$map.lua" \
     --global --addon-path "$ADDON_PATH" "${extra[@]}"

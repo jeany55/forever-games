@@ -74,6 +74,7 @@ local _, private = ...
 --- @field random fun(max: number): number
 --- @field notify fun(event: string, match: Match)
 --- @field records table<string, table<string, number>>? The best the player ever did at the games played alone, by game id and key. Persisted. Forgotten with the session if left out
+--- @field ghosts table<string, table<string, string>>? For a game with a ghost (GameDefinition.ghost): the run that set each of those bests, its samples joined by "+", by game id and key. Persisted. Forgotten with the session if left out
 --- @field offers table<string, Offer>? The games the player linked in chat that nobody took yet, by game id. Persisted. Forgotten with the session if left out
 --- @field onRefused (fun(host: string, gameId: string, reason: string))? Called when a game the player asked for isn't to be had
 --- @field takes (fun(sender: string): boolean)? Whether the player takes challenges from this player. From everyone if left out
@@ -142,6 +143,7 @@ function Session.New(env)
     Match.Upgrade(match)
   end
   env.records = env.records or {}
+  env.ghosts = env.ghosts or {}
   env.offers = env.offers or {}
   env.versus = env.versus or {}
   env.dailies = env.dailies or {}
@@ -952,6 +954,8 @@ end
 -- A game played alone has nobody to beat but the player's own best. A game that says what is
 -- worth remembering (GameDefinition.record) has it kept here, and one that is timed
 -- (GameDefinition.clock) has its seconds counted by whoever shows it: the session only keeps them.
+-- A game with a ghost (GameDefinition.ghost) has every run kept as it is played, raced or not
+-- (Sample), and the run that set a best kept with it, for the player to race next time (Ghost).
 
 --- Remembers whatever of a game for one is the best the player ever did
 --- @param match Match
@@ -970,6 +974,13 @@ function Session:record(match)
       bests[record.key] = record.value
       match.bests = match.bests or {}
       match.bests[record.key] = true
+      if game.ghost then
+        -- The run that set it goes with it: a best without one has none, not an older one's
+        local trail = match.race and match.race.trail or match.trail
+        local ghosts = self.env.ghosts[game.id] or {}
+        self.env.ghosts[game.id] = ghosts
+        ghosts[record.key] = trail
+      end
     end
   end
 end
@@ -981,6 +992,23 @@ end
 function Session:Best(gameId, key)
   local bests = self.env.records[gameId]
   return bests and bests[key]
+end
+
+--- The run that set the best the player ever did at a game with a ghost, its samples
+--- @param gameId string
+--- @param key string See GameRecord
+--- @return string[]? nil if there is none
+function Session:Ghost(gameId, key)
+  local ghosts = self.env.ghosts[gameId]
+  local trail = ghosts and ghosts[key]
+  if not trail then
+    return nil
+  end
+  local samples = {}
+  for sample in (trail .. "+"):gmatch("([^+]*)%+") do
+    samples[#samples + 1] = sample
+  end
+  return samples
 end
 
 --- Whether it was this match that set a record
@@ -1431,19 +1459,22 @@ function Session:startRace(game, rival, setup)
   return match
 end
 
---- Keeps where the player is now for the ghost of their run, in a race of a game that has one
---- (GameDefinition.ghost). Only one sample is kept for every so many seconds of the clock, so it
---- can be called as often as the view likes
+--- Keeps where the player is now for the ghost of their run, in a game for one that has one
+--- (GameDefinition.ghost): for the rival to race in a race, and for the player to race next time
+--- if it is their best. Only one sample is kept for every so many seconds of the clock, so it can
+--- be called as often as the view likes
 --- @param id string
 --- @param text string What the game makes of where the player is
 --- @return boolean kept
 function Session:Sample(id, text)
   local match = self.env.matches[id]
   local game = match and Games.Get(match.game)
-  if not game or not game.ghost or not match.race or match.race.declined or match.status ~= "active" then
+  if not game or not game.ghost or not Match.IsSolo(match) or match.status ~= "active" then
     return false
   end
-  return Race.Sample(match.race, game.ghost, match.played or 0, text)
+  -- A run in a race is kept for the rival as well, any other only for the player
+  local race = match.race
+  return Race.Sample((race and not race.declined) and race or match, game.ghost, match.played or 0, text)
 end
 
 --- Works out how a run went once it is over, the once, and tells the rival

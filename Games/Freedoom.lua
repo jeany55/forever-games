@@ -106,8 +106,9 @@ local WALK, RUN, TURN, REACH, FALL = 290, 580, 3.2, 64, 600
 local EYE, DEAD_EYE = 41, 6
 -- With the right mouse button held the mouse turns the player: radians for every pixel across
 local MOUSE_TURN = 0.006
--- How long the screen shows that the exit was reached, or the player dead, before the game is over
-local EXIT_PAUSE, DEAD_PAUSE = 1, 70
+-- How many tics the screen shows the player dead before the game is over. Reaching the exit ends it
+-- there and then: the clock stops at the exit
+local DEAD_PAUSE = 70
 local MARGIN, HINT_HEIGHT = 12, 22
 local ASPECT = 4 / 3
 local STATS_EVERY, LOG_EVERY = 0.25, 2
@@ -145,6 +146,19 @@ local GOLD_ALPHA, RED_ALPHA, BONUS_TICS = 0.22, 0.6, 6
 local FONT_FIRST, FONT_LAST, SPACE_WIDTH = 33, 95, 4
 local HUD_PICTURES = "freedoom_hud"
 
+-- Doom's sounds, in the maps' addon: each three times over, as loud as it is heard close by, a way
+-- off and far off, and how far each of those reaches (the client can't make one quieter, so how far
+-- away something is heard is which of them is played). Beyond the last nothing is heard. What
+-- is picked up says so one of three ways: a weapon, a power, anything else
+local SOUND = {
+  folder = "Interface\\AddOns\\ForeverGames_Freedoom\\Sounds\\",
+  reach = { 450, 850, 1200 },
+  weapons = { [2001] = true, [82] = true, [2002] = true, [2003] = true, [2004] = true, [2005] = true, [2006] = true },
+  powers = { [2013] = true, [83] = true, [2022] = true, [2023] = true, [2024] = true, [2025] = true, [2026] = true, [2045] = true },
+  -- The finish screen's counting goes off every so many tics
+  count = 4,
+}
+
 -- A race's ghost: the rival's run, shown as they played it, a see-through marine with their
 -- name over its head. A sample of where the player is is taken every so often, and is five
 -- letters (of the 64 a race lets a sample have): where across and up the map, to the nearest so
@@ -159,9 +173,30 @@ local GHOST = {
   -- Its name: how big it is written near and far, and from how near it is as big as it gets
   near = 160, smallest = 0.6, largest = 1.2,
 }
-local GHOST_DIGIT = {}
+-- The screen a map is finished with, Doom's intermission (its wi_stuff.c): where everything on
+-- it goes, how fast the counts go up (two percent a tic, three seconds of the time), Doom's par
+-- times for the first episode's maps, the kinds of thing that count as items, and the special of a
+-- sector that is a secret. And where the lines under it are written, in Doom's font
+local FINISH = {
+  statsX = 50, statsY = 50, timeX = 16, timeY = 168, titleY = 2,
+  percentStep = 2, timeStep = 3,
+  pars = { 30, 75, 120, 90, 165, 180, 180, 30, 165 },
+  items = { [2014] = true, [2015] = true, [2013] = true, [83] = true, [2022] = true, [2023] = true, [2024] = true, [2026] = true, [2045] = true },
+  secret = 9,
+  notesY = 128, notesGap = 12,
+}
+
+local GHOST_DIGIT, preciseTime = {}, nil
 for index = 1, #GHOST.letters do
   GHOST_DIGIT[GHOST.letters:sub(index, index)] = index - 1
+end
+
+--- A time to the hundredth of a second, the way races show them
+--- @param seconds number
+--- @return string
+function preciseTime(seconds)
+  local hundredths = math.floor(seconds * 100 + 0.5)
+  return private.Widgets.Time(math.floor(hundredths / 100)) .. (".%02d"):format(hundredths % 100)
 end
 
 --- Where the player is, as a sample of a ghost
@@ -238,7 +273,7 @@ local function newRun(state)
   end
   local map = private.SectorMap.Load(state.map)
   local start
-  local animated, here = {}, {}
+  local animated, here, totalItems, totalSecrets = {}, {}, 0, 0
   local kinds = map.data.kinds or {}
   for _, thing in ipairs(map.data.things) do
     if thing.type == 1 and not start then
@@ -256,6 +291,9 @@ local function newRun(state)
           bright = kind.bright == "*" or (kind.bright ~= "" and kind.bright:find(kind.frames:sub(1, 1), 1, true) ~= nil),
         }
         map:AddThing(made)
+        if FINISH.items[thing.type] then
+          totalItems = totalItems + 1
+        end
         if #kind.frames > 1 and kind.tics > 0 then
           animated[#animated + 1] = made
         end
@@ -269,6 +307,11 @@ local function newRun(state)
   map:Settle(player)
   local inventory = newInventory()
   --- @type FreedoomRun
+  for _, sector in ipairs(map.sectors) do
+    if sector.special == FINISH.secret then
+      totalSecrets = totalSecrets + 1
+    end
+  end
   local teleports = {}
   for _, thing in ipairs(map.data.things) do
     if thing.type == TELEPORT_LANDING then
@@ -276,7 +319,7 @@ local function newRun(state)
     end
   end
   local run = {
-    map = map, level = state.level, teleports = teleports,
+    map = map, level = state.level, teleports = teleports, items = 0, totalItems = totalItems, secrets = 0, totalSecrets = totalSecrets,
     player = player, angle = math.rad(start.angle), inventory = inventory, animated = animated, actors = {}, tic = 0, time = 0,
     refire = 0, light = 0, gunY = WEAPON_TOP, gunMoving = 0, bonus = 0, hurt = 0, eye = EYE, bob = 0,
     shows = function()
@@ -294,7 +337,9 @@ end
 --- @return FreedoomView
 local function createView(stage)
   Widgets = private.Widgets
-  local self = setmetatable({ stage = stage, runs = {}, down = {}, shown = 0, crossed = {}, touched = {}, look = 1, lookAt = 0 }, View)
+  local self = setmetatable({ stage = stage, runs = {}, down = {}, shown = 0, crossed = {}, touched = {}, look = 1, lookAt = 0,
+    -- What each thing is saying right now, by the thing, the player's own included
+    voices = setmetatable({}, { __mode = "k" }) }, View)
 
   self.border = Widgets.Panel(stage)
   self.box = CreateFrame("Frame", nil, stage)
@@ -402,10 +447,14 @@ function View:Update(view)
     run.shows = function(thing)
       return screen:Shows(thing)
     end
+    run.sound = function(name, origin)
+      self:sound(name, origin)
+    end
     self.said:SetText("")
     self.message = nil
   end
-  self.said:SetText(state.out and L["freedoom_out"] or state.dead and L["freedoom_dead"] or "")
+  -- Getting out is shown by the screen a map is finished with
+  self.said:SetText(state.dead and L["freedoom_dead"] or "")
   self.race = view.race
   self:raceGhost()
   self:draw()
@@ -413,12 +462,29 @@ end
 
 --- The rival's ghost, once their run has arrived, in the map for as long as it lasts
 function View:raceGhost()
-  local run, race = self.run, self.race
-  if run.ghostTrail or not race or not race.ghost then
+  local run, race, view = self.run, self.race, self.view
+  if run.finished or run.ghostOf == "race" then
     return
   end
+  -- The rival's run once it has arrived, else the player's own best on the map
+  local samples, name, of
+  if race and race.ghost then
+    samples, name, of = race.ghost, (race.rival or ""):match("^[^%-]+") or "", "race"
+  elseif not run.ghostOf and view.ghost then
+    samples, of = view.ghost(run.level), "best"
+    local best = view.best and view.best(run.level)
+    name = best and L["freedoom_ghost_best"]:format(preciseTime(best)) or ""
+  end
+  if not samples then
+    return
+  end
+  if run.ghost then
+    -- The rival's arrived while the player raced their own best: theirs it is
+    run.map:RemoveThing(run.ghost)
+    run.ghost, run.ghostTrail = nil, nil
+  end
   local trail = {}
-  for _, sample in ipairs(race.ghost) do
+  for _, sample in ipairs(samples) do
     local place = ghostPlace(sample)
     if place then
       trail[#trail + 1] = place
@@ -427,11 +493,11 @@ function View:raceGhost()
   if #trail == 0 then
     return
   end
-  run.ghostTrail = trail
+  run.ghostTrail, run.ghostOf = trail, of
   run.ghost = { x = trail[1].x, y = trail[1].y, angle = trail[1].angle, radius = RADIUS, height = HEIGHT, alpha = GHOST.alpha, tint = GHOST.tint,
     picture = "PLAYA", bright = true }
   run.map:AddThing(run.ghost)
-  self.plate.name:SetText((race.rival or ""):match("^[^%-]+") or "")
+  self.plate.name:SetText(name)
 end
 
 --- Where the ghost is now, on the race's clock: between two samples, walking, turning and
@@ -451,7 +517,7 @@ function View:moveGhost()
     local last = trail[#trail]
     local over = seconds - (#trail - 1) * GHOST.every
     x, y, angle, picture = last.x, last.y, last.angle, "PLAYA"
-    if self.race and self.race.theirs == false then
+    if run.ghostOf == "race" and self.race and self.race.theirs == false then
       -- Doom's player falling: seven frames, the last lying there
       local frame = math.min(7, math.floor(over / GHOST.fall * 7) + 1)
       picture = "PLAY" .. ("HIJKLMN"):sub(frame, frame)
@@ -515,7 +581,38 @@ function View:say(text)
   self.message, self.messageUntil = text, (GetTime and GetTime() or 0) + MESSAGE_TIME
 end
 
---- Whatever is in reach ahead, used
+--- Plays one of Doom's sounds as it is heard from where the player is: loud close by, quieter
+--- further off, not at all far away. Whatever said something before is cut short, as in Doom,
+--- where everything has one voice. Only while the addon's sounds are on
+--- @param name string
+--- @param origin table? Where it is heard from, a thing or a point: the player's own if left out
+function View:sound(name, origin)
+  if not PlaySoundFile or (ForeverGames and ForeverGames.db and not ForeverGames.db.profile.sound) then
+    return
+  end
+  local player = self.run.player
+  local level = 1
+  if origin and origin ~= player then
+    local away = math.sqrt((origin.x - player.x) ^ 2 + (origin.y - player.y) ^ 2)
+    level = nil
+    for index, reach in ipairs(SOUND.reach) do
+      if not level and away < reach then
+        level = index
+      end
+    end
+    if not level then
+      return
+    end
+  end
+  local voice = origin or player
+  if self.voices[voice] and StopSound then
+    StopSound(self.voices[voice])
+  end
+  local _, handle = PlaySoundFile(SOUND.folder .. name .. level .. ".ogg", "SFX")
+  self.voices[voice] = handle
+end
+
+--- Whatever is in reach ahead, used: what doesn't open says so, a door that needs a key with a grunt
 function View:use()
   local run = self.run
   if run.dead then
@@ -523,10 +620,15 @@ function View:use()
   end
   local line, front = run.map:Trace(run.player.x, run.player.y, run.angle, REACH)
   if line and front then
-    local _, colour = trigger(run, line, "use")
+    local done, colour = trigger(run, line, "use")
     if colour then
       self:say(L["freedoom_need_" .. colour])
+      self:sound("oof")
+    elseif not done then
+      self:sound("noway")
     end
+  elseif line then
+    self:sound("noway")
   end
 end
 
@@ -558,7 +660,11 @@ function View:pickUp()
           map:RemoveThing(thing)
           thing.picture = nil
           self:say(L[message])
+          self:sound(SOUND.weapons[thing.type] and "wpnup" or SOUND.powers[thing.type] and "getpow" or "itemup")
           run.bonus = BONUS_TICS
+          if FINISH.items[thing.type] and not thing.dropped then
+            run.items = run.items + 1
+          end
           if thing.type == SUIT then
             run.suitUntil = run.tic + SUIT_TICS
           end
@@ -628,13 +734,12 @@ function View:tick(elapsed)
     run.firing = false
   end
   map:Settle(player, FALL * elapsed)
-  -- A race: where the player is, for their own ghost, and where the rival's is
-  if self.race then
-    if playing and self.race.sample then
-      self.race.sample(ghostSample(player.x, player.y, run.angle, run.firing))
-    end
-    self:moveGhost()
+  -- Where the player is, for the ghost of their run, and where the ghost they race is
+  local sample = view.sample or (self.race and self.race.sample)
+  if playing and sample then
+    sample(ghostSample(player.x, player.y, run.angle, run.firing))
   end
+  self:moveGhost()
   if not run.dead then
     self:pickUp()
   end
@@ -671,11 +776,10 @@ function View:tick(elapsed)
   end
   self.screen.strips:Reserve(RESERVE, RESERVE_A_FRAME)
 
-  if run.leaving then
-    run.leaving = run.leaving + elapsed
-    if run.leaving > EXIT_PAUSE and not view.state.out and view.canMove then
-      view.submit(EXIT)
-    end
+  if run.leaving and not run.finished and not view.state.out and view.canMove then
+    -- The clock stops at the exit: what the map took is what it took to get there
+    run.finished = { seconds = view.clock and view.clock() or 0, at = GetTime and GetTime() or 0 }
+    view.submit(EXIT)
   end
   if run.dead and run.tic - run.dead > DEAD_PAUSE and not view.state.dead and view.canMove then
     view.submit(DEAD)
@@ -698,6 +802,11 @@ function View:worldTic()
   local hurts = sector and HURTING_FLOORS[sector.special]
   if hurts and not run.dead and run.tic % HURT_EVERY == 0 and player.z <= sector.floor and not (run.suitUntil and run.tic < run.suitUntil) then
     damage(run, player, nil, nil, hurts)
+  end
+  if sector and sector.special == FINISH.secret and not run.dead then
+    -- A secret, found
+    sector.special = 0
+    run.secrets = run.secrets + 1
   end
   if run.dead then
     run.eye = math.max(DEAD_EYE, run.eye - 1)
@@ -803,6 +912,127 @@ function View:drawGun()
   end
 end
 
+--- A number in the finish screen's big digits, its last ending where it is put, at least so many
+--- of them. Where the first begins
+function View:bigNumber(x, y, value, digits)
+  local width = self.pictures.pictures.WINUM0.width
+  value = math.max(0, math.floor(value))
+  for _ = 1, math.max(digits or 1, #tostring(value)) do
+    x = x - width
+    self:patch("WINUM" .. value % 10, x, y)
+    value = math.floor(value / 10)
+  end
+  return x
+end
+
+--- A time in minutes and seconds the way Doom's finish screen shows it, ending where it is put
+function View:bigTime(x, y, seconds)
+  local pictures = self.pictures.pictures
+  seconds = math.floor(seconds)
+  if seconds > 61 * 59 then
+    self:patch("WISUCKS", x - pictures.WISUCKS.width, y)
+    return
+  end
+  local unit = 1
+  repeat
+    x = self:bigNumber(x, y, math.floor(seconds / unit) % 60, 2) - pictures.WICOLON.width
+    unit = unit * 60
+    if unit == 60 or math.floor(seconds / unit) > 0 then
+      self:patch("WICOLON", x, y)
+    end
+  until math.floor(seconds / unit) == 0
+end
+
+--- Writes a line in Doom's font across the middle of the screen
+function View:writeMiddle(text, y)
+  local width = 0
+  for index = 1, #text do
+    local code = text:upper():byte(index)
+    local picture = code >= FONT_FIRST and code <= FONT_LAST and self.pictures.pictures[("STCFN%03d"):format(code)]
+    width = width + (picture and picture.width or SPACE_WIDTH)
+  end
+  self:write(text, math.floor((SCREEN_WIDTH - width) / 2), y)
+end
+
+--- The screen a map is finished with, Doom's: the episode's map behind, the map's name and that
+--- it is finished, how much of what there was to kill, pick up and find, counting up one after
+--- the other, then the time and the par. Under them, once they have counted up, the time to
+--- the hundredth and how it stands: a new best or the best to beat, and the rival's in a race
+function View:drawFinish()
+  self.pictures = self.pictures or private.SectorMap.Pictures(HUD_PICTURES)
+  if not self.pictures then
+    return
+  end
+  local run, hud, pictures = self.run, self.hud, self.pictures.pictures
+  local finished = run.finished
+  local map = tonumber(run.level:match("(%d+)$")) or 1
+  hud:Begin()
+  self:patch("WIMAP0", 0, 0)
+  hud:SetLevel(private.Strips.LOWEST + 1)
+  local title, done = pictures["WILV0" .. (map - 1)], pictures.WIF
+  if title and done then
+    self:patch("WILV0" .. (map - 1), math.floor((SCREEN_WIDTH - title.width) / 2), FINISH.titleY)
+    self:patch("WIF", math.floor((SCREEN_WIDTH - done.width) / 2), FINISH.titleY + math.floor(title.height * 5 / 4))
+  end
+
+  -- What has counted up by now, each count after the last, a tic at a time
+  local now = GetTime and GetTime() or 0
+  local left = (now - finished.at) * 35
+  local function counted(target, step)
+    local value = math.min(target, math.floor(math.max(0, left) * step))
+    left = left - target / step
+    return value
+  end
+  local function percent(found, total)
+    return total > 0 and math.floor(found * 100 / total) or 100
+  end
+  local lines = math.floor(pictures.WINUM0.height * 3 / 2)
+  for index, row in ipairs({ { "WIOSTK", run.kills, run.totalKills }, { "WIOSTI", run.items, run.totalItems }, { "WISCRT2", run.secrets, run.totalSecrets } }) do
+    local y = FINISH.statsY + (index - 1) * lines
+    self:patch(row[1], FINISH.statsX, y)
+    local x = SCREEN_WIDTH - FINISH.statsX
+    self:patch("WIPCNT", x, y)
+    self:bigNumber(x, y, counted(percent(row[2], row[3]), FINISH.percentStep))
+  end
+  self:patch("WITIME", FINISH.timeX, FINISH.timeY)
+  self:bigTime(SCREEN_WIDTH / 2 - FINISH.timeX, FINISH.timeY, counted(finished.seconds, FINISH.timeStep))
+  self:patch("WIPAR", SCREEN_WIDTH / 2 + FINISH.timeX, FINISH.timeY)
+  self:bigTime(SCREEN_WIDTH - FINISH.timeX, FINISH.timeY, counted(FINISH.pars[map] or 0, FINISH.timeStep))
+
+  -- Doom's counting goes off as the numbers go up, and once they have a bang
+  if left <= 0 then
+    if not finished.ticked or now - finished.ticked >= SOUND.count / 35 then
+      finished.ticked = now
+      self:sound("pistol")
+    end
+  elseif not finished.banged then
+    finished.banged = true
+    self:sound("barexp")
+  end
+  if left > 0 then
+    local view, notes = self.view, {}
+    notes[#notes + 1] = L["freedoom_finish_time"]:format(preciseTime(finished.seconds))
+    local best, set
+    if view.best then
+      best, set = view.best(run.level)
+    end
+    if set then
+      notes[#notes + 1] = L["freedoom_finish_best_new"]
+    elseif best then
+      notes[#notes + 1] = L["freedoom_finish_best"]:format(preciseTime(best))
+    end
+    local race = self.race
+    if race and race.theirs ~= nil then
+      local rival = (race.rival or ""):match("^[^%-]+") or ""
+      notes[#notes + 1] = race.theirs and L["freedoom_finish_rival"]:format(rival, preciseTime(race.theirs)) or L["freedoom_finish_rival_out"]:format(rival)
+    end
+    for index, note in ipairs(notes) do
+      self:writeMiddle(note, FINISH.notesY + (index - 1) * FINISH.notesGap)
+    end
+  end
+  hud:Finish()
+end
+
 --- The status bar, and whatever is drawn over the view
 function View:drawHud()
   self.pictures = self.pictures or private.SectorMap.Pictures(HUD_PICTURES)
@@ -861,6 +1091,11 @@ end
 function View:draw()
   local run = self.run
   if not run or not self.screen.map then
+    return
+  end
+  if run.finished then
+    self.plate:Hide()
+    self:drawFinish()
     return
   end
   local player, map, screen = run.player, run.map, self.screen

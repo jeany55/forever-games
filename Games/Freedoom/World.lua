@@ -55,6 +55,30 @@ local DOOR_GAP = 4
 -- Made later, with what lives: the flash of a teleport
 local teleportFlash
 
+--- Lets a sound be heard: one of Doom's, by its name (or one of several, as it happens), from
+--- where something is, or the player's own if from nowhere. What hears it is the view's (run.sound)
+local function sound(run, name, origin)
+  if name and run.sound then
+    if type(name) == "table" then
+      name = name[math.random(#name)]
+    end
+    run.sound(name, origin)
+  end
+end
+
+--- Where a sector's sounds come from: the middle of it
+local function middle(sector)
+  if not sector.middle then
+    local left, right, bottom, top = math.huge, -math.huge, math.huge, -math.huge
+    for _, line in ipairs(sector.lines) do
+      left, right = math.min(left, line.left), math.max(right, line.right)
+      bottom, top = math.min(bottom, line.bottom), math.max(top, line.top)
+    end
+    sector.middle = { x = (left + right) / 2, y = (bottom + top) / 2 }
+  end
+  return sector.middle
+end
+
 --- Whether anybody is in or at the edge of a sector, for a door that would shut on them: the
 --- player, or a monster
 --- @param run FreedoomRun
@@ -89,10 +113,13 @@ end
 local function door(run, sector, how, speed)
   local map = run.map
   local top = (map:Neighbouring(sector, "ceiling") or sector.ceiling) - DOOR_GAP
+  local fast = speed > DOOR
   local function open(after)
+    sound(run, fast and "bdopn" or "doropn", middle(sector))
     map:Move(sector, "ceiling", top, { speed = speed, onArrive = after })
   end
   local function close(after)
+    sound(run, fast and "bdcls" or "dorcls", middle(sector))
     map:Move(sector, "ceiling", sector.floor, {
       speed = speed,
       canMove = function(_, height)
@@ -157,7 +184,10 @@ local function floor(run, sector, to, speed, line, change)
     sector.floorPicture, sector.special = line.front.sector.floorPicture, 0
     map:Changed()
   end
-  map:Move(sector, "floor", floorTarget(map, sector, to), { speed = speed })
+  sound(run, "stnmov", middle(sector))
+  map:Move(sector, "floor", floorTarget(map, sector, to), { speed = speed, onArrive = function()
+    sound(run, "pstop", middle(sector))
+  end })
 end
 
 --- A lift: down to the lowest floor beside it, a while there, and back up
@@ -167,10 +197,14 @@ local function lift(run, sector, speed)
     return
   end
   local was = sector.floor
+  sound(run, "pstart", middle(sector))
   map:Move(sector, "floor", floorTarget(map, sector, "lowest"), {
     speed = speed,
     onArrive = function()
-      map:Move(sector, "floor", was, { speed = speed, delay = LIFT_WAIT })
+      sound(run, "pstop", middle(sector))
+      map:Move(sector, "floor", was, { speed = speed, delay = LIFT_WAIT, onArrive = function()
+        sound(run, "pstop", middle(sector))
+      end })
     end,
   })
 end
@@ -449,6 +483,7 @@ local function trigger(run, line, how, actor, fromFront)
     end
   end
   if special.how == "switch" then
+    sound(run, effect == "exit" and "swtchx" or "swtchn", { x = (line.x1 + line.x2) / 2, y = (line.y1 + line.y2) / 2 })
     flip(line.front)
     run.map:Changed()
     if special.again then
@@ -522,6 +557,9 @@ local function walking(letters, tics, action)
 end
 
 local STAND = { { "A", 10, "look" }, { "B", 10, "look" }, next = "stand" }
+-- What a monster says: when it sees the player, now and then as it walks, when it is hurt and
+-- when it dies, and as it goes for them up close
+local DEMON_SOUNDS = { see = "sgtsit", active = "dmact", pain = "dmpain", death = "sgtdth", attack = "sgtatk" }
 local DEMON = {
   stand = STAND,
   chase = walking("AABBCCDD", 2, "chase"),
@@ -529,7 +567,7 @@ local DEMON = {
   pain = { { "H", 2 }, { "H", 2, "pain" }, next = "chase" },
   die = { { "I", 8 }, { "J", 8, "scream" }, { "K", 4 }, { "L", 4, "fall" }, { "M", 4 }, { "N", -1 } },
 }
-local GIBBED = { { "M", 5 }, { "N", 5, "scream" }, { "O", 5, "fall" }, { "P", 5 }, { "Q", 5 }, { "R", 5 }, { "S", 5 }, { "T", 5 }, { "U", -1 } }
+local GIBBED = { { "M", 5 }, { "N", 5, "gib" }, { "O", 5, "fall" }, { "P", 5 }, { "Q", 5 }, { "R", 5 }, { "S", 5 }, { "T", 5 }, { "U", -1 } }
 
 -- Monsters by the kind the map gives them: health, units a step, the chance of flinching when hurt,
 -- what they drop when they die, and their states
@@ -537,6 +575,7 @@ local MONSTERS = {
   -- The former human with a pistol
   [3004] = {
     health = 20, speed = 8, pain = 200, drop = 2007,
+    sounds = { see = { "posit1", "posit2", "posit3" }, active = "posact", pain = "popain", death = { "podth1", "podth2", "podth3" } },
     sequences = {
       stand = STAND,
       chase = walking("AABBCCDD", 4, "chase"),
@@ -549,6 +588,7 @@ local MONSTERS = {
   -- With a shotgun
   [9] = {
     health = 30, speed = 8, pain = 170, drop = 2001,
+    sounds = { see = { "posit1", "posit2", "posit3" }, active = "posact", pain = "popain", death = { "podth1", "podth2", "podth3" } },
     sequences = {
       stand = STAND,
       chase = walking("AABBCCDD", 3, "chase"),
@@ -561,6 +601,7 @@ local MONSTERS = {
   -- The imp: claws up close, fireballs from afar
   [3001] = {
     health = 60, speed = 8, pain = 200,
+    sounds = { see = { "bgsit1", "bgsit2" }, active = "bgact", pain = "popain", death = { "bgdth1", "bgdth2" } },
     sequences = {
       stand = STAND,
       chase = walking("AABBCCDD", 3, "chase"),
@@ -568,16 +609,18 @@ local MONSTERS = {
       missile = { { "E", 8, "face" }, { "F", 8, "face" }, { "G", 6, "claw" }, next = "chase" },
       pain = { { "H", 2 }, { "H", 2, "pain" }, next = "chase" },
       die = { { "I", 8 }, { "J", 8, "scream" }, { "K", 6 }, { "L", 6, "fall" }, { "M", -1 } },
-      gib = { { "N", 5 }, { "O", 5, "scream" }, { "P", 5 }, { "Q", 5, "fall" }, { "R", 5 }, { "S", 5 }, { "T", 5 }, { "U", -1 } },
+      gib = { { "N", 5 }, { "O", 5, "gib" }, { "P", 5 }, { "Q", 5, "fall" }, { "R", 5 }, { "S", 5 }, { "T", 5 }, { "U", -1 } },
     },
   },
   -- The demon: it bites, fast
-  [3002] = { health = 150, speed = 10, pain = 180, sequences = DEMON },
+  [3002] = { health = 150, speed = 10, pain = 180, sequences = DEMON, sounds = DEMON_SOUNDS },
   -- The spectre: a demon nobody sees well
-  [58] = { health = 150, speed = 10, pain = 180, shadow = true, sequences = DEMON },
+  [58] = { health = 150, speed = 10, pain = 180, shadow = true, sequences = DEMON, sounds = DEMON_SOUNDS },
   -- The lost soul: a burning skull that flies, and charges
   [3006] = {
-    health = 100, speed = 8, pain = 256, floats = true,
+    -- Doom doesn't count a lost soul among the kills
+    health = 100, speed = 8, pain = 256, floats = true, uncounted = true,
+    sounds = { active = "dmact", pain = "dmpain", death = "firxpl", attack = "sklatk" },
     sequences = {
       stand = { { "A", 10, "look", true }, { "B", 10, "look", true }, next = "stand" },
       chase = { { "A", 6, "chase", true }, { "B", 6, "chase", true }, next = "chase" },
@@ -590,6 +633,7 @@ local MONSTERS = {
   -- The baron: claws close up, green fireballs from afar, and a great deal of health
   [3003] = {
     health = 1000, speed = 8, pain = 50, boss = true,
+    sounds = { see = "brssit", active = "dmact", pain = "dmpain", death = "brsdth" },
     sequences = {
       stand = STAND,
       chase = walking("AABBCCDD", 3, "chase"),
@@ -602,6 +646,7 @@ local MONSTERS = {
   -- A barrel, which goes up when it is shot enough
   [2035] = {
     health = 20, barrel = true,
+    sounds = { death = "barexp" },
     sequences = {
       stand = { { "A", 6 }, { "B", 6 }, next = "stand" },
       die = { sprite = "BEXP", { "A", 5, nil, true }, { "B", 5, "scream", true }, { "C", 5, nil, true }, { "D", 10, "explode", true }, { "E", 10, nil, true } },
@@ -627,17 +672,17 @@ end
 -- where it hits; the tracers of the BFG's ball go out from whoever fired it as it bursts, and
 -- leave a green flash on whatever they found (tracer)
 local MISSILES = {
-  imp = { sprite = "BAL1", sequences = FIREBALL, speed = 10, radius = 6, damage = 3 },
-  baron = { sprite = "BAL7", sequences = FIREBALL, speed = 15, radius = 6, damage = 8 },
+  imp = { sprite = "BAL1", sequences = FIREBALL, speed = 10, radius = 6, damage = 3, launch = "firsht", bang = "firxpl" },
+  baron = { sprite = "BAL7", sequences = FIREBALL, speed = 15, radius = 6, damage = 8, launch = "firsht", bang = "firxpl" },
   rocket = {
-    sprite = "MISL", speed = 20, radius = 11, damage = 20,
+    sprite = "MISL", speed = 20, radius = 11, damage = 20, launch = "rlaunc", bang = "barexp",
     sequences = {
       fly = { { "A", 1, nil, true }, next = "fly" },
       burst = { { "B", 8, "explode", true }, { "C", 6, nil, true }, { "D", 4, nil, true } },
     },
   },
   plasma = {
-    sprite = "PLSS", speed = 25, radius = 13, damage = 5,
+    sprite = "PLSS", speed = 25, radius = 13, damage = 5, launch = "plasma", bang = "firxpl",
     sequences = {
       fly = { { "A", 6, nil, true }, { "B", 6, nil, true }, next = "fly" },
       burst = {
@@ -646,7 +691,7 @@ local MISSILES = {
     },
   },
   bfg = {
-    sprite = "BFS1", speed = 25, radius = 13, damage = 100,
+    sprite = "BFS1", speed = 25, radius = 13, damage = 100, bang = "rxplod",
     sequences = {
       fly = { { "A", 4, nil, true }, { "B", 4, nil, true }, next = "fly" },
       burst = {
@@ -717,13 +762,17 @@ local function blood(run, x, y, z, amount)
 end
 
 function teleportFlash(run, x, y)
-  spawn(run, { x = x, y = y }, "TFOG", TELEPORT, "flash")
+  local flash = spawn(run, { x = x, y = y }, "TFOG", TELEPORT, "flash")
+  sound(run, "telept", flash)
 end
 
 local damage
 
 --- Something dies: a monster falls and drops what it carried, a barrel goes up
 local function kill(run, target, source)
+  if not target.info.barrel and not target.info.uncounted then
+    run.kills = run.kills + 1
+  end
   target.shootable, target.health = false, math.min(target.health or 0, 0)
   target.target = source
   local sequences = target.info.sequences
@@ -937,6 +986,7 @@ end
 
 --- A missile goes up where it is: it stops, and bursts for a little more or less time
 local function burst(missile)
+  sound(missile.run, missile.missile and missile.missile.bang, missile)
   missile.momx, missile.momy, missile.momz = 0, 0, 0
   Actors.Start(missile, "burst")
   missile.tics = math.max(1, missile.tics - chance() % 4)
@@ -988,6 +1038,7 @@ local function spawnMissile(run, source, missile, target)
     radius = missile.radius, height = FLIGHT.height, missile = missile, source = source,
     momx = math.cos(angle) * missile.speed, momy = math.sin(angle) * missile.speed, momz = slope * missile.speed,
   }, missile.sprite, missile.sequences, "fly")
+  sound(run, missile.launch, shot)
   shot.tics = math.max(1, shot.tics - chance() % 4)
   if not advance(run, shot, shot.x + shot.momx / 2, shot.y + shot.momy / 2) then
     burst(shot)
@@ -1004,6 +1055,7 @@ function ACTIONS.look(run, monster)
   target = target or lookForPlayer(run, monster, false)
   if target then
     monster.target = target
+    sound(run, monster.info.sounds.see, monster)
     Actors.Start(monster, "chase")
   end
 end
@@ -1061,6 +1113,7 @@ function ACTIONS.chase(run, monster)
   end
   local sequences = monster.info.sequences
   if sequences.melee and inMelee(run, monster) then
+    sound(run, monster.info.sounds.attack, monster)
     Actors.Start(monster, "melee")
     return
   end
@@ -1072,6 +1125,9 @@ function ACTIONS.chase(run, monster)
   monster.movecount = monster.movecount - 1
   if monster.movecount < 0 or not step(run, monster) then
     newChaseDir(run, monster)
+  end
+  if chance() < 3 then
+    sound(run, monster.info.sounds.active, monster)
   end
 end
 
@@ -1085,6 +1141,7 @@ function ACTIONS.pistol(run, monster)
   if not monster.target then
     return
   end
+  sound(run, "pistol", monster)
   face(monster, monster.target)
   shoot(run, monster, monster.angle + (chance() - chance()) * MONSTER_SPREAD, MISSILE_RANGE, (chance() % 5 + 1) * 3)
 end
@@ -1093,6 +1150,7 @@ function ACTIONS.shotgun(run, monster)
   if not monster.target then
     return
   end
+  sound(run, "shotgn", monster)
   face(monster, monster.target)
   for _ = 1, 3 do
     shoot(run, monster, monster.angle + (chance() - chance()) * MONSTER_SPREAD, MISSILE_RANGE, (chance() % 5 + 1) * 3)
@@ -1105,6 +1163,7 @@ function ACTIONS.claw(run, monster)
   end
   face(monster, monster.target)
   if inMelee(run, monster) then
+    sound(run, "claw", monster)
     damage(run, monster.target, monster, monster, (chance() % 8 + 1) * 3)
   else
     spawnMissile(run, monster, MISSILES.imp, monster.target)
@@ -1117,6 +1176,7 @@ function ACTIONS.bruise(run, monster)
   end
   face(monster, monster.target)
   if inMelee(run, monster) then
+    sound(run, "claw", monster)
     damage(run, monster.target, monster, monster, (chance() % 8 + 1) * 10)
   else
     spawnMissile(run, monster, MISSILES.baron, monster.target)
@@ -1130,6 +1190,7 @@ function ACTIONS.charge(run, soul)
     return
   end
   face(soul, target)
+  sound(run, soul.info.sounds.attack, soul)
   local map = run.map
   local away = math.max(1, distance(soul, target))
   soul.charging = true
@@ -1162,9 +1223,18 @@ function ACTIONS.bite(run, monster)
   end
 end
 
-function ACTIONS.pain() end
+function ACTIONS.pain(run, monster)
+  sound(run, monster.info.sounds.pain, monster)
+end
 
-function ACTIONS.scream() end
+function ACTIONS.scream(run, monster)
+  sound(run, monster.info.sounds.death, monster)
+end
+
+--- Torn apart
+function ACTIONS.gib(run, monster)
+  sound(run, "slop", monster)
+end
 
 function ACTIONS.fall(_, monster)
   monster.solid = false
@@ -1234,7 +1304,10 @@ function damage(run, target, inflictor, source, amount)
     run.hurt = math.min(100, (run.hurt or 0) + amount)
     run.hurtBy, run.hurtAmount, run.hurtTic = source, amount, run.tic
     if inventory.health <= 0 then
+      sound(run, "pldeth", run.player)
       playerDies(run)
+    elseif amount > 0 then
+      sound(run, "plpain", run.player)
     end
     return
   end
@@ -1270,10 +1343,14 @@ end
 
 --- Puts in the monsters and barrels of the map that are there at the player's skill
 local function populate(run, things)
+  run.kills, run.totalKills = 0, 0
   for _, thing in ipairs(things) do
     local info = MONSTERS[thing.type]
     local kind = run.map.data.kinds[thing.type]
     if info and kind then
+      if not info.barrel and not info.uncounted then
+        run.totalKills = run.totalKills + 1
+      end
       spawn(run, {
         x = thing.x, y = thing.y, angle = math.rad(thing.angle), radius = kind.radius, height = kind.height, solid = true, shootable = true,
         kind = kind, type = thing.type, info = info, health = info.health, movedir = NO_DIRECTION, movecount = 0, reaction = 8, threshold = 0,
@@ -1457,6 +1534,10 @@ end
 
 function GUN_ACTIONS.ready(run, gun)
   local inventory = run.inventory
+  if inventory.weapon == "chainsaw" and gun.step == 1 then
+    -- Its engine, idling
+    sound(run, "sawidl", run.player)
+  end
   if run.dead or (inventory.pending and inventory.pending ~= inventory.weapon) then
     run.gunMoving = -1
     return
@@ -1481,12 +1562,14 @@ end
 
 function GUN_ACTIONS.pistol(run)
   use(run)
+  sound(run, "pistol")
   flash(run)
   gunShot(run, run.refire == 0)
 end
 
 function GUN_ACTIONS.shotgun(run)
   use(run)
+  sound(run, "shotgn")
   flash(run)
   for _ = 1, 7 do
     gunShot(run, false)
@@ -1498,6 +1581,7 @@ function GUN_ACTIONS.chaingun(run, gun)
     return
   end
   use(run)
+  sound(run, "pistol")
   flash(run, gun.step == 1 and "flash" or "flash2")
   gunShot(run, run.refire == 0)
 end
@@ -1519,8 +1603,10 @@ function GUN_ACTIONS.plasma(run)
   spawnMissile(run, run.player, MISSILES.plasma)
 end
 
---- The BFG's hum as it gathers itself, which is heard as little as a monster's cries
-function GUN_ACTIONS.hum() end
+--- The BFG's hum as it gathers itself
+function GUN_ACTIONS.hum(run)
+  sound(run, "bfg")
+end
 
 function GUN_ACTIONS.bfg(run)
   use(run)
@@ -1532,14 +1618,17 @@ local function closeIn(run, range, amount)
   if hit then
     run.angle = math.atan2(hit.y - run.player.y, hit.x - run.player.x) % TWO_PI
   end
+  return hit
 end
 
 function GUN_ACTIONS.punch(run)
-  closeIn(run, MELEE_RANGE, (chance() % 10 + 1) * 2 * (run.inventory.powers.berserk and 10 or 1))
+  if closeIn(run, MELEE_RANGE, (chance() % 10 + 1) * 2 * (run.inventory.powers.berserk and 10 or 1)) then
+    sound(run, "punch")
+  end
 end
 
 function GUN_ACTIONS.saw(run)
-  closeIn(run, MELEE_RANGE + 1, 2 * (chance() % 10 + 1))
+  sound(run, closeIn(run, MELEE_RANGE + 1, 2 * (chance() % 10 + 1)) and "sawhit" or "sawful", run.player)
 end
 
 function GUN_ACTIONS.light(run)
@@ -1563,6 +1652,9 @@ local function gunTic(run)
       inventory.weapon = inventory.pending or inventory.weapon
       inventory.pending = nil
       gun.sprite, gun.sequences = GUNS[inventory.weapon].sprite, GUNS[inventory.weapon].sequences
+      if inventory.weapon == "chainsaw" then
+        sound(run, "sawup", run.player)
+      end
       Actors.Start(gun, "ready")
       run.gunMoving = 1
     end

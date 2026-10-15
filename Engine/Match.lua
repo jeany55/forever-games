@@ -82,6 +82,8 @@ local _, private = ...
 --- @field score number|false? A day's challenge that is over: what it came to, false for nothing
 --- @field shown number? How many log entries in the player has seen the game on screen: what came after is what they missed (Session:Missed)
 --- @field race MatchRace? A game for one that is a race against somebody playing the same deal (Engine/Race.lua): both matches go by the same id, which is what deals it
+--- @field trail string? For a game for one with a ghost that isn't a race: the run so far, its samples joined by "+" (Session:Sample)
+--- @field samples number? How many samples there are in it
 
 --- @class MatchResult
 --- @field winner number Seat of the winner, 0 for a draw

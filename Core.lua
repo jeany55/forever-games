@@ -65,6 +65,8 @@ local defaults = {
     rules = {},
     -- The best the player ever did at the games played alone, by game id
     records = {},
+    -- The runs that set them, for a game with a ghost to race next time, by game id and key
+    ghosts = {},
     -- How the player's games against the computer went, by game id and level
     versus = {},
     -- How the player last set up a game against the computer in the wizard, by game id
@@ -108,6 +110,7 @@ function ForeverGames:OnEnable()
     me = Transport.PlayerName(),
     matches = self.db.char.matches,
     records = self.db.profile.records,
+    ghosts = self.db.profile.ghosts,
     versus = self.db.profile.versus,
     offers = self.db.char.offers,
     onRefused = function(host, gameId, reason)

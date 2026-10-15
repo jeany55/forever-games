@@ -18946,6 +18946,209 @@ do
     equal(nil, run.ghost, "gone")
   end
 
+  --- What the pictures of a Strips are right now, the ones shown
+  local function picturesShown(strips)
+    local shown = {}
+    for index = 1, strips.used do
+      local file = strips.pieces[index].file
+      if file then
+        shown[file:match("([^\\]+)$")] = true
+      end
+    end
+    return shown
+  end
+
+  function tests.FreedoomFinishesAMapWithDoomsScreen()
+    local view, private = freedoomView()
+    local run = view.run
+    local clock, seconds, submitted, setBest = 100, 83.456, nil, false
+    GetTime = function()
+      return clock
+    end
+    local game = private.Games.Get("freedoom")
+    local state = game.newState(1, nil, {})
+    local function show()
+      view:Update({ match = { id = "m1" }, state = state, seat = 1, canMove = true, changed = true,
+        submit = function(move)
+          submitted = move
+        end,
+        clock = function()
+          return seconds
+        end,
+        best = function()
+          return 90, setBest
+        end,
+      })
+    end
+    show()
+    assert(run.totalKills > 0 and run.totalItems > 0 and run.totalSecrets > 0, "there is something to kill, pick up and find")
+
+    -- What is killed, picked up and found is counted
+    local monster
+    for _, actor in ipairs(run.actors) do
+      if actor.info and not actor.info.barrel and not monster then
+        monster = actor
+      end
+    end
+    private.Freedoom.Damage(run, monster, 10000)
+    equal(1, run.kills, "a kill")
+    local secret
+    for _, subsector in ipairs(run.map.subsectors) do
+      if subsector.sector.special == 9 and not secret then
+        secret = subsector
+      end
+    end
+    local seg = run.map.segs[secret.first]
+    local x, y = (seg.x1 + seg.x2) / 2, (seg.y1 + seg.y2) / 2
+    -- Just inside the subsector, off the middle of its first seg
+    local length = math.sqrt((seg.x2 - seg.x1) ^ 2 + (seg.y2 - seg.y1) ^ 2)
+    x, y = x + (seg.y2 - seg.y1) / length * 2, y - (seg.x2 - seg.x1) / length * 2
+    run.map:MoveThing(run.player, x, y)
+    run.player.z = run.player.sector.floor
+    view:worldTic()
+    equal(1, run.secrets, "a secret found")
+    view:worldTic()
+    equal(1, run.secrets, "and only the once")
+
+    -- At the exit the clock stops there and then
+    run.leaving = 0
+    view:tick(1 / 35)
+    equal("x", submitted, "out at once")
+    equal(83.456, run.finished.seconds, "the time it took to get there")
+    seconds = seconds + 5
+    state.out = true
+    show()
+    local shown = picturesShown(view.hud)
+    assert(shown.WIMAP0 and shown.WILV00 and shown.WIF, "the episode's map, the map's name and that it is finished")
+    assert(shown.WIOSTK and shown.WIOSTI and shown.WISCRT2 and shown.WITIME and shown.WIPAR, "what is counted")
+    -- The tests' locale hands back its keys, so what is written is "FREEDOOM_FINISH_TIME" and the like
+    assert(not shown.STCFN070, "nothing written under it while it counts up")
+    clock = clock + 30
+    view:draw()
+    shown = picturesShown(view.hud)
+    assert(shown.WINUM1 and shown.WINUM2 and shown.WINUM3 and shown.WICOLON, "the time counted up to 01:23")
+    assert(shown.STCFN070, "and the lines under it written")
+    assert(not shown.STCFN087, "the best to beat, not a new one (only FREEDOOM_FINISH_BEST_NEW has a W)")
+    setBest = true
+    show()
+    assert(picturesShown(view.hud).STCFN087, "and a new best when it was one")
+    GetTime = nil
+  end
+
+  function tests.FreedoomRacesTheBestRunThenTheRivals()
+    local view, private = freedoomView()
+    local run = view.run
+    local player = run.player
+    local Freedoom = private.Freedoom
+    local function trail(ahead)
+      local samples = {}
+      for _ = 1, 6 do
+        samples[#samples + 1] = Freedoom.GhostSample(player.x + ahead, player.y, math.pi, false)
+      end
+      return samples
+    end
+    local game = private.Games.Get("freedoom")
+    local state, kept = game.newState(1, nil, {}), {}
+    local update = {
+      match = { id = "m1" }, state = state, seat = 1, canMove = true, changed = true, submit = function() end,
+      clock = function()
+        return 1
+      end,
+      best = function(key)
+        equal("e1m1", key, "the best on the map")
+        return 61.5, false
+      end,
+      ghost = function(key)
+        equal("e1m1", key)
+        return trail(100)
+      end,
+      sample = function(text)
+        kept[#kept + 1] = text
+        return true
+      end,
+    }
+    view:Update(update)
+    assert(run.ghost, "the player's own best run to race")
+    equal("freedoom_ghost_best", view.plate.name.text, "called their best")
+    view:tick(1 / 35)
+    assert(#kept > 0, "the run is kept as it goes, raced or not")
+
+    -- The rival's run arrives: that is the one raced now
+    update.race = { rival = "Bob-Realm", theirs = 50, ghost = trail(200) }
+    view:Update(update)
+    equal("Bob", view.plate.name.text, "Bob's")
+    view:tick(1 / 35)
+    assert(run.ghost.x > player.x + 150, "where Bob was")
+  end
+
+  function tests.FreedoomIsHeardAsDoomIsFromWhereThingsAre()
+    local view, private = freedoomView()
+    local run = view.run
+    local heard = {}
+    PlaySoundFile = function(path)
+      heard[#heard + 1] = path:match("([^\\]+)%.ogg$")
+      return true, #heard
+    end
+    local function last()
+      return heard[#heard]
+    end
+
+    -- The player's own, as loud as can be
+    view:sound("pistol")
+    equal("pistol1", last(), "the player's own close by")
+    run.inventory.health = 50
+    local stim
+    for _, sector in ipairs(run.map.sectors) do
+      for thing in pairs(sector.things) do
+        if thing.type == 2011 then
+          stim = thing
+        end
+      end
+    end
+    run.map:MoveThing(run.player, stim.x, stim.y)
+    run.map:Settle(run.player)
+    view:pickUp()
+    equal("itemup1", last(), "a pickup")
+
+    -- A monster: loud close by, quieter further, not at all far off
+    local player = run.player
+    view:sound("posit1", { x = player.x + 100, y = player.y })
+    equal("posit11", last(), "close by")
+    view:sound("posit1", { x = player.x + 1000, y = player.y })
+    equal("posit13", last(), "far off")
+    local count = #heard
+    view:sound("posit1", { x = player.x + 5000, y = player.y })
+    equal(count, #heard, "too far to hear")
+
+    -- What the world says goes the same way: a door opening
+    local door, nearest
+    for _, line in ipairs(run.map.lines) do
+      local away = math.abs((line.x1 + line.x2) / 2 - player.x) + math.abs((line.y1 + line.y2) / 2 - player.y)
+      if line.special == 1 and line.back and (not nearest or away < nearest) then
+        door, nearest = line, away
+      end
+    end
+    -- Stood in front of it
+    run.map:MoveThing(player, (door.x1 + door.x2) / 2 + door.dy / door.length * 40, (door.y1 + door.y2) / 2 - door.dx / door.length * 40)
+    private.Freedoom.Trigger(run, door, "use")
+    assert(last():match("^doropn[12]$"), "a door, heard from where it is: " .. tostring(last()))
+
+    -- Using a wall with nothing to it is a grunt
+    run.angle = 0
+    for _ = 1, 20 do
+      run.map:Slide(player, 32, 0)
+    end
+    view:use()
+    equal("noway1", last(), "nothing to use there")
+
+    -- And nothing at all with the sound off
+    ForeverGames = { db = { profile = { sound = false } } }
+    count = #heard
+    view:sound("pistol")
+    equal(count, #heard, "the addon's sound is off")
+    ForeverGames, PlaySoundFile = nil, nil
+  end
+
   function tests.FreedoomTeleportsFromTheFrontOnly()
     local view, private = freedoomView("e1m4")
     local run = view.run
@@ -19579,6 +19782,37 @@ do
     alice.online = true
     world:Tick(600)
     equal(200, Race.Theirs(alice.matches[again].race))
+  end
+
+  function tests.GameForOneKeepsTheGhostOfTheBestRun()
+    local world = World.New()
+    local alice = world:AddPlayer("Alice-Realm")
+    registerDash(alice.private, {})
+    local session = alice.session
+    --- A run of the dash: where Alice is at every half second of it, then whether she gets there
+    local function dash(seconds, at, gets)
+      local match = assert(session:Invite({}, "dash"))
+      for half = 0, seconds * 2 - 1 do
+        session:Spend(match.id, half == 0 and 0 or 0.5)
+        assert(session:Sample(match.id, at .. half), "kept as it goes")
+      end
+      session:Spend(match.id, 0.5)
+      assert(session:Move(match.id, gets and "w" or "x"))
+      return match
+    end
+    equal(nil, session:Ghost("dash", "time"), "no ghost before there is a best")
+    dash(3, "a", true)
+    local ghost = session:Ghost("dash", "time")
+    equal(6, #ghost, "the run that set the best, a sample every half second")
+    equal("a0", ghost[1])
+    dash(2, "b", false)
+    equal("a0", session:Ghost("dash", "time")[1], "a run that didn't get there doesn't make a best")
+    dash(4, "c", true)
+    equal("a0", session:Ghost("dash", "time")[1], "nor does a slower one")
+    dash(2, "d", true)
+    equal("d0", session:Ghost("dash", "time")[1], "a quicker one does")
+    equal(4, #session:Ghost("dash", "time"))
+    assert(session.env.ghosts.dash.time, "kept where it is saved")
   end
 
   function tests.RaceTakesAGhostAlongWithTheTime()
