@@ -1955,7 +1955,8 @@ function tests.GamesAreFoundByWordAndGenre()
   local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
-  equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("chinesecheckers,yacht,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("backgammon,yacht", idsOf(Games.Search(nil, "dice", 2)), "a game played alone or around a table is found either way")
   equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
 
@@ -4356,6 +4357,7 @@ function tests.YachtRollsAgainKeepingWhatIsKept()
   equal("10010", event.kept)
   equal(kept[1] .. "," .. kept[2], state.dice[1] .. "," .. state.dice[4])
   equal(2, state.rolls)
+  equal("10010", state.held, "what was kept is on show")
   game.apply(state, 1, "r00000", random)
   equal(false, (game.validate(state, 1, "r00000")), "three rolls a turn")
   equal(true, (game.validate(state, 1, "sc")))
@@ -4364,11 +4366,12 @@ function tests.YachtRollsAgainKeepingWhatIsKept()
   event = game.apply(state, 1, "sc", random)
   equal("c", event.box)
   equal(total, event.scored)
-  equal(total, state.card.c)
-  equal(2, state.turn)
+  equal(total, state.cards[1].c)
+  equal(2, state.round)
+  equal(1, state.turn)
   equal(1, state.rolls, "the next turn's dice are rolled already")
   equal(false, (game.validate(state, 1, "sc")), "a box is filled once")
-  equal(total, game.rules.totalOf(state))
+  equal(total, game.rules.totalOf(state, 1))
   equal("yacht_progress", game.progress(state))
 end
 
@@ -4379,12 +4382,12 @@ function tests.YachtEarnsItsBonuses()
   local state = game.newState(1, random)
 
   -- Three of each upper face is the 63 that earns 35
-  state.card = { ["1"] = 3, ["2"] = 6, ["3"] = 9, ["4"] = 12, ["5"] = 15 }
+  state.cards[1] = { ["1"] = 3, ["2"] = 6, ["3"] = 9, ["4"] = 12, ["5"] = 15 }
   state.dice = { 6, 6, 6, 1, 2 }
   local event = game.apply(state, 1, "s6", random)
   equal(18, event.scored)
   equal(true, event.upper)
-  equal(63 + 35, game.rules.totalOf(state))
+  equal(63 + 35, game.rules.totalOf(state, 1))
 
   -- A yacht, then another: 100 more, and it fits the full house
   state.dice = { 2, 2, 2, 2, 2 }
@@ -4395,16 +4398,16 @@ function tests.YachtEarnsItsBonuses()
   event = game.apply(state, 1, "sfh", random)
   equal(25, event.scored)
   equal(100, event.extra)
-  equal(100, state.bonus)
-  equal(63 + 35 + 50 + 25 + 100, game.rules.totalOf(state))
+  equal(100, state.bonus[1])
+  equal(63 + 35 + 50 + 25 + 100, game.rules.totalOf(state, 1))
 
   -- Not after a yacht box filled with nothing
   state = game.newState(1, random)
-  state.card.y = 0
+  state.cards[1].y = 0
   state.dice = { 3, 3, 3, 3, 3 }
   event = game.apply(state, 1, "s3", random)
   equal(nil, event.extra)
-  equal(0, state.bonus)
+  equal(0, state.bonus[1])
 end
 
 function tests.YachtIsPlayedThroughThirteenTurns()
@@ -4414,7 +4417,7 @@ function tests.YachtIsPlayedThroughThirteenTurns()
   local match = assert(session:Invite({}, "yacht"))
   local boxes = { "y", "ls", "ss", "fh", "4k", "3k", "c", "6", "5", "4", "3", "2", "1" }
   for turn, box in ipairs(boxes) do
-    equal(turn, Match.State(match).turn)
+    equal(turn, Match.State(match).round)
     assert(session:Move(match.id, "r10100"))
     assert(session:Move(match.id, "r00000"))
     equal(nil, game.result(Match.State(match)))
@@ -4424,10 +4427,110 @@ function tests.YachtIsPlayedThroughThirteenTurns()
   equal(true, state.over)
   equal(false, (game.validate(state, 1, "r00000")))
   equal(false, (game.validate(state, 1, "s1")))
-  local total = game.rules.totalOf(state)
+  local total = game.rules.totalOf(state, 1)
   equal(total >= 200 and 1 or 0, game.result(state).winner)
   equal(total, session:Best("yacht", "score"))
   equal("yacht_final", game.progress(state))
+end
+
+function tests.YachtIsPlayedAroundATable()
+  local private = loadEngine()
+  local game = private.Games.Get("yacht")
+  local random = private.Random.New(11)
+  local state = game.newState(3, random)
+  equal(1, state.turn)
+  equal(1, state.round)
+  equal(false, (game.validate(state, 2, "r00000")), "one at a time")
+  equal(true, (game.validate(state, 1, "r00000")))
+
+  -- Each fills a box of their own card, and the turn goes round the table
+  for seat = 1, 3 do
+    equal(seat, game.turn(state))
+    local event = game.apply(state, seat, "sc", random)
+    equal(seat, event.seat)
+    equal(event.scored, state.cards[seat].c)
+  end
+  equal(1, state.turn)
+  equal(2, state.round, "past the last seat the next round begins")
+  equal(true, (game.validate(state, 1, "s1")))
+  equal(false, (game.validate(state, 1, "sc")), "a box of the player's own card is filled once")
+
+  -- Leaving on their turn hands it on, and the others play on without them
+  game.apply(state, 1, "r00110", random)
+  game.drop(state, 1)
+  equal(2, state.turn)
+  equal(2, state.round)
+  equal(1, state.rolls, "the next player has all their rolls")
+  equal(nil, state.held)
+  game.apply(state, 2, "s1", random)
+  game.apply(state, 3, "s1", random)
+  equal(2, state.turn, "the seat that left is passed over")
+  equal(3, state.round)
+
+  -- After thirteen rounds every card is full
+  for _ = state.round, 13 do
+    for seat = 2, 3 do
+      local open = game.moves(state, seat)
+      game.apply(state, seat, open[#open], random)
+    end
+  end
+  equal(true, state.over)
+  equal(false, (game.validate(state, 2, "r00000")))
+  local two, three = game.rules.totalOf(state, 2), game.rules.totalOf(state, 3)
+  equal(two > three and 2 or (three > two and 3 or 0), game.result(state).winner)
+
+  -- The most points win, and the same most is a draw. Who left isn't counted
+  state.cards, state.bonus = { { c = 300 }, { c = 20 }, { c = 20 } }, { 0, 0, 0 }
+  equal(0, game.result(state).winner)
+  state.cards[3].c = 21
+  equal(3, game.result(state).winner)
+end
+
+function tests.YachtComputerKnowsTheOdds()
+  local private = loadEngine()
+  local game, Computer = private.Games.Get("yacht"), private.Computer
+  local function decide(dice, rolls, card, level)
+    local state = game.newState(2, private.Random.New(2))
+    state.turn, state.dice, state.rolls, state.cards[2] = 2, dice, rolls, card or {}
+    return Computer.Think(game, Computer.Copy(state), 2, level or "hard", 1):Finish()
+  end
+  equal("sy", decide({ 4, 4, 4, 4, 4 }, 1), "a Yacht-Z is scored at once")
+  equal("sls", decide({ 2, 3, 4, 5, 6 }, 1))
+  equal("r11110", decide({ 6, 6, 6, 6, 2 }, 1), "four sixes are kept")
+  equal("r11110", decide({ 6, 6, 6, 6, 2 }, 1, nil, "medium"))
+  -- With nothing to score it gives up the box that is worth least
+  local card = { ["2"] = 6, ["3"] = 9, ["4"] = 12, ["5"] = 15, ["6"] = 18, ["3k"] = 20, ["4k"] = 0, fh = 25, ss = 30, ls = 40, c = 22 }
+  equal("s1", decide({ 2, 3, 4, 6, 6 }, 3, card))
+end
+
+function tests.YachtIsPlayedAgainstTheComputer()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local session, Match, game = alice.session, alice.private.Match, alice.private.Games.Get("yacht")
+  local match = assert(session:Invite({}, "yacht", { computer = { level = "easy", count = 2 } }))
+  equal(3, #match.players)
+  equal("active", match.status)
+  while match.status == "active" do
+    session:ThinkThrough(match.id)
+    if match.status == "active" then
+      local state = Match.State(match)
+      equal(match.me, state.turn, "the computer plays its turns through")
+      local moves = game.moves(state, match.me)
+      assert(session:Move(match.id, moves[#moves]))
+    end
+  end
+  local state = Match.State(match)
+  equal(true, state.over)
+  for seat = 1, 3 do
+    local filled = 0
+    for _ in pairs(state.cards[seat]) do
+      filled = filled + 1
+    end
+    equal(13, filled, "every card is full")
+  end
+  equal(game.result(state).winner, Match.Result(match).winner)
+  equal(nil, session:Best("yacht", "score"), "a best is for a game played alone")
+  equal(0, #world.sent, "messages sent")
 end
 
 -----------------------------
@@ -4450,7 +4553,7 @@ end
 --- @return table
 local function yachtFelt()
   local found = Client.Find(function(widget)
-    return (widget.text == "yacht_turn" or widget.text == "yacht_card_full") and widget:IsVisible()
+    return (widget.text == "yacht_turn" or widget.text == "yacht_round" or widget.text == "yacht_card_full") and widget:IsVisible()
   end)
   equal(1, #found, "the turn written on the felt")
   return found[1]:GetParent()
@@ -4487,15 +4590,15 @@ function tests.WindowPlaysYacht()
   local roll = Client.Button("yacht_roll")
   equal(false, roll.enabled, "the first roll is in hand")
   equal(true, diceInHand() ~= nil)
-  equal("", yachtRow("c").value.text, "nothing to score before the dice are thrown")
+  equal("", yachtRow("c").values[1].text, "nothing to score before the dice are thrown")
 
   throwDice()
-  equal("", yachtRow("c").value.text, "nor while they are in the air")
+  equal("", yachtRow("c").values[1].text, "nor while they are in the air")
   letDiceRoll(felt)
   local state = Match.State(player.matches[id])
   local dice = state.dice
   equal(table.concat(dice, ","), table.concat(diceOnTable(), ","))
-  equal(tostring(dice[1] + dice[2] + dice[3] + dice[4] + dice[5]), yachtRow("c").value.text, "what the dice would score")
+  equal(tostring(dice[1] + dice[2] + dice[3] + dice[4] + dice[5]), yachtRow("c").values[1].text, "what the dice would score")
   equal(true, roll.enabled)
   equal(true, says("yacht_hint_keep"))
 
@@ -4507,7 +4610,7 @@ function tests.WindowPlaysYacht()
   roll:Fire("OnMouseDown", "LeftButton")
   equal("dieShuffle", Client.sounds[#Client.sounds])
   equal("", logOf(player, id), "nothing is rolled before the button is let go")
-  equal("", yachtRow("c").value.text)
+  equal("", yachtRow("c").values[1].text)
   roll:Fire("OnMouseUp", "LeftButton")
   equal("r01001", logOf(player, id))
   letDiceRoll(felt)
@@ -4529,8 +4632,8 @@ function tests.WindowPlaysYacht()
   local chance = state.dice[1] + state.dice[2] + state.dice[3] + state.dice[4] + state.dice[5]
   yachtRow("c"):Fire("OnClick")
   equal("r01001,r00001,sc", logOf(player, id))
-  equal(tostring(chance), yachtRow("c").value.text)
-  equal(tostring(chance), yachtRow("total").value.text)
+  equal(tostring(chance), yachtRow("c").values[1].text)
+  equal(tostring(chance), yachtRow("total").values[1].text)
   equal(true, diceInHand() ~= nil, "the next turn's roll waits in hand")
   local stage = yachtFelt():GetParent()
   for _ = 1, 3 do
@@ -4545,6 +4648,44 @@ function tests.WindowPlaysYacht()
   equal("r01001,r00001,sc", logOf(player, id), "and nothing is scored before it is thrown")
 end
 
+function tests.WindowPlaysYachtAroundATable()
+  local world = World.New()
+  world.seed = 5
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  local match = assert(player.session:Invite({}, "yacht", { computer = { level = "easy" }, seat = 1 }))
+  local id = match.id
+  MainFrame.Open(id)
+  equal(true, says("yacht_round"))
+  equal(2, #yachtRow("total").values, "a column for each player")
+
+  throwDice()
+  letDiceRoll(yachtFelt())
+  local dice = player.private.Match.State(match).dice
+  equal(tostring(dice[1] + dice[2] + dice[3] + dice[4] + dice[5]), yachtRow("c").values[1].text, "what the player's dice would score")
+  equal("", yachtRow("c").values[2].text, "the computer's column is its own")
+  yachtRow("c"):Fire("OnClick")
+  equal("sc", logOf(player, id))
+
+  -- The computer's turn: its dice are thrown for it, and there is nothing for the player to do
+  equal(nil, diceInHand(), "the computer's dice aren't the player's to throw")
+  equal(true, says("yacht_hint_wait"))
+  equal(0, #Client.Find(function(widget)
+    return widget.kind == "Button" and (widget.text == "yacht_roll" or widget.text == "yacht_no_rolls") and widget:IsVisible()
+  end), "no button to roll with")
+  letDiceRoll(yachtFelt())
+  yachtRow("1"):Fire("OnClick")
+  equal("sc", logOf(player, id), "nothing to score out of turn")
+
+  player.session:ThinkThrough(id)
+  letDiceRoll(yachtFelt())
+  local state = player.private.Match.State(match)
+  equal(1, state.turn)
+  equal(2, state.round)
+  equal(tostring(player.private.Games.Get("yacht").rules.totalOf(state, 2)), yachtRow("total").values[2].text)
+  equal(true, diceInHand() ~= nil, "the player's next roll waits in hand")
+end
+
 function tests.WindowSaysWhenTheYachtCardIsFull()
   local player, id = yachtOnScreen()
   for _, box in ipairs({ "1", "2", "3", "4", "5", "6", "3k", "4k", "fh", "ss", "ls", "y" }) do
@@ -4557,7 +4698,7 @@ function tests.WindowSaysWhenTheYachtCardIsFull()
   yachtRow("c"):Fire("OnClick")
   equal(13, #player.matches[id].log)
   yachtTime()
-  local total = player.private.Games.Get("yacht").rules.totalOf(player.private.Match.State(player.matches[id]))
+  local total = player.private.Games.Get("yacht").rules.totalOf(player.private.Match.State(player.matches[id]), 1)
   equal(true, says(total >= 200 and "yacht_won" or "yacht_over"))
   equal(nil, diceInHand())
   equal(0, #Client.Find(function(widget)
