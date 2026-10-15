@@ -231,14 +231,16 @@ function MainFrame.RaceTime(hundredths)
   return L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)
 end
 
---- How a run in a race came out: its time, that it didn't finish, or that it isn't over yet
+--- How a run in a race came out: its time (or what it came to, for a game raced on something
+--- else, Race.Show), that it didn't finish, or that it isn't over yet
 --- @param time number|false|nil Hundredths of a second, see Race.Mine
+--- @param game GameDefinition?
 --- @return string
-local function raceTimeText(time)
+local function raceTimeText(time, game)
   if time == nil then
     return L["race_running"]
   end
-  return time and MainFrame.RaceTime(time) or L["race_no_time"]
+  return time and (Race.Show(game, time) or MainFrame.RaceTime(time)) or L["race_no_time"]
 end
 
 --- Where a race stands, in a line: the challenge, the run on the way, or how the two compare
@@ -251,13 +253,13 @@ local function describeRace(match, game)
   if match.status == "incoming" then
     return L["status_race_incoming"]:format(rival)
   end
-  local mine, theirs, outcome = Race.Mine(race), Race.Theirs(race), Race.Outcome(race)
+  local mine, theirs, outcome = Race.Mine(race), Race.Theirs(race), Race.Outcome(race, game)
   if outcome == "won" then
-    return theirs and L["status_race_won"]:format(rival, raceTimeText(mine), raceTimeText(theirs)) or L["status_race_won_unfinished"]:format(rival)
+    return theirs and L["status_race_won"]:format(rival, raceTimeText(mine, game), raceTimeText(theirs, game)) or L["status_race_won_unfinished"]:format(rival)
   elseif outcome == "lost" then
-    return mine and L["status_race_lost"]:format(rival, raceTimeText(theirs), raceTimeText(mine)) or L["status_race_lost_unfinished"]:format(rival)
+    return mine and L["status_race_lost"]:format(rival, raceTimeText(theirs, game), raceTimeText(mine, game)) or L["status_race_lost_unfinished"]:format(rival)
   elseif outcome == "drawn" then
-    return mine and L["status_race_tied"]:format(rival, raceTimeText(mine)) or L["status_race_neither"]:format(rival)
+    return mine and L["status_race_tied"]:format(rival, raceTimeText(mine, game)) or L["status_race_neither"]:format(rival)
   elseif race.declined then
     -- A run played for the race goes on as a game for one, a best that was sent is only the race
     if match.status ~= "active" and not race.best then
@@ -267,13 +269,13 @@ local function describeRace(match, game)
     end
     return L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival)
   elseif mine ~= nil then
-    return mine and L["status_race_waiting"]:format(raceTimeText(mine), rival) or L["status_race_waiting_none"]:format(rival)
+    return mine and L["status_race_waiting"]:format(raceTimeText(mine, game), rival) or L["status_race_waiting_none"]:format(rival)
   end
   local note
   if race.unanswered then
     note = L["status_race_asked"]:format(rival)
   elseif theirs then
-    note = L["status_race_to_beat"]:format(rival, raceTimeText(theirs))
+    note = L["status_race_to_beat"]:format(rival, raceTimeText(theirs, game))
   elseif theirs == false then
     note = L["status_race_unfinished"]:format(rival)
   else
@@ -1414,12 +1416,12 @@ local function refreshBoard(match)
 end
 
 --- @param row Frame One of the board's
---- @param entry { name: string, time: number|false|nil, place: number?, me: boolean? }
+--- @param entry { name: string, time: number|false|nil, place: number?, me: boolean?, game: GameDefinition? }
 local function fillRaceRow(row, entry)
   row.mine:SetShown(entry.me == true)
   row.place:SetText(entry.place and (entry.place .. ".") or "")
   row.name:SetText(Transport.DisplayName(entry.name))
-  row.score:SetText(raceTimeText(entry.time))
+  row.score:SetText(raceTimeText(entry.time, entry.game))
   if type(entry.time) == "number" then
     row.score:SetTextColor(1, 1, 1)
   else
@@ -1433,9 +1435,10 @@ end
 local function refreshRaceBoard(match)
   local board, race = frame.detail.board, match.race
   board.title:SetText(L["race_board"])
-  local mine = { name = match.players[match.me], time = Race.Mine(race), me = true }
-  local theirs = { name = race.rival, time = Race.Theirs(race) }
-  local outcome = Race.Outcome(race)
+  local game = Games.Get(match.game)
+  local mine = { name = match.players[match.me], time = Race.Mine(race), me = true, game = game }
+  local theirs = { name = race.rival, time = Race.Theirs(race), game = game }
+  local outcome = Race.Outcome(race, game)
   if outcome then
     mine.place, theirs.place = outcome == "lost" and 2 or 1, outcome == "won" and 2 or 1
   end

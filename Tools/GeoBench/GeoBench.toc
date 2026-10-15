@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: Geo Bench
+## Notes: Whether a game of guessing where a picture was taken could be made in the client. A tool for Forever Games, not part of it
+## Author: Jeany
+## Version: 0.1.0
+## SavedVariables: GeoBenchDB
+
+GeoBench.lua
+Data\Minimaps.lua
+Images\Panos.lua
+Capture.lua
+Pano.lua
+Map.lua
+Minimap.lua

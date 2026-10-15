@@ -28,8 +28,10 @@ Engine\Presence.lua
 Engine\Rooms.lua
 Engine\Phases.lua
 Engine\Bracket.lua
+Engine\Places.lua
 Engine\SectorMap.lua
 Engine\Actors.lua
+Engine\Course.lua
 GUI\Widgets.lua
 GUI\LetteringGlyphs.lua
 GUI\Lettering.lua
@@ -46,6 +48,9 @@ GUI\Tiles.lua
 GUI\Canvas.lua
 GUI\Strips.lua
 GUI\SectorView.lua
+GUI\PanoView.lua
+GUI\MapView.lua
+GUI\TerrainView.lua
 Lexicon\English.lua
 Lexicon\Warcraft.lua
 Lexicon\Fourtiles.lua
@@ -74,6 +79,9 @@ Games\Freedoom.lua
 Games\Wormcraft.lua
 Games\Sketch.lua
 Games\Trivia.lua
+Games\Where\Places.lua
+Games\Where\View.lua
+Games\Where.lua
 Transport.lua
 Links.lua
 GUI\Toast.lua

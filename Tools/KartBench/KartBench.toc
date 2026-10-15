@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: Kart Bench
+## Notes: Whether a kart racer could be drawn in the client. A tool for Forever Games, not part of it
+## Author: Jeany
+## Version: 0.3.0
+## SavedVariables: KartBenchDB
+
+KartBench.lua
+Engine\Course.lua
+GUI\TerrainView.lua
+Images\Meadow.lua
+Images\Tanaris.lua
+Finds.lua
+Hills.lua

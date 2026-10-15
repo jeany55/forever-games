@@ -17,6 +17,11 @@
 -- it, doesn't count it here either. A run that ended without such a record didn't finish, like a
 -- death in Freedoom, and loses to any that did. Two that didn't finish are even.
 --
+-- A game can be raced for something else it keeps a record of instead (`raceFor`): its points,
+-- say, the more the better, as a guessing game is won on how near the guesses came. Everything
+-- else about the race is the same, down to the value going in hundredths: the game says how one
+-- is shown.
+--
 -- The challenge (RAC, see Engine/Codec.lua) says which game and how its rules are set, and is
 -- answered like any other with ACC or DEC. Whoever sent it can play at once. Then each player's
 -- run is told to the other once it is over, as a short log of its own: first how long it took,
@@ -32,6 +37,10 @@
 -- short, so that it goes in a handful of messages under what the client lets an addon send:
 -- what doesn't fit is left off its end.
 --
+-- A ghost can be of moments rather than of the clock (`marks`): every sample the view gives is
+-- kept, whenever it comes, for a game where what the rival is shown is what they did at each
+-- step (where they guessed each place was) rather than where they were all along.
+--
 -- Like the session, nothing in here touches the WoW API.
 
 --- @type nil, ForeverGamesPrivate
@@ -39,11 +48,17 @@ local _, private = ...
 
 --- What a game keeps of a run for the other racer to race against
 --- @class GameGhost
---- @field every number Seconds of the clock between two samples of where the player is. Two or four a second is plenty
+--- @field every number? Seconds of the clock between two samples of where the player is. Two or four a second is plenty. Left out for a ghost of `marks`
+--- @field marks boolean? Every sample the view gives is kept, whenever it is given, rather than one for every `every` seconds: a ghost of what the player did at each step
 --- @field course (fun(options: table<string, any>): string[])? For a game whose every run by the same rules is the same course, whatever its deal (a map, not a field of mines): the log of a run by these rules that got to the end. The run that set the player's best can then be sent to somebody to race as it is (InviteSetup.best)
 
 --- What a game for one that is raced against somebody keeps of the race. The match is the
 --- player's own like any game for one: only its id, which the deal comes from, is the rival's too
+--- What a game that isn't raced on its time is raced on instead, see GameDefinition.raceFor
+--- @class GameRaceFor
+--- @field key string The GameRecord it is raced for, by its key
+--- @field show fun(value: number): string How a run's value is shown, "23 410 points"
+
 --- @class MatchRace
 --- @field rival string Full name of whoever the race is against
 --- @field best boolean? The local player's run is the one that set their best, sent as it is rather than played for the race (InviteSetup.best): there is nothing of the game but the race
@@ -59,7 +74,7 @@ local _, private = ...
 --- What a view of a race is shown of it, see GameView.race
 --- @class RaceView
 --- @field rival string Who the race is against, as their name is shown
---- @field theirs number|false|nil How many seconds the rival's run took, false if it didn't finish, nil while that isn't known
+--- @field theirs number|false|nil How many seconds the rival's run took (what it came to, for a game raced on something else, see GameDefinition.raceFor), false if it didn't finish, nil while that isn't known
 --- @field ghost string[]? For a game with a ghost: the samples of the rival's run, one for every `every` seconds of it, once all of it has arrived
 --- @field sample (fun(text: string): boolean)? For a game with a ghost: where the player is now, for the ghost of their own run. Letters, digits and "-", ".", "=" or "_", no longer than Race.SAMPLE_MOST. Call it as often as you like, one is kept for every `every` seconds of the clock
 
@@ -88,22 +103,41 @@ function Race.Has(game)
   return game ~= nil and private.Games.IsSolo(game) and game.clock ~= nil and game.record ~= nil and game.raced ~= false
 end
 
---- What a run of a game came to once it is over: the time the game keeps as its record for it
+--- Whether a run of a game is the better for coming to more: its points, rather than its time
+--- @param game GameDefinition?
+--- @return boolean
+function Race.Higher(game)
+  return game ~= nil and game.raceFor ~= nil
+end
+
+--- What a run of a game came to once it is over: the time the game keeps as its record for it,
+--- or the record it is raced for (`raceFor`)
 --- @param game GameDefinition
 --- @param state table
 --- @param seconds number It was played for
 --- @param result MatchResult?
---- @return number|false|nil hundredths Of a second, false for a run that didn't finish, nil for one that isn't over
+--- @return number|false|nil hundredths Of a second (of what it is raced for), false for a run that didn't finish, nil for one that isn't over
 function Race.Time(game, state, seconds, result)
   if not result then
     return nil
   end
+  local key = game.raceFor and game.raceFor.key
   for _, record in ipairs(game.record(state, seconds, result) or {}) do
-    if record.lower and type(record.value) == "number" and record.value == record.value then
+    local counts = key and record.key == key or (not key and record.lower)
+    if counts and type(record.value) == "number" and record.value == record.value then
       return math.max(0, math.min(SLOWEST, math.floor(record.value * 100 + 0.5)))
     end
   end
   return false
+end
+
+--- How what a run came to is shown, for a game raced on something other than its time: nil for
+--- one raced on its time, which the window shows itself
+--- @param game GameDefinition?
+--- @param hundredths number
+--- @return string?
+function Race.Show(game, hundredths)
+  return game and game.raceFor and game.raceFor.show(hundredths / 100) or nil
 end
 
 --- Keeps where the player is now for the ghost of their run, if a sample is due: one for every
@@ -117,7 +151,7 @@ function Race.Sample(race, ghost, seconds, text)
   if type(text) ~= "string" or #text > Race.SAMPLE_MOST or not text:match(SAMPLE) then
     return false
   end
-  local due = math.floor(seconds / ghost.every) + 1
+  local due = ghost.marks and (race.samples or 0) + 1 or math.floor(seconds / ghost.every) + 1
   while (race.samples or 0) < due do
     local trail = race.trail and (race.trail .. "+" .. text) or text
     if #trail > GHOST_MOST then
@@ -209,18 +243,20 @@ function Race.Ghost(race)
   return ghost
 end
 
---- Who won a race, once both runs are known: the quicker of two that finished, either one that
---- finished over one that didn't
+--- Who won a race, once both runs are known: the quicker of two that finished (the one that came
+--- to more, for a game raced on its points), either one that finished over one that didn't
 --- @param race MatchRace
+--- @param game GameDefinition? The game it is a race at, nil for one raced on its time
 --- @return "won"|"lost"|"drawn"|nil nil while a run is still on, or not told yet
-function Race.Outcome(race)
+function Race.Outcome(race, game)
   local mine, theirs = Race.Mine(race), Race.Theirs(race)
   if mine == nil or theirs == nil then
     return nil
   end
+  local better = mine ~= false and theirs ~= false and (Race.Higher(game) and mine > theirs or (not Race.Higher(game) and mine < theirs))
   if mine == theirs then
     return "drawn"
-  elseif theirs == false or (mine ~= false and mine < theirs) then
+  elseif theirs == false or better then
     return "won"
   end
   return "lost"

@@ -48,10 +48,14 @@ local ENGINE_FILES = {
   "Games/Warcraftstein.lua",
   "Engine/SectorMap.lua",
   "Engine/Actors.lua",
+  "Engine/Course.lua",
   "Games/Freedoom/Carry.lua",
   "Games/Freedoom/World.lua",
   "Games/Freedoom.lua",
   "Games/Wormcraft.lua",
+  "Engine/Places.lua",
+  "Tests/WherePlaces.lua",
+  "Games/Where.lua",
 }
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
@@ -1948,7 +1952,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,freedoom"
+  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -20938,8 +20942,93 @@ do
   end
 end
 
+-----------------------------
+-- Courses
+-----------------------------
+do
+  --- A course round a circle of radius 200 about (300, 300), driven clockwise on the map (y is
+  --- down), over ground 5x5 heights 100 apart that rise by 10 a cell to the east and 1 to the south
+  local function circleCourse()
+    local private = {}
+    assert(loadfile("Engine/Course.lua"))(ADDON_NAME, private)
+    local track, count = {}, 300
+    for i = 0, count - 1 do
+      local a = i / count * 2 * math.pi
+      track[#track + 1] = 300 + 200 * math.cos(a)
+      track[#track + 1] = 300 + 200 * math.sin(a)
+    end
+    local heights = {}
+    for j = 0, 4 do
+      for i = 0, 4 do
+        heights[#heights + 1] = i * 10 + j
+      end
+    end
+    private.Course.Register("circle", { name = "Circle", world = 400, size = 5, cell = 100, heights = heights, rise = 0.5,
+      highest = 30, light = 0.8, spacing = 2 * math.pi * 200 / count, track = track, half = 20, curb = 4, shoulder = 10,
+      pictures = {}, haze = { 1, 1, 1 }, things = {} })
+    return private.Course.Load("circle")
+  end
+
+  local function near(expected, actual, within, label)
+    if math.abs(expected - actual) > within then
+      error(("%s: expected %s, got %s"):format(label, tostring(expected), tostring(actual)), 2)
+    end
+  end
+
+  function tests.CourseFindsWhereOnTheRoadAlongPuts()
+    local course = circleCourse()
+    for _, progress in ipairs({ 0, 1, 333.3, 700, course.length - 1 }) do
+      for _, offset in ipairs({ -15, 0, 9 }) do
+        local x, y = course:Along(progress, offset)
+        local found, side = course:Locate(x, y)
+        near(0, (found - progress + course.length / 2) % course.length - course.length / 2, 0.5, "progress " .. progress)
+        near(offset, side, 0.5, "offset at " .. progress)
+      end
+    end
+  end
+
+  function tests.CourseRightIsInsideAClockwiseCircle()
+    local course = circleCourse()
+    -- Going round clockwise as the map is seen, y down, the middle is on the right
+    local x, y, heading = course:Along(0, 10)
+    near(490, x, 0.01, "x")
+    near(300, y, 0.5, "y")
+    near(math.pi / 2, heading, 0.05, "heading south")
+  end
+
+  function tests.CourseLooksNearTheHintFirstAndEverywhereIfItIsWrong()
+    local course = circleCourse()
+    local x, y = course:Along(500, 3)
+    local progress, offset, hint = course:Locate(x, y, 2)
+    near(500, progress, 0.5, "found from a hint far off")
+    near(3, offset, 0.5, "offset")
+    local again = course:Locate(x + 1, y, hint)
+    near(500, again, 2, "found from its own hint")
+  end
+
+  function tests.CourseHeightBetweenHeightsAndBeyondTheMap()
+    local course = circleCourse()
+    near(0, course:Height(0, 0), 1e-9, "corner")
+    near(15 + 0.5, course:Height(150, 50), 1e-9, "between")
+    near(40 + 4, course:Height(400, 400), 1e-9, "far corner")
+    -- 20 units past the east edge, rising 0.5 a unit
+    near(40 + 2 + 10, course:Height(420, 200), 1e-9, "beyond, rising")
+    -- and never more than 30 above the edge
+    near(40 + 2 + 30, course:Height(1000, 200), 1e-9, "beyond, as high as it goes")
+  end
+
+  function tests.CourseRoadIncludesItsCurbs()
+    local course = circleCourse()
+    equal(true, course:OnRoad(23.9))
+    equal(true, course:OnRoad(-23.9))
+    equal(false, course:OnRoad(24.1))
+  end
+end
+
 -- The checks every game is put through, a test for each
 dofile("Tests/EveryGame.lua")(tests, loadEngine)
+-- Where in Azeroth, and the places, races and views it is built on
+dofile("Tests/Where.lua")(tests, loadEngine)
 
 -----------------------------
 -- Runner
