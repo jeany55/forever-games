@@ -13,12 +13,11 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 local WHITE, BLACK = 1, 2
 
-local KNIGHT_STEPS = { { 1, 2 }, { 2, 1 }, { 2, -1 }, { 1, -2 }, { -1, -2 }, { -2, -1 }, { -2, 1 }, { -1, 2 } }
--- Straight first, then diagonally
-local ALL_STEPS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+local BOARD = Grid.New(8)
 local PROMOTIONS = { "q", "r", "b", "n" }
 local BACK_RANK = { "r", "n", "b", "q", "k", "b", "n", "r" }
 
@@ -61,50 +60,23 @@ local function other(seat)
   return seat == WHITE and BLACK or WHITE
 end
 
---- @param square number
---- @return string
-local function squareName(square)
-  return string.char(97 + square % 8) .. (math.floor(square / 8) + 1)
-end
-
 --- @param move ChessMove
 --- @return string
 local function moveName(move)
-  return squareName(move.from) .. squareName(move.to) .. (move.promotion or "")
-end
-
---- Square reached by stepping from a square, nil when that leaves the board
---- @return number?
-local function offset(square, files, ranks)
-  local file, rank = square % 8 + files, math.floor(square / 8) + ranks
-  if file < 0 or file > 7 or rank < 0 or rank > 7 then
-    return nil
-  end
-  return rank * 8 + file
+  return BOARD:Name(move.from) .. BOARD:Name(move.to) .. (move.promotion or "")
 end
 
 -- From every square: where a knight jumps to, and the squares a line runs through in each of
--- ALL_STEPS, nearest first. Worked out once, they are asked about all the time
+-- Grid.AROUND, nearest first. They are asked about all the time, so they are kept to hand
 --- @type table<number, number[]>
 local KNIGHT_JUMPS = {}
 --- @type table<number, number[][]>
 local RAYS = {}
 for square = 0, 63 do
-  KNIGHT_JUMPS[square] = {}
-  for _, step in ipairs(KNIGHT_STEPS) do
-    KNIGHT_JUMPS[square][#KNIGHT_JUMPS[square] + 1] = offset(square, step[1], step[2])
-  end
-  RAYS[square] = {}
-  for index, step in ipairs(ALL_STEPS) do
-    local ray, to = {}, offset(square, step[1], step[2])
-    while to do
-      ray[#ray + 1] = to
-      to = offset(to, step[1], step[2])
-    end
-    RAYS[square][index] = ray
-  end
+  KNIGHT_JUMPS[square] = BOARD:Around(square, Grid.KNIGHT)
+  RAYS[square] = BOARD:Rays(square, Grid.AROUND)
 end
--- Which of the lines from a square each piece moves along: the first four of ALL_STEPS are
+-- Which of the lines from a square each piece moves along: the first four of Grid.AROUND are
 -- straight, the last four diagonal
 local SLIDES = { r = { 1, 4 }, b = { 5, 8 }, q = { 1, 8 }, k = { 1, 8 } }
 -- The pieces that attack along the straight lines and along the diagonals, by seat
@@ -124,7 +96,7 @@ local function isAttacked(board, square, by)
   -- A pawn attacks diagonally forward, so look one rank back from the target
   local back = by == WHITE and -1 or 1
   for _, files in ipairs({ -1, 1 }) do
-    local from = offset(square, files, back)
+    local from = BOARD:Step(square, files, back)
     if from and board[from] == pawn then
       return true
     end
@@ -178,7 +150,7 @@ local function movePieces(board, move, enPassant)
 
   if kind == "p" then
     if move.to == enPassant then
-      board[offset(move.to, 0, ownerOf(piece) == WHITE and -1 or 1)] = nil
+      board[BOARD:Step(move.to, 0, ownerOf(piece) == WHITE and -1 or 1)] = nil
     end
     if move.promotion then
       board[move.to] = ownerOf(piece) == WHITE and move.promotion:upper() or move.promotion
@@ -220,11 +192,11 @@ local function pawnMoves(state, moves, from, seat)
   local rank = math.floor(from / 8)
   local promotes = rank == (seat == WHITE and 6 or 1)
 
-  local ahead = offset(from, 0, forward)
+  local ahead = BOARD:Step(from, 0, forward)
   if ahead and not board[ahead] then
     add(moves, from, ahead, promotes)
     if rank == (seat == WHITE and 1 or 6) then
-      local twoAhead = offset(from, 0, forward * 2)
+      local twoAhead = BOARD:Step(from, 0, forward * 2)
       if not board[twoAhead] then
         add(moves, from, twoAhead, false)
       end
@@ -232,7 +204,7 @@ local function pawnMoves(state, moves, from, seat)
   end
 
   for _, files in ipairs({ -1, 1 }) do
-    local to = offset(from, files, forward)
+    local to = BOARD:Step(from, files, forward)
     if to and ((board[to] and ownerOf(board[to]) ~= seat) or to == state.enPassant) then
       add(moves, from, to, promotes)
     end
@@ -317,7 +289,7 @@ local function legalMoves(state)
     local kind = piece:lower()
     local touched = { from, to }
     if kind == "p" and to == enPassant then
-      touched[3] = offset(to, 0, seat == WHITE and -1 or 1)
+      touched[3] = BOARD:Step(to, 0, seat == WHITE and -1 or 1)
     elseif kind == "k" and math.abs(to - from) == 2 then
       touched[3], touched[4] = to > from and from + 3 or from - 4, to > from and from + 1 or from - 1
     end
@@ -464,8 +436,8 @@ end
 local function notationOf(state, move, isCapture)
   local piece = state.board[move.from]
   local kind = piece:lower()
-  local to = squareName(move.to)
-  local fromName = squareName(move.from)
+  local to = BOARD:Name(move.to)
+  local fromName = BOARD:Name(move.from)
 
   if kind == "k" and math.abs(move.to - move.from) == 2 then
     return move.to > move.from and "O-O" or "O-O-O"
@@ -503,7 +475,7 @@ local function apply(state, seat, moveString)
   local isPawn = piece:lower() == "p"
   local capturedAt = move.to
   if isPawn and move.to == state.enPassant then
-    capturedAt = offset(move.to, 0, seat == WHITE and -1 or 1)
+    capturedAt = BOARD:Step(move.to, 0, seat == WHITE and -1 or 1)
   end
   local captured = board[capturedAt]
   local isCapture = captured ~= nil
@@ -870,7 +842,7 @@ local function createPicker(self)
       local pending = self.pending
       -- The pawn is already drawn where it is going
       self.dropped = true
-      self.view.submit(squareName(pending.from) .. squareName(pending.to) .. promotion)
+      self.view.submit(BOARD:Name(pending.from) .. BOARD:Name(pending.to) .. promotion)
       self.dropped = nil
     end)
     picker.buttons[index] = button

@@ -8,12 +8,18 @@ local ADDON_NAME = "ForeverGames"
 local ENGINE_FILES = {
   "Engine/Codec.lua",
   "Engine/Random.lua",
+  "Engine/Tables.lua",
+  "Engine/Grid.lua",
+  "Engine/Deck.lua",
   "Engine/Games.lua",
+  "Engine/Daily.lua",
+  "Engine/Race.lua",
   "Engine/Computer.lua",
   "Engine/Match.lua",
   "Engine/Session.lua",
   "Engine/Presence.lua",
   "Engine/Rooms.lua",
+  "Engine/Phases.lua",
   "Engine/Bracket.lua",
   "Lexicon/Sketch.lua",
   "Games/Sketch.lua",
@@ -40,6 +46,11 @@ local ENGINE_FILES = {
   "Lexicon/Fourtiles.lua",
   "Games/Fourtiles.lua",
   "Games/Warcraftstein.lua",
+  "Engine/SectorMap.lua",
+  "Engine/Actors.lua",
+  "Games/Freedoom/Carry.lua",
+  "Games/Freedoom/World.lua",
+  "Games/Freedoom.lua",
   "Games/Wormcraft.lua",
 }
 
@@ -75,7 +86,7 @@ local World = {}
 World.__index = World
 
 function World.New()
-  return setmetatable({ clock = 1000000, players = {}, sent = {}, queue = {}, seed = 0 }, World)
+  return setmetatable({ clock = 1000000, players = {}, sent = {}, queue = {}, seed = 0, today = "2026-10-14" }, World)
 end
 
 --- @param name string
@@ -91,6 +102,9 @@ function World:AddPlayer(name, matches)
     matches = player.matches,
     now = function()
       return self.clock
+    end,
+    today = function()
+      return self.today
     end,
     random = function(max)
       self.seed = self.seed + 1
@@ -1934,7 +1948,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein"
+  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,freedoom"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -1963,6 +1977,9 @@ local function openWizard(player)
     DisplayName = function(name)
       return name
     end,
+    PlayerName = function()
+      return player.name
+    end,
   }
   private.presence = {}
   function private.presence:List()
@@ -1978,6 +1995,46 @@ local function openWizard(player)
   private.Wizard.Init(UIParent, function() end)
   private.Wizard.Open()
   return private.Wizard
+end
+
+-- The wizard's table of who plays, for the tests to read and click
+local seating = {}
+
+--- The table of who plays in the wizard, a seat at a time from the player's own: who sits there,
+--- and what can be clicked on the seat in brackets
+--- @return string, table[] cards
+function seating.Shown()
+  local cards = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.remove ~= nil and widget.action ~= nil and widget:IsVisible()
+  end)
+  local said = {}
+  for index, card in ipairs(cards) do
+    said[index] = card.name.text .. (card.action:IsVisible() and (" [" .. card.action.label.text .. "]") or "")
+  end
+  return table.concat(said, ", "), cards
+end
+
+--- Clicks a button of the wizard's that says something on a label of its own
+--- @param text string
+--- @param nth number? Which of the ones saying it, the first if left out
+function seating.Click(text, nth)
+  local found = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.label ~= nil and widget.label.text == text and widget:IsVisible()
+  end)
+  assert(found[nth or 1], "no button saying " .. text)
+  found[nth or 1]:Fire("OnClick")
+end
+
+--- The buttons that say how many seats the wizard's table has, by what they say
+--- @return table<string, table>
+function seating.Sizes()
+  local sizes = {}
+  for _, widget in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.label ~= nil and widget.parent ~= nil and widget.parent.cards ~= nil and widget:IsVisible()
+  end)) do
+    sizes[widget.label.text] = widget
+  end
+  return sizes
 end
 
 --- The games on offer in the wizard, in reading order
@@ -2495,6 +2552,35 @@ function tests.CrowdPlayerOutOfReachAsksAroundAfterwards()
   seated[3].session:Wake()
   world:Deliver()
   equal("!s,112-103", logOf(seated[3], id))
+end
+
+function tests.CrowdTakesResignationsMadeAtTheSameMoment()
+  local world, seated, id = startedCrowd(4)
+  local Match = seated[1].private.Match
+  -- Whoever is to move moves, and two others resign, all before any of it gets anywhere
+  local mover
+  for _, player in ipairs(seated) do
+    if Match.IsMyTurn(player.matches[id]) then
+      mover = player
+    end
+  end
+  local move = marbleMoves(mover.private.Games.Get("chinesecheckers"), Match.State(mover.matches[id]))[1]
+  assert(mover.session:Move(id, move))
+  local quitters = {}
+  for _, player in ipairs(seated) do
+    if player ~= mover and #quitters < 2 then
+      assert(player.session:Resign(id))
+      quitters[#quitters + 1] = player
+    end
+  end
+  world:Deliver()
+
+  for _, player in ipairs(seated) do
+    equal(logOf(seated[1], id), logOf(player, id), player.name .. " has the same log")
+    for _, quitter in ipairs(quitters) do
+      equal(true, player.private.Match.IsOut(player.matches[id], quitter.matches[id].me), player.name .. " knows " .. quitter.name .. " resigned")
+    end
+  end
 end
 
 function tests.CrowdResyncDoesNotFloodTheNetwork()
@@ -3077,7 +3163,8 @@ function tests.WizardPicksSeveralPlayersForACrowd()
   for _, card in ipairs(Client.Find(function(widget)
     return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "chinesecheckers" and widget:IsVisible()
   end)) do
-    equal("players_or_computer", card.players.text)
+    equal("players_choice", card.players.text, "the count, and no more")
+    equal(true, card.computer:IsShown(), "that the computer plays it is a cog")
     card:Fire("OnClick")
   end
 
@@ -3267,6 +3354,461 @@ local function backgammonTurn(game, state, choose)
     parts[index] = step.from .. "-" .. step.to
   end
   return table.concat(parts, ".")
+end
+
+function tests.TablesCopyIsWholeAndKeepsWhatIsShared()
+  local Tables = loadEngine().Tables
+  local shared = { 1, 2 }
+  local under = { looked = 3 }
+  local original = { a = shared, b = shared, nested = { deep = { "x" } }, over = setmetatable({}, { __index = under }), n = 5 }
+  original.self = original
+  local copied = Tables.Copy(original)
+  assert(copied ~= original and copied.nested ~= original.nested and copied.nested.deep ~= original.nested.deep)
+  equal("x", copied.nested.deep[1])
+  equal(copied.a, copied.b, "what was shared still is")
+  assert(copied.a ~= shared, "but it is a copy of its own")
+  equal(copied, copied.self, "and a table in itself is too")
+  equal(3, copied.over.looked, "a table that read through to another still does")
+  equal(7, Tables.Copy(7))
+  copied.nested.deep[1] = "y"
+  equal("x", original.nested.deep[1], "the original isn't touched")
+
+  local shallow = Tables.Shallow(original)
+  assert(shallow ~= original)
+  equal(original.nested, shallow.nested, "a shallow copy shares the tables in it")
+end
+
+function tests.GridNumbersSquaresTheWayTheBoardDrawsThem()
+  local Grid = loadEngine().Grid
+  local board = Grid.New(8)
+  equal(board, Grid.New(8, 8), "one board of a size")
+  equal(64, board.squares)
+  equal("a1", board:Name(0))
+  equal("h1", board:Name(7))
+  equal("a2", board:Name(8))
+  equal("h8", board:Name(63))
+  for square = 0, 63 do
+    equal(square, board:Parse(board:Name(square)))
+  end
+  for _, wrong in ipairs({ "i1", "a9", "a0", "a01", "A1", "a", "", "a1 " }) do
+    equal(nil, board:Parse(wrong), wrong)
+  end
+  local sea = Grid.New(10)
+  equal(99, sea:Parse("j10"))
+  equal(nil, sea:Parse("j11"))
+  equal(nil, sea:Parse("k1"))
+
+  local wide = Grid.New(7, 6)
+  equal(41, wide.squares - 1)
+  equal(nil, wide:Square(7, 0))
+  equal(nil, wide:Square(0, 6))
+  equal(15, wide:Square(1, 2))
+  local column, row = wide:Coordinates(15)
+  equal("1,2", column .. "," .. row)
+  equal(16, wide:Step(15, 1, 0))
+  equal(nil, wide:Step(13, 1, 0), "a step off the right edge doesn't come back on the left")
+  equal(nil, wide:Step(0, -1, 0))
+  equal(3, wide:Distance(0, wide:Square(3, 2)))
+end
+
+function tests.GridLinesAndWhatIsAround()
+  local Grid = loadEngine().Grid
+  local board = Grid.New(8)
+  equal("1,2,3,4,5,6,7", table.concat(board:Ray(0, 1, 0), ","))
+  equal("9,18,27,36,45,54,63", table.concat(board:Ray(0, 1, 1), ","))
+  equal("", table.concat(board:Ray(7, 1, 0), ","), "nothing past the edge")
+  equal(board:Ray(0, 1, 0), board:Ray(0, 1, 0), "worked out once")
+  local rays = board:Rays(27, Grid.AROUND)
+  equal(8, #rays)
+  equal(board:Ray(27, -1, -1), rays[8])
+
+  local corner = board:Around(0, Grid.AROUND)
+  table.sort(corner)
+  equal("1,8,9", table.concat(corner, ","))
+  local jumps = board:Around(0, Grid.KNIGHT)
+  table.sort(jumps)
+  equal("10,17", table.concat(jumps, ","))
+  equal(8, #board:Around(27, Grid.AROUND))
+
+  -- Four in a row on a Connect Four rack, and the longest line through a square
+  local rack = Grid.New(7, 6)
+  equal(69, #rack:Windows(4, Grid.LINES))
+  local discs = { [0] = true, [8] = true, [16] = true, [24] = true, [1] = true }
+  local line = rack:Line(16, Grid.LINES, function(square)
+    return discs[square] == true
+  end, 4)
+  table.sort(line)
+  equal("0,8,16,24", table.concat(line, ","))
+  equal(nil, rack:Line(1, Grid.LINES, function(square)
+    return discs[square] == true
+  end, 4), "two in a row isn't four")
+
+  -- Spreading out from a square over the empty ones, the way Minesweeper opens a field
+  local small = Grid.New(4)
+  local walls = { [2] = true, [6] = true, [10] = true, [14] = true }
+  local depths = {}
+  local reached = Grid.Spread({ 0 }, function(square, depth)
+    depths[square] = depth
+    local onward = {}
+    for _, other in ipairs(small:Around(square, Grid.STRAIGHT)) do
+      if not walls[other] then
+        onward[#onward + 1] = other
+      end
+    end
+    return onward
+  end)
+  equal(8, #reached, "only the two columns this side of the wall")
+  equal(0, reached[1])
+  equal(4, depths[13], "the far corner is four steps away")
+  for index = 2, #reached do
+    assert(depths[reached[index]] >= depths[reached[index - 1]], "nearest first")
+  end
+end
+
+function tests.DeckIsTheSameDealEverywhere()
+  local private = loadEngine()
+  local Deck, Random = private.Deck, private.Random
+  local deck = Deck.New()
+  equal(52, #deck)
+  equal("AS", deck[1])
+  equal("KC", deck[52])
+  local seen = {}
+  for _, card in ipairs(deck) do
+    assert(Deck.IsCard(card), card)
+    assert(not seen[card], "once each")
+    seen[card] = true
+  end
+  -- Written down: a deck that comes out in another order deals every old match differently
+  local shuffled = Deck.Shuffled(Random.New(Random.Seed("f4240000001")))
+  equal("KD,6S,5S,4S,QD", table.concat({ unpack(shuffled, 1, 5) }, ","))
+
+  local hands, top = { {}, {}, {} }, { unpack(shuffled) }
+  Deck.Deal(shuffled, hands, 2)
+  equal(46, #shuffled)
+  equal(2, #hands[3])
+  equal(top[52] .. "," .. top[49], hands[1][1] .. "," .. hands[1][2], "one each from the top, and round again")
+
+  equal(1, Deck.Rank("AS"))
+  equal(13, Deck.Rank("KD"))
+  equal(13, Deck.Rank("AS", Deck.ACE_HIGH))
+  equal(true, Deck.IsRed("TD"))
+  equal(false, Deck.IsRed("TC"))
+  equal(false, Deck.IsCard("1S"))
+  equal(false, Deck.IsCard(Deck.HIDDEN))
+  equal("?,?,?", table.concat(Deck.Backs(3), ","))
+  equal(2, Deck.Find({ "AS", "QH" }, "QH"))
+  equal(nil, Deck.Find({ "AS" }, "QH"))
+  equal(49, #Deck.Unseen({ "AS", "QH" }, { "KC" }))
+  equal("AS,9S,TH,2D,KD", table.concat(Deck.Sort({ "KD", "TH", "AS", "2D", "9S" }), ","))
+end
+
+function tests.DeckSaysWhoTakesATrick()
+  local Deck = loadEngine().Deck
+  local hand = { "2H", "KS", "AH", "5C" }
+  equal(4, #Deck.Playable(hand, {}), "anything to lead")
+  equal("2H,AH", table.concat(Deck.Playable(hand, { "9H" }), ","), "the suit led if there is one")
+  equal(4, #Deck.Playable(hand, { "9D" }), "anything with none of it")
+
+  equal(3, Deck.Winner({ "9H", "2S", "AH", "KH" }), "the ace is high")
+  equal(1, Deck.Winner({ "9H", "AS", "AD" }), "off suit takes nothing")
+  equal(2, Deck.Winner({ "9H", "2S", "AH" }, { trump = "S" }), "a trump takes it")
+  equal(3, Deck.Winner({ "9H", "2S", "3S" }, { trump = "S" }), "the higher trump")
+
+  -- Euchre: the jack of trump is the best card there is, and the other jack of its colour is a
+  -- trump too, the second best
+  local function suitOf(card, trump)
+    local partner = { S = "C", C = "S", H = "D", D = "H" }
+    if card:sub(1, 1) == "J" and card:sub(2, 2) == partner[trump] then
+      return trump
+    end
+    return card:sub(2, 2)
+  end
+  local function rankOf(card, trump)
+    if card:sub(1, 1) == "J" then
+      return card:sub(2, 2) == trump and 20 or (suitOf(card, trump) == trump and 19 or Deck.Rank(card, Deck.ACE_HIGH))
+    end
+    return Deck.Rank(card, Deck.ACE_HIGH)
+  end
+  local euchre = { trump = "H", suitOf = suitOf, rankOf = rankOf }
+  equal(3, Deck.Winner({ "AH", "KH", "JD" }, euchre), "the left bower beats the ace of trump")
+  equal(2, Deck.Winner({ "JD", "JH" }, euchre), "the right bower beats the left")
+  equal("JD", Deck.Playable({ "JD", "AD" }, { "9H" }, euchre)[1], "the left bower follows trump")
+  equal(1, #Deck.Playable({ "JD", "AD" }, { "9H" }, euchre), "and isn't a diamond")
+end
+
+function tests.PhasesKeepTheRoomsClock()
+  local Phases = loadEngine().Phases
+  local state = { phase = "idle" }
+  Phases.Begin(state, "ask", 100, 15)
+  equal("ask", state.phase)
+  equal(15, Phases.Left(state, 100))
+  equal(5, Phases.Left(state, 110))
+  equal(0, Phases.Left(state, 200))
+  equal(false, Phases.Due(state, 114))
+  equal(true, Phases.Due(state, 115))
+  equal(false, Phases.Due(state, 116, 2), "given a little longer for what is on its way")
+  equal(10, Phases.Ago(state, 110.7))
+
+  -- Somebody told late runs out with everyone else
+  local late = { phase = "idle" }
+  Phases.Begin(late, "ask", 500, 15, 10)
+  equal(5, Phases.Left(late, 500))
+
+  Phases.Begin(state, "held", 120)
+  equal(nil, Phases.Left(state, 120), "waits for as long as it takes")
+  equal(false, Phases.Due(state, 1000))
+  Phases.Until(state, 130, 5)
+  equal(true, Phases.Due(state, 135))
+  Phases.Until(state, 130, nil)
+  equal(false, Phases.Due(state, 135))
+
+  equal(1000, Phases.Points(0, 10, 1000, 500))
+  equal(750, Phases.Points(5, 10, 1000, 500))
+  equal(500, Phases.Points(60, 10, 1000, 500))
+end
+
+--- What a match looks like, everything in it written out in order, to compare two of them
+--- @param value any
+--- @return string
+local function written(value)
+  if type(value) ~= "table" then
+    return tostring(value)
+  end
+  local keys = {}
+  for key in pairs(value) do
+    keys[#keys + 1] = key
+  end
+  table.sort(keys, function(a, b)
+    return tostring(a) < tostring(b)
+  end)
+  local parts = {}
+  for _, key in ipairs(keys) do
+    parts[#parts + 1] = tostring(key) .. "=" .. written(value[key])
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+function tests.DailyChallengeIsDealtTheSameForEveryone()
+  local world = World.New()
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local Match, Theirs = alice.private.Match, bob.private.Match
+  local mine = assert(alice.session:Daily("solitaire"))
+  local theirs = assert(bob.session:Daily("solitaire"))
+  assert(mine.id ~= theirs.id, "each their own match")
+  equal("2026-10-14", mine.daily)
+  equal(written(Match.State(mine)), written(Theirs.State(theirs)), "the same deal")
+  local other = assert(alice.session:Invite({}, "solitaire"))
+  assert(written(Match.State(other)) ~= written(Match.State(mine)), "a game of their own is dealt as ever")
+  local minesweeper = assert(alice.session:Daily("minesweeper"))
+  equal("intermediate", Match.State(minesweeper).level, "played by the day's rules")
+  equal(mine, alice.session:Daily("solitaire"), "the one go, gone back to")
+
+  -- The same moves turn up the same cards
+  for _ = 1, 3 do
+    assert(alice.session:Move(mine.id, "d"))
+    assert(bob.session:Move(theirs.id, "d"))
+  end
+  equal(written(Match.State(mine)), written(Theirs.State(theirs)))
+  equal(false, alice.session:CanUndo(mine), "nothing is taken back")
+  assert(alice.session:Move(other.id, "d"))
+  equal(true, alice.session:CanUndo(other), "as a game of their own can")
+  equal(false, (alice.session:Forget(mine.id)), "or thrown away while it is on")
+  equal(nil, mine.score)
+
+  -- Given up, it counts for what it came to
+  local scored = {}
+  alice.onEvent = function(event, match)
+    if event == "daily" then
+      scored[#scored + 1] = match.score
+    end
+  end
+  assert(alice.session:Resign(mine.id))
+  equal("finished", mine.status)
+  equal(Match.State(mine).score, mine.score)
+  equal(1, #scored, "said the once")
+  assert(alice.session:Forget(mine.id))
+  local again, err = alice.session:Daily("solitaire")
+  equal(nil, again, "one go a day")
+  equal("daily_played", err)
+  equal(true, alice.session:PlayedToday("solitaire"))
+
+  -- Tomorrow is another deal
+  world.today = "2026-10-15"
+  local tomorrow = assert(alice.session:Daily("solitaire"))
+  assert(written(Match.State(tomorrow)) ~= written(Theirs.State(theirs)))
+  equal(nil, (alice.session:Daily("chess")), "only a game for one is the day's challenge")
+end
+
+function tests.DailyChallengeWithNothingToShowForIt()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local match = assert(alice.session:Daily("minesweeper"))
+  assert(alice.session:Resign(match.id))
+  equal(false, match.score, "a field that wasn't cleared has no time")
+end
+
+--- Players on a guild channel, each with the board of the day's challenges
+--- @param names string[]
+--- @return table<string, table> boards By name, with `sent` for what each said
+local function dailyGuild(names)
+  local boards, clock = {}, { now = 5000 }
+  for _, name in ipairs(names) do
+    local private = loadEngine()
+    local player = { name = name, changes = 0 }
+    player.board = private.Daily.New({
+      me = name,
+      now = function()
+        return clock.now
+      end,
+      today = function()
+        return "2026-10-14"
+      end,
+      broadcast = function(text)
+        for other, them in pairs(boards) do
+          if other ~= name and not them.away then
+            them.board:Handle(name, text)
+          end
+        end
+      end,
+      whisper = function(target, text)
+        if not boards[target].away then
+          boards[target].board:Handle(name, text)
+        end
+      end,
+      onChange = function()
+        player.changes = player.changes + 1
+      end,
+    })
+    boards[name] = player
+  end
+  return boards, clock
+end
+
+function tests.DailyBoardGoesRoundTheGuild()
+  local guild, clock = dailyGuild({ "Alice", "Bob", "Carol", "Dan", "Erin" })
+  local alice, bob, carol, dan = guild.Alice.board, guild.Bob.board, guild.Carol.board, guild.Dan.board
+  local erin = guild.Erin
+  erin.away = true
+  alice:Post("2026-10-14", "minesweeper", 95)
+  bob:Post("2026-10-14", "minesweeper", 80)
+  carol:Post("2026-10-14", "minesweeper", false)
+  carol:Post("2026-10-14", "2048", 3000)
+
+  local board = dan:Board("2026-10-14", "minesweeper")
+  equal(3, #board)
+  equal("Bob", board[1].name, "the quickest first")
+  equal(1, board[1].place)
+  equal(2, board[2].place)
+  equal(false, board[3].score, "and whoever came to nothing last")
+  equal(nil, board[3].place)
+  equal(95, dan:Mine("2026-10-14", "minesweeper") or 95)
+  equal(nil, dan:Mine("2026-10-14", "minesweeper"), "Dan hasn't played")
+
+  -- Somebody who wasn't there when they were said asks, and is told
+  erin.away = false
+  equal(0, #erin.board:Board("2026-10-14", "minesweeper"))
+  assert(erin.board:Ask("2026-10-14"))
+  equal(false, erin.board:Ask("2026-10-14"), "not again at once")
+  equal(3, #erin.board:Board("2026-10-14", "minesweeper"))
+  equal(3000, erin.board:Board("2026-10-14", "2048")[1].score)
+  clock.now = clock.now + 61
+  assert(erin.board:Ask("2026-10-14"), "a while later it may")
+
+  -- Ties share a place, more is better at a game played for points
+  alice:Post("2026-10-14", "2048", 3000)
+  bob:Post("2026-10-14", "2048", 5000)
+  local points = dan:Board("2026-10-14", "2048")
+  equal("Bob", points[1].name)
+  equal(2, points[2].place)
+  equal(2, points[3].place)
+
+  -- Nonsense is ignored
+  local before = guild.Dan.changes
+  for _, text in ipairs({ "1:DAY:2026-10-14:chess:5", "1:DAY:yesterday:2048:5", "1:DAY:2026-10-14:2048:-5", "1:DAY:2026-10-14:2048:1e9", "1:DAY:2026-10-14:2048:3.5", "1:DAY:2026-10-14:nope:5", "1:DAY:2026-10-14" }) do
+    equal(true, dan:Handle("Mallory", text), text)
+  end
+  equal(before, guild.Dan.changes, "nothing new came of it")
+  equal(nil, dan.env.boards["2026-10-14"].chess)
+  equal(false, dan:Handle("Mallory", "1:HI"), "what isn't about the day's games is left alone")
+
+  -- Only the last week is kept
+  dan.env.boards["2026-09-01"] = { minesweeper = { Bob = 1 } }
+  dan.env.boards["2026-10-15"] = { minesweeper = { Bob = 1 } }
+  dan:Prune()
+  equal(nil, dan.env.boards["2026-09-01"])
+  equal(nil, dan.env.boards["2026-10-15"], "nor a day that hasn't come yet")
+  assert(dan.env.boards["2026-10-14"])
+end
+
+function tests.LookingBackStartsFromThePositionsKeptOnTheWay()
+  local private = loadEngine()
+  local Match, Random = private.Match, private.Random
+  local game = private.Games.Get("reversi")
+  local match = {
+    id = "f00000000001",
+    game = "reversi",
+    gameVersion = game.version,
+    players = { "Alice-Realm", "Bob-Realm" },
+    me = 1,
+    log = {},
+    status = "active",
+    seen = {},
+    created = 0,
+    updated = 0,
+  }
+  local dice = Random.New(7)
+  while not Match.Result(match) do
+    local state = Match.State(match)
+    local moves = game.moves(state, game.turn(state))
+    assert(Match.Append(match, moves[dice:Roll(#moves)]))
+  end
+  local length = #match.log
+  assert(length > 50, "a long game to look back through")
+
+  -- Every position written down the slow way: from nothing, on a match of its own
+  local truth = {}
+  for count = 0, length do
+    local fresh = { id = match.id, game = match.game, gameVersion = match.gameVersion, players = match.players, me = 1, log = { unpack(match.log, 1, count) }, status = "active", seen = {}, created = 0, updated = 0 }
+    truth[count] = written(Match.State(fresh))
+  end
+
+  -- Stepping back from the end a move at a time plays no more than a few moves for each step
+  local applied, apply = 0, game.apply
+  game.apply = function(...)
+    applied = applied + 1
+    return apply(...)
+  end
+  equal(truth[length - 1], written(Match.StateAt(match, length - 1)))
+  applied = 0
+  for count = length - 2, 0, -1 do
+    equal(truth[count], written(Match.StateAt(match, count)), "stepping back to " .. count)
+  end
+  assert(applied <= 8 * length, "played " .. applied .. " moves over again stepping back through " .. length)
+
+  -- And anywhere at all, in any order, is where the game was then
+  for _ = 1, 60 do
+    local count = dice:Roll(length) - 1
+    equal(truth[count], written(Match.StateAt(match, count)), "looking at " .. count)
+  end
+  game.apply = apply
+
+  -- A log cut short and played on another way forgets what it kept of the way it went before
+  local played = match.log[21]
+  Match.Truncate(match, 20)
+  local state = Match.State(match)
+  local other = nil
+  for _, move in ipairs(game.moves(state, game.turn(state))) do
+    if move ~= played then
+      other = other or move
+    end
+  end
+  assert(other, "another move to make")
+  assert(Match.Append(match, other))
+  for _ = 1, 5 do
+    assert(Match.Append(match, game.moves(Match.State(match), game.turn(Match.State(match)))[1]))
+  end
+  local fresh = { id = match.id, game = match.game, gameVersion = match.gameVersion, players = match.players, me = 1, log = { unpack(match.log, 1, 24) }, status = "active", seen = {}, created = 0, updated = 0 }
+  equal(written(Match.State(fresh)), written(Match.StateAt(match, 24)))
 end
 
 function tests.BackgammonStartsWithADieEach()
@@ -8761,6 +9303,172 @@ function tests.WindowAsksBeforeGivingUpAGameThatIsUnderWay()
   equal(1, #player.session:List())
 end
 
+function tests.WindowShowsTheGuildBoardBesideTheDaysChallenge()
+  local world = World.New()
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  local said = {}
+  player.private.daily = player.private.Daily.New({
+    me = "Alice-Realm",
+    now = function()
+      return world.clock
+    end,
+    today = function()
+      return world.today
+    end,
+    broadcast = function(text)
+      said[#said + 1] = text
+    end,
+    whisper = function() end,
+    boards = { ["2026-10-14"] = { solitaire = { ["Bob-Realm"] = 455, ["Carol-Realm"] = 120 } } },
+    onChange = function() end,
+  })
+  local match = assert(player.session:Daily("solitaire"))
+  MainFrame.Open(match.id)
+
+  local function shown(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end)
+  end
+  equal(1, shown("daily_today"), "it says it is today's")
+  equal(1, shown("daily_board"))
+  equal(1, shown("Bob-Realm"))
+  equal(1, shown("Carol-Realm"))
+  equal(1, shown("daily_board_playing"))
+  equal("1:DAYS:2026-10-14", said[1], "the guild is asked how they did")
+  equal(1, shown("give_up"))
+  equal(0, shown("start_another"), "there is no other go at it")
+  equal(0, shown("undo"))
+
+  -- Given up, it is over and goes up with everyone's
+  local asked = {}
+  function StaticPopup_Show(which, text, _, proceed)
+    asked[#asked + 1] = which .. " " .. text
+    proceed()
+  end
+  Client.Button("give_up"):Fire("OnClick")
+  equal("FOREVERGAMES_GIVE_UP daily_give_up_confirm", table.concat(asked, ","))
+  equal("finished", match.status)
+  equal(0, match.score)
+  player.private.daily:Post(match.daily, match.game, match.score)
+  MainFrame.Refresh()
+  equal(1, shown("Alice-Realm"))
+  equal(1, shown("daily_board_count"))
+  equal(1, shown("daily_new_game"), "a game of their own instead")
+  equal("1:DAY:2026-10-14:solitaire:0", said[#said])
+end
+
+function tests.WindowShowsTheMovesMissedOneAfterAnother()
+  local world = World.New()
+  local players = { world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm"), world:AddPlayer("Carol-Realm") }
+  local alice = players[1]
+  local id = assert(alice.session:Invite({ "Bob-Realm", "Carol-Realm" }, "chinesecheckers")).id
+  world:Deliver()
+  for index = 2, 3 do
+    assert(players[index].session:Accept(id))
+    world:Deliver()
+  end
+  local Match, game = alice.private.Match, alice.private.Games.Get("chinesecheckers")
+  --- Whoever's turn it is makes the first move there is, until it is Alice's
+  local function untilAlice()
+    local made = 0
+    while true do
+      local match = alice.matches[id]
+      local seat = Match.Turn(match)
+      local player
+      for _, candidate in ipairs(players) do
+        if candidate.name == match.players[seat] then
+          player = candidate
+        end
+      end
+      if player == alice then
+        return made
+      end
+      local theirs = player.matches[id]
+      assert(player.session:Move(id, game.moves(player.private.Match.State(theirs), seat)[1]))
+      world:Deliver()
+      made = made + 1
+    end
+  end
+  untilAlice()
+  -- What the board is asked to show: how far in, the move to show being made, and whether that
+  -- is one of those Alice missed
+  local shown = {}
+  local createView = game.createView
+  game.createView = function(stage)
+    local view = createView(stage)
+    local update = view.Update
+    view.Update = function(self, asked)
+      if asked.changed then
+        shown[#shown + 1] = asked.ply .. (asked.played and "+" or "") .. (asked.catching and "c" or "") .. (asked.live and "l" or "")
+      end
+      return update(self, asked)
+    end
+    return view
+  end
+  local MainFrame = openWindow(alice)
+  MainFrame.Open(id)
+  local match = alice.matches[id]
+  local detail = ForeverGamesFrame.detail
+  equal(#match.log, match.shown, "the game as it stands is what Alice saw")
+  assert(alice.session:Move(id, game.moves(Match.State(match), match.me)[1]))
+  world:Deliver()
+
+  -- Alice looks away, and the others move
+  MainFrame.Home()
+  equal(2, untilAlice())
+  local seen = match.shown
+  shown = {}
+  equal(seen + 2, #match.log)
+  MainFrame.Open(id)
+  equal("missed_note", detail.note:GetText())
+  equal(true, detail.skip:IsShown())
+  equal(seen, match.shown, "nothing new seen yet: the position she left it at")
+
+  -- A move at a time, each on screen a while
+  detail:Fire("OnUpdate", 0.3)
+  equal(seen, match.shown, "the first of them waits its turn")
+  detail:Fire("OnUpdate", 0.7)
+  equal(seen + 1, match.shown, "Bob's move")
+  equal("missed_note", detail.note:GetText())
+  detail:Fire("OnUpdate", 1)
+  equal(seen + 2, match.shown, "and Carol's, in the game as it stands")
+  assert(detail.note:GetText() ~= "missed_note", "that was all of them")
+  equal(false, detail.skip:IsShown())
+  -- From where she left it, which the board still shows
+  equal(string.format("%d+c,%d+l", seen + 1, seen + 2), table.concat(shown, ","), "each made in front of her")
+
+  -- Away again, and Space goes straight to the game as it stands
+  assert(alice.session:Move(id, game.moves(Match.State(match), match.me)[1]))
+  world:Deliver()
+  MainFrame.Home()
+  untilAlice()
+  MainFrame.Open(id)
+  equal("missed_note", detail.note:GetText())
+  Client.over = true
+  local keys = detail.keys
+  equal(true, keys:IsShown())
+  keys:Fire("OnKeyDown", "SPACE")
+  Client.over = nil
+  equal(#match.log, match.shown)
+  equal(false, detail.skip:IsShown())
+  equal(false, keys.propagates, "the key was the window's")
+  equal(false, keys:IsShown(), "and from now on the game's own")
+
+  -- A single move missed is only shown being made, as ever
+  assert(alice.session:Move(id, game.moves(Match.State(match), match.me)[1]))
+  world:Deliver()
+  MainFrame.Home()
+  local bob = players[2].matches[id]
+  if Match.Turn(bob) == bob.me then
+    assert(players[2].session:Move(id, game.moves(players[2].private.Match.State(bob), bob.me)[1]))
+    world:Deliver()
+  end
+  MainFrame.Open(id)
+  assert(detail.note:GetText() ~= "missed_note")
+end
+
 function tests.WindowFitsSolitaireIntoTheRoomItHas()
   local player, id = solitaireOnScreen()
   local state = player.private.Match.State(player.matches[id])
@@ -9191,7 +9899,7 @@ function tests.WizardOffersWhoWasPlayedLastFirst()
   end
   local send = Client.Button("wizard_send")
 
-  equal("[wizard_computer] computer [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+  equal("[wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
   equal("source_guild  -  wizard_played_today", row("Carol-Realm").source.text)
   equal("wizard_played_days", row("Dave-Realm").source.text)
   equal(false, send.enabled)
@@ -9225,7 +9933,7 @@ function tests.WizardOffersWhoWasPlayedLastFirst()
     end
     return count
   end)(), "nothing was sent")
-  equal("[wizard_computer] computer [wizard_chosen_also] Frank-Realm [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
+  equal("[wizard_chosen_also] Frank-Realm [wizard_recent] Carol-Realm Dave-Realm [wizard_guild] Bob-Realm [wizard_friends] Erin-Realm", shown())
 
   -- A click on someone else and it is them instead
   row("Bob-Realm"):Fire("OnClick")
@@ -10199,15 +10907,13 @@ function tests.WizardSetsAGameForOneUpBeforeItBegins()
   pickGame("minesweeper")
   equal(true, Wizard.IsOpen(), "there is something to choose first")
   equal(0, #alice.session:List())
-  equal(true, says("wizard_step_solo"))
+  -- Somebody to race it against, or nobody (see WizardChallengesSomebodyToARace)
+  equal(true, says("wizard_step_opponent"))
   equal(true, says("minesweeper_option_level"))
-  equal(0, #Client.Find(function(widget)
-    return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
-  end), "but nobody to pick")
   equal("minesweeper_level_beginner", select(2, ruleChoices("minesweeper_option_level")))
   ruleChoices("minesweeper_option_level")["minesweeper_level_expert"]:Fire("OnClick")
   equal(true, says("wizard_solo_note"))
-  Client.Button("wizard_play"):Fire("OnClick")
+  Client.Button("wizard_play_alone"):Fire("OnClick")
   equal(false, Wizard.IsOpen())
   local started
   for _, match in pairs(alice.matches) do
@@ -11298,8 +12004,8 @@ do
     local wizard = openWizard(alice)
     pickGame("sudoku")
     equal(true, wizard.IsOpen(), "there is something to choose first")
-    equal(true, says("wizard_step_solo"))
-    equal(false, says("wizard_who"), "but nobody to play it with")
+    -- and somebody to race it against, or nobody
+    equal(true, says("wizard_who_race"))
     equal("sudoku_level_medium", select(2, ruleChoices("sudoku_option_level")))
     equal("option_on", select(2, ruleChoices("sudoku_option_check")))
     equal(false, says("wizard_seat"))
@@ -11307,7 +12013,7 @@ do
 
     ruleChoices("sudoku_option_level")["sudoku_level_expert"]:Fire("OnClick")
     equal("sudoku_level_expert", select(2, ruleChoices("sudoku_option_level")))
-    local play = Client.Button("wizard_play")
+    local play = Client.Button("wizard_play_alone")
     equal(true, play.enabled)
     play:Fire("OnClick")
     equal(false, wizard.IsOpen())
@@ -12908,6 +13614,9 @@ end
 -----------------------------
 -- Warcraftstein 3D
 -----------------------------
+-- In a block of its own, which keeps its helpers out of the chunk's locals: there is room for
+-- only so many of those
+do
 
 --- The squares next to one, as indexes into the cells of the monastery
 --- @param state table
@@ -14110,6 +14819,7 @@ function tests.WarcraftsteinGetsRoundCorners()
   end
   equal(true, found, "a corridor to try it in")
 end
+end
 
 -----------------------------
 -- Wormcraft
@@ -15054,11 +15764,9 @@ function tests.WizardWrapsWhatAnOptionCanBe()
   -- The computer is the engine's, and set up the engine's way
   equal(false, says("wormcraft_option_bots"), "no computer squads of the game's own")
   equal(false, says("wormcraft_option_skill"))
-  Client.Find(function(widget)
-    return widget.kind == "Button" and widget.computer == true and widget:IsVisible()
-  end)[1]:Fire("OnClick")
-  assert(ruleChoices("wizard_computers")["3"], "up to three squads of the computer's")
-  assert(says("wizard_level"))
+  seating.Click("wizard_add_computer")
+  assert(seating.Sizes()["4"], "up to three squads besides the player's")
+  equal("Alice-Realm, computer [computer_level_medium]", (seating.Shown()))
   local row = Client.Find(function(widget)
     return widget.choices ~= nil and widget.name ~= nil and widget.name.text == "wormcraft_option_map" and widget:IsVisible()
   end)[1]
@@ -15077,14 +15785,15 @@ function tests.WizardWrapsWhatAnOptionCanBe()
   assert(count > 1, "what doesn't fit goes on the next line")
   assert(row.height > 30, "and the line is as tall as it takes")
 
-  -- With somebody to play there is no computer
+  -- With somebody to play the computer sits at the table with them, and is still the engine's
   local box = Client.Find(function(widget)
     return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
   end)[1]
   box:SetText("Bob-Realm")
   box:Fire("OnTextChanged", true)
   equal(false, says("wormcraft_option_bots"))
-  equal(false, says("wizard_level"))
+  equal("Alice-Realm, computer [computer_level_medium], Bob-Realm", (seating.Shown()))
+  equal(true, says("wizard_summary_with_computer"))
 end
 
 function tests.WindowPlaysWormcraftAgainstTheComputer()
@@ -16506,6 +17215,34 @@ function tests.TriviaIsPlayedByWhoeverComesInLate()
   equal(true, room.members[3].score > 0)
 end
 
+function tests.TriviaIsShownTheAnswerByWhoeverComesInAfterIt()
+  local world, players = triviaRoom({ "Bob" })
+  local alice, bob = players[1], players[2]
+  local room = alice.rooms.room
+  assert(alice.Trivia.Start(room))
+  untilOpen(world)
+  assert(bob.Trivia.Answer(bob.rooms.room, rightAnswer(alice)))
+  assert(alice.Trivia.Answer(room, rightAnswer(alice)))
+  world:Run(0.5)
+  equal("reveal", room.state.phase)
+
+  local frank = world:Add("Frank-Realm", { GUILD = true })
+  frank.rooms:Look()
+  world:Run(1)
+  assert(frank.rooms:Join(room.id))
+  world:Run(1)
+  local state = frank.rooms.room.state
+  equal("reveal", state.phase)
+  equal(room.state.right, state.right)
+  equal(nil, frank.Trivia.TimeLeft(frank.rooms.room), "there is nothing left to answer")
+  equal(false, frank.Trivia.CanAnswer(frank.rooms.room))
+  equal(scoresOf(alice), scoresOf(frank), "he is told what everyone has, and that stands")
+
+  world:Run(6)
+  equal(2, state.k, "and he is asked the next with everyone")
+  equal(room.state.question, state.question)
+end
+
 function tests.TriviaAsksWhatWasNotAskedLately()
   local world, players = triviaRoom({ "Bob" }, { pack = "w", count = 3, seconds = 10 })
   local alice = players[1]
@@ -17111,32 +17848,23 @@ function tests.ComputerOnlySeesWhatItsSeatMay()
   equal(2, #match.log)
 end
 
---- The computer's line in the wizard's list of players
---- @return table?
-local function computerRow()
-  return Client.Find(function(widget)
-    return widget.kind == "Button" and widget.computer == true and widget:IsVisible()
-  end)[1]
-end
-
 function tests.WizardStartsAGameAgainstTheComputer()
   local world = World.New()
   local alice = world:AddPlayer("Alice-Realm")
   local wizard = openWizard(alice)
   pickGame("tictactoe")
-  local row = assert(computerRow(), "the computer is there to play")
-  equal(false, says("wizard_level"), "nothing to set about it until it is picked")
-  equal("wizard_computer_note", row.source.text)
+  equal("Alice-Realm, wizard_seat_open [wizard_add_computer]", (seating.Shown()))
+  equal(false, Client.Button("wizard_send").enabled, "nobody in the other seat yet")
 
-  row:Fire("OnClick")
-  local levels, on = ruleChoices("wizard_level")
-  equal("computer_level_medium", on)
-  assert(levels["computer_level_easy"] and levels["computer_level_hard"])
-  equal(false, says("wizard_computers"), "a game for two has one seat to give it")
-  equal("computer_tally_none", row.source.text, "nothing played against it yet")
-  levels["computer_level_hard"]:Fire("OnClick")
-  ruleChoices("wizard_seat")["O"]:Fire("OnClick")
+  seating.Click("wizard_add_computer")
+  local shown, cards = seating.Shown()
+  equal("Alice-Realm, computer [computer_level_medium]", shown)
+  assert(cards[2].action.tip:find("computer_tally_none", 1, true), "nothing played against it yet")
+  -- Clicked, it plays better
+  seating.Click("computer_level_medium")
+  equal("Alice-Realm, computer [computer_level_hard]", (seating.Shown()))
   equal(true, says("wizard_summary_computer"))
+  ruleChoices("wizard_seat")["O"]:Fire("OnClick")
   local play = Client.Button("wizard_play")
   equal(true, play.enabled)
   play:Fire("OnClick")
@@ -17148,26 +17876,25 @@ function tests.WizardStartsAGameAgainstTheComputer()
   equal("hard", started.computers[1])
   equal(0, #world.sent)
 
-  -- Next time it is picked already, set the same way
+  -- Next time it is there already, set the same way
   wizard.Open()
   pickGame("tictactoe")
-  equal(true, computerRow().selected.shown)
-  equal("computer_level_hard", select(2, ruleChoices("wizard_level")))
+  equal("Alice-Realm, computer [computer_level_hard]", (seating.Shown()))
   equal("O", select(2, ruleChoices("wizard_seat")))
 
-  -- Typing a name is looking for somebody else instead
+  -- Typing a name is looking for somebody else to sit there instead
   local name = Client.Find(function(widget)
     return widget.kind == "EditBox" and widget.scripts.OnTextChanged and widget:IsVisible()
   end)[1]
   name:SetText("Bob-Realm")
   name:Fire("OnTextChanged", true)
-  equal(false, says("wizard_level"))
+  equal("Alice-Realm, Bob-Realm", (seating.Shown()))
   equal(true, Client.Button("wizard_send").enabled)
 
   -- A game the computer can't play doesn't offer it
   wizard.Open()
   pickGame("fourtiles")
-  equal(nil, computerRow())
+  equal(false, says("wizard_add_computer"))
 end
 
 function tests.WizardSetsHowManySeatsTheComputerTakes()
@@ -17176,19 +17903,459 @@ function tests.WizardSetsHowManySeatsTheComputerTakes()
   registerRace(alice.private)
   openWizard(alice)
   pickGame("race")
-  computerRow():Fire("OnClick")
-  local counts, on = ruleChoices("wizard_computers")
-  equal("1", on)
-  assert(counts["2"] and counts["3"] and not counts["4"], "up to three others")
+  local sizes = seating.Sizes()
+  assert(sizes["2"] and sizes["3"] and sizes["4"], "every number it is for")
   equal(true, says("wizard_turn"), "between two there is a turn to choose")
-  counts["3"]:Fire("OnClick")
+  sizes["4"]:Fire("OnClick")
+  equal("Alice-Realm, wizard_seat_open [wizard_add_computer], wizard_seat_open [wizard_add_computer], wizard_seat_open [wizard_add_computer]", (seating.Shown()))
   equal(false, says("wizard_turn"), "a crowd draws its seats")
+  equal(true, says("wizard_table_drawn"))
+  equal(false, Client.Button("wizard_send").enabled)
+  for _ = 1, 3 do
+    seating.Click("wizard_add_computer")
+  end
+  -- Each seat as good as it is set, round to the easiest after the hardest
+  seating.Click("computer_level_medium", 2)
+  seating.Click("computer_level_hard")
+  equal("Alice-Realm, computer [computer_level_medium], computer [computer_level_easy], computer [computer_level_medium]", (seating.Shown()))
   equal(true, says("wizard_summary_computers"))
-  ruleChoices("wizard_level")["computer_level_easy"]:Fire("OnClick")
   Client.Button("wizard_play"):Fire("OnClick")
   local started = select(2, next(alice.matches))
   equal(4, #started.players)
-  equal("easy", alice.private.Match.Level(started))
+  local levels = alice.private.Match.Levels(started)
+  table.sort(levels)
+  equal("easy,medium,medium", table.concat(levels, ","))
+  equal("medium", alice.private.Match.Level(started), "the hardest of them")
+end
+
+-----------------------------
+-- The computer at a table of people
+-----------------------------
+
+--- Alice challenges Bob to a race with the computer in some of the seats, and Bob accepts
+--- @param computers number? How many seats the computer takes, two if left out
+--- @return World, table alice, table bob, string id
+local function mixedRace(computers)
+  local world = World.New()
+  world.prepare = function(private)
+    -- With a view that draws nothing, for the window to have one to show
+    registerRace(private, {
+      createView = function()
+        return { Layout = function() end, Update = function() end }
+      end,
+    })
+  end
+  local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+  local match = assert(alice.session:Invite({ "Bob-Realm" }, "race", { computer = { level = "easy", count = computers or 2 } }))
+  world:Deliver()
+  assert(bob.session:Accept(match.id))
+  world:Deliver()
+  return world, alice, bob, match.id
+end
+
+--- Delivers what is queued, making sure nothing is ever sent to one of the computer's seats
+--- @param world World
+local function deliverToPeople(world)
+  for _, message in ipairs(world.queue) do
+    assert(message.to ~= "*", "a message for the computer: " .. message.text)
+  end
+  world:Deliver()
+end
+
+--- Has whoever's turn it is in a race at a table of people move, the computer included where it
+--- is the turn of a seat it plays, until somebody has to wait on something else
+--- @param world World
+--- @param players table[]
+--- @param id string
+--- @param stop (fun(): boolean)? Stops before the next move once it says so
+local function playOn(world, players, id, stop)
+  for _ = 1, 100 do
+    local moved = false
+    for _, player in ipairs(players) do
+      local match = player.matches[id]
+      if stop and stop() then
+        return
+      end
+      if match and match.status == "active" and player.online then
+        if player.private.Match.IsMyTurn(match) then
+          assert(player.session:Move(id, "1"))
+          moved = true
+        elseif player.session:ComputerTurn(match) then
+          assert(player.session:Think(id, nil, true) ~= nil)
+          moved = true
+        end
+        deliverToPeople(world)
+      end
+    end
+    if not moved then
+      return
+    end
+  end
+end
+
+function tests.ComputerSitsAtATableOfPeople()
+  local world, alice, bob, id = mixedRace()
+  local mine, theirs = alice.matches[id], bob.matches[id]
+  local Match = alice.private.Match
+  equal(4, #mine.players)
+  equal(table.concat(mine.players, ","), table.concat(theirs.players, ","), "everyone sits in the same seats")
+  local computers = 0
+  for seat = 1, 4 do
+    equal(mine.computers[seat], theirs.computers[seat], "seat " .. seat)
+    if Match.IsComputer(mine, seat) then
+      computers = computers + 1
+      equal(Match.COMPUTER, theirs.players[seat])
+      equal("easy", theirs.computers[seat])
+    end
+  end
+  equal(2, computers)
+  equal("active", theirs.status)
+  equal(Match.START, theirs.log[1], "the game began once the people had accepted")
+  equal(false, Match.IsLocal(mine), "it is a game of people")
+  equal(false, Match.IsComputerMatch(theirs))
+  equal(mine.me, Match.Driver(mine), "the host plays the computer's seats")
+  equal(mine.me, bob.private.Match.Driver(theirs), "and the guest knows")
+
+  playOn(world, { alice, bob }, id)
+  equal("finished", mine.status)
+  equal(logOf(alice, id), logOf(bob, id))
+  equal(Match.Result(mine).winner, bob.private.Match.Result(theirs).winner)
+  local computerMoved = false
+  for _, event in ipairs(Match.Events(mine)) do
+    computerMoved = computerMoved or (event.kind == "move" and Match.IsComputer(mine, event.seat))
+  end
+  assert(computerMoved, "the computer played its seats")
+  -- Not a game against the computer: nothing is counted with those
+  equal(0, alice.session:Versus("race", "easy").lost + alice.session:Versus("race", "easy").won)
+end
+
+function tests.ComputerSeatsTravelWithTheRules()
+  local private = loadEngine()
+  local Codec = private.Codec
+  equal("_c=2hard.5easy", Codec.EncodeComputers({ [5] = "easy", [2] = "hard" }))
+  equal(nil, Codec.EncodeComputers(nil))
+  equal(nil, Codec.EncodeComputers({}))
+
+  local invite = Codec.Decode(Codec.Encode("INV", "abc", "race", 1, 1, "lore=10+_c=3hard", 4, 2))
+  equal("lore=10", invite.options, "the rules of the game are what is left")
+  equal("hard", invite.computers[3])
+  equal(4, invite.seats)
+  invite = Codec.Decode(Codec.Encode("INV", "abc", "race", 1, 1, "_c=3hard.4easy", 4, 2))
+  equal(nil, invite.options)
+  equal("easy", invite.computers[4])
+  equal(nil, Codec.Decode("1:INV:abc:race:1:1:lore=10:4:2").computers)
+  local garbage = { "1:INV:a:race:1:1:_c=:4:2", "1:INV:a:race:1:1:_c=x:4:2", "1:INV:a:race:1:1:_c=3hard.3easy:4:2", "1:INV:a:race:1:1:_c=0hard:4:2" }
+  for _, text in ipairs(garbage) do
+    equal(nil, Codec.Decode(text), "Decode(" .. text .. ")")
+  end
+
+  -- A client from before the computer sat with people takes it for a rule it doesn't have, and
+  -- turns the challenge down as being from another version of the game
+  equal(false, select(2, private.Games.DecodeOptions(private.Games.Get("chinesecheckers"), "_c=3hard")))
+end
+
+function tests.ChallengeThatSeatsTheComputerWronglyIsRefused()
+  local world = World.New()
+  world.prepare = function(private)
+    registerRace(private)
+  end
+  local bob = world:AddPlayer("Bob-Realm")
+  local function answer(text)
+    world.queue = {}
+    bob.session:Receive("Alice-Realm", text)
+    return world.queue[1] and world.queue[1].text
+  end
+  equal(nil, answer("1:INV:m1:race:1:1:_c=2easy:3:2"), "in the seat of the one challenged")
+  equal(nil, answer("1:INV:m2:race:1:1:_c=1easy:3:2"), "in the seat of the one challenging")
+  equal(nil, answer("1:INV:m3:race:1:1:_c=5easy:3:2"), "in a seat there isn't")
+  equal("1:DEC:m4:version", answer("1:INV:m4:race:1:1:_c=3genius:3:2"), "at a level there isn't")
+  equal("1:DEC:m5:version", answer("1:INV:m5:race:1:1:_c=2easy"), "between two")
+  equal(nil, next(bob.matches))
+
+  -- A game the computer doesn't play is from another version, where it does
+  world.queue = {}
+  bob.session:Receive("Alice-Realm", "1:INV:m6:chinesecheckers:" .. bob.private.Games.Get("chinesecheckers").version .. ":1:_c=3easy:3:2")
+  equal(nil, world.queue[1], "Chinese Checkers has a computer")
+  equal("easy", bob.matches.m6.computers[3])
+  equal(bob.private.Match.COMPUTER, bob.matches.m6.players[3])
+end
+
+function tests.ChallengeWithTheComputerIsCalledOffWithoutIt()
+  local world = World.New()
+  world.prepare = function(private)
+    registerRace(private)
+  end
+  local alice = world:AddPlayer("Alice-Realm")
+  world:AddPlayer("Bob-Realm")
+  local carol = world:AddPlayer("Carol-Realm")
+  -- Withdrawn by the host
+  local match = assert(alice.session:Invite({ "Bob-Realm" }, "race", { computer = { count = 2 } }))
+  deliverToPeople(world)
+  assert(alice.session:Forget(match.id))
+  deliverToPeople(world)
+  equal(nil, world.players["Bob-Realm"].matches[match.id], "Bob is told")
+
+  -- Declined by somebody, which calls it off for the rest
+  match = assert(alice.session:Invite({ "Bob-Realm", "Carol-Realm" }, "race", { computer = {} }))
+  deliverToPeople(world)
+  assert(world.players["Bob-Realm"].session:Accept(match.id))
+  deliverToPeople(world)
+  assert(carol.session:Decline(match.id))
+  deliverToPeople(world)
+  equal("declined", alice.matches[match.id].status)
+  equal("declined", world.players["Bob-Realm"].matches[match.id].status)
+end
+
+function tests.HostWhoLeavesHandsTheComputerOn()
+  local world, alice, bob, id = mixedRace()
+  local Match = bob.private.Match
+  assert(alice.session:Resign(id))
+  deliverToPeople(world)
+  local theirs = bob.matches[id]
+  equal("active", theirs.status, "Bob and the computer play on")
+  equal(theirs.me, Match.Driver(theirs), "Bob's client plays the computer now")
+  equal(theirs.me, alice.private.Match.Driver(alice.matches[id]), "as Alice's knows")
+  equal(nil, alice.session:ComputerTurn(alice.matches[id]))
+
+  playOn(world, { alice, bob }, id)
+  equal("finished", theirs.status)
+  equal(logOf(alice, id), logOf(bob, id), "Alice is still told how it went")
+end
+
+function tests.TableOfPeopleIsOverOnceThePeopleHaveLeft()
+  local world, alice, bob, id = mixedRace()
+  -- At the same moment, neither knowing of the other's
+  assert(alice.session:Resign(id))
+  assert(bob.session:Resign(id))
+  deliverToPeople(world)
+  equal(logOf(alice, id), logOf(bob, id))
+  for _, player in ipairs({ alice, bob }) do
+    local match = player.matches[id]
+    equal("finished", match.status, player.name)
+    local result = player.private.Match.Result(match)
+    equal(0, result.winner, "the computer doesn't play on among itself")
+    equal("resign", result.reason)
+    equal(nil, player.session:ComputerTurn(match))
+  end
+
+  -- With one computer left it is the last one in the game, and has won it
+  world, alice, bob, id = mixedRace(1)
+  assert(alice.session:Resign(id))
+  deliverToPeople(world)
+  assert(bob.session:Resign(id))
+  local match = bob.matches[id]
+  local result = bob.private.Match.Result(match)
+  equal(true, bob.private.Match.IsComputer(match, result.winner))
+end
+
+--- Plays a race at a table of people until it is the computer's move
+--- @return table match The host's
+local function untilTheComputer(world, alice, bob, id)
+  playOn(world, { alice, bob }, id, function()
+    return alice.session:ComputerTurn(alice.matches[id]) ~= nil
+  end)
+  local match = alice.matches[id]
+  assert(alice.session:ComputerTurn(match), "the computer is to move")
+  return match
+end
+
+function tests.ComputerAtATableMovesOffScreenAfterAPause()
+  local world, alice, bob, id = mixedRace()
+  local match = untilTheComputer(world, alice, bob, id)
+  local before = #match.log
+  -- Not while the window shows the game: the window sees to that
+  alice.session:Drive(10, nil, id)
+  equal(before, #match.log)
+  -- And not on the spot
+  alice.session:Drive(0.1)
+  equal(before, #match.log, "it seems to think first")
+  alice.session:Drive(5)
+  equal(before + 1, #match.log, "and then moves")
+  deliverToPeople(world)
+  equal(before + 1, #bob.matches[id].log, "which Bob is sent")
+
+  -- A game against the computer alone waits for the player to look at it
+  local alone = assert(alice.session:Invite({}, "race", { computer = {}, seat = 2 }))
+  alice.session:Drive(10)
+  alice.session:Drive(10)
+  equal(0, #alone.log)
+end
+
+function tests.WaitingOnTheComputerChecksInWithItsHost()
+  local world, alice, bob, id = mixedRace()
+  untilTheComputer(world, alice, bob, id)
+  world.sent = {}
+  world.clock = world.clock + 60 * 60 + 1
+  bob.session:Flush()
+  local checked = false
+  for _, message in ipairs(world.queue) do
+    assert(message.to ~= "*", "never the computer's seat")
+    checked = checked or (message.from == "Bob-Realm" and message.to == "Alice-Realm" and message.text:find(":SYN:", 1, true) ~= nil)
+  end
+  assert(checked, "Bob asks Alice, whose client plays the computer")
+end
+
+function tests.ComputerAtATableIsChallengedAgainWithThePeople()
+  local world, alice, bob, id = mixedRace()
+  local MainFrame = openWindow(alice)
+  MainFrame.Open(id)
+  assert(alice.session:Resign(id))
+  deliverToPeople(world)
+  assert(bob.session:Resign(id))
+  deliverToPeople(world)
+  Client.Button("rematch"):Fire("OnClick")
+  local again
+  for _, other in pairs(alice.matches) do
+    again = other.id ~= id and other or again
+  end
+  assert(again, "a new challenge")
+  equal(4, #again.players)
+  local computers = 0
+  for seat, level in pairs(again.computers) do
+    computers = computers + 1
+    equal("easy", level, "seat " .. seat)
+  end
+  equal(2, computers)
+  equal("outgoing", again.status)
+end
+
+function tests.WindowSaysWhoseClientPlaysTheComputer()
+  local world, alice, bob, id = mixedRace()
+  untilTheComputer(world, alice, bob, id)
+  equal("status_computer_thinking", openWindow(alice).Describe(alice.matches[id]))
+  equal("status_computer_elsewhere", openWindow(bob).Describe(bob.matches[id]))
+end
+
+function tests.WizardSeatsTheComputerWithPeople()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  openWizard(alice)
+  function alice.private.presence:List()
+    local list = {}
+    for index, name in ipairs({ "Bob-Realm", "Carol-Realm" }) do
+      list[index] = { name = name, source = "friend" }
+    end
+    return list
+  end
+  pickGame("chinesecheckers")
+  local function row(name)
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.player == name and widget.source ~= nil and widget:IsVisible()
+    end)[1]
+  end
+  row("Bob-Realm"):Fire("OnClick")
+  equal("Alice-Realm, Bob-Realm", (seating.Shown()))
+  seating.Sizes()["4"]:Fire("OnClick")
+  equal("Alice-Realm, Bob-Realm, wizard_seat_open [wizard_add_computer], wizard_seat_open [wizard_add_computer]", (seating.Shown()))
+  local send = Client.Button("wizard_send")
+  equal(false, send.enabled)
+  equal(true, says("wizard_seats_open"))
+
+  -- The computer in one, taken out again, and put back
+  seating.Click("wizard_add_computer")
+  equal(true, says("wizard_seat_open_one"))
+  select(2, seating.Shown())[3].remove:Fire("OnClick")
+  equal(true, says("wizard_seats_open"))
+  seating.Click("wizard_add_computer")
+
+  -- Carol takes the last one
+  row("Carol-Realm"):Fire("OnClick")
+  equal("Alice-Realm, Bob-Realm, computer [computer_level_medium], Carol-Realm", (seating.Shown()))
+  equal(true, says("wizard_summary_with_computer"))
+  equal(true, send.enabled)
+  send:Fire("OnClick")
+  local started = select(2, next(alice.matches))
+  equal(4, #started.players)
+  local seats = 0
+  for _ in pairs(started.computers) do
+    seats = seats + 1
+  end
+  equal(1, seats)
+  equal("outgoing", started.status, "a challenge like any other")
+  local challenged = {}
+  for _, message in ipairs(world.queue) do
+    challenged[#challenged + 1] = message.to
+    assert(message.text:find("_c=", 1, true), "the computer's seat goes with the challenge")
+  end
+  table.sort(challenged)
+  equal("Bob-Realm,Carol-Realm", table.concat(challenged, ","))
+end
+
+function tests.WizardCardsSayHowManyPlayShortly()
+  local world = World.New()
+  openWizard(world:AddPlayer("Alice-Realm"))
+  local function card(id)
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.game ~= nil and widget.game.id == id and widget:IsVisible()
+    end)[1]
+  end
+  equal("players_range", card("crazyeights").players.text, "2 to 6, every number in between")
+  equal("players_choice", card("chinesecheckers").players.text, "2, 3, 4 or 6")
+  equal("players_exactly", card("chess").players.text)
+  equal(true, card("chess").computer:IsShown())
+  equal(false, card("fourtiles").computer:IsShown(), "the computer doesn't play it")
+  equal(false, card("solitaire").computer:IsShown())
+end
+
+function tests.WizardSetsTheComputerUpAsItWasBeforeEachSeatHadItsOwn()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  registerRace(alice.private)
+  openWizard(alice)
+  ForeverGames.db.profile.computer = { race = { level = "hard", count = 2, chosen = true } }
+  pickGame("race")
+  equal("Alice-Realm, computer [computer_level_hard], computer [computer_level_hard]", (seating.Shown()))
+  equal("hard", ForeverGames.db.profile.computer.race.level, "what was saved is left as it was")
+  Client.Button("wizard_play"):Fire("OnClick")
+  local levels = ForeverGames.db.profile.computer.race.levels
+  equal("hard,hard", table.concat(levels, ","), "and saved the new way once played")
+end
+
+function tests.WizardTableGrowsForEveryonePicked()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  registerRace(alice.private)
+  openWizard(alice)
+  function alice.private.presence:List()
+    local list = {}
+    for index, name in ipairs({ "Bob-Realm", "Carol-Realm", "Dave-Realm", "Erin-Realm" }) do
+      list[index] = { name = name, source = "friend" }
+    end
+    return list
+  end
+  pickGame("race")
+  local function pick(name)
+    Client.Find(function(widget)
+      return widget.kind == "Button" and widget.player == name and widget.source ~= nil and widget:IsVisible()
+    end)[1]:Fire("OnClick")
+  end
+  for _, name in ipairs({ "Bob-Realm", "Carol-Realm", "Dave-Realm" }) do
+    pick(name)
+  end
+  equal("Alice-Realm, Bob-Realm, Carol-Realm, Dave-Realm", (seating.Shown()))
+  equal(false, says("wizard_add_computer"), "no seat left for it")
+
+  -- As many as the game is for, and not one more
+  pick("Erin-Realm")
+  equal(true, says("wizard_table_full"))
+  equal("Alice-Realm, Bob-Realm, Carol-Realm, Dave-Realm", (seating.Shown()))
+  seating.Sizes()["2"]:Fire("OnClick")
+  equal(true, says("wizard_table_too_small"), "nobody picked is left out")
+  equal("Alice-Realm, Bob-Realm, Carol-Realm, Dave-Realm", (seating.Shown()))
+
+  -- Somebody taken out, there is room for the computer
+  select(2, seating.Shown())[4].remove:Fire("OnClick")
+  seating.Sizes()["4"]:Fire("OnClick")
+  seating.Click("wizard_add_computer")
+  equal("Alice-Realm, Bob-Realm, Carol-Realm, computer [computer_level_medium]", (seating.Shown()))
+  -- And it gives the seat up again to whoever is picked
+  pick("Erin-Realm")
+  equal("Alice-Realm, Bob-Realm, Carol-Realm, Erin-Realm", (seating.Shown()))
+  -- A smaller table has the computer leave, and the people stay
+  pick("Erin-Realm")
+  seating.Click("wizard_add_computer")
+  seating.Sizes()["3"]:Fire("OnClick")
+  equal("Alice-Realm, Bob-Realm, Carol-Realm", (seating.Shown()))
 end
 
 function tests.WindowPlaysTicTacToeAgainstTheComputer()
@@ -17262,6 +18429,1500 @@ function tests.RegistryRefusesAComputerItCantUse()
 end
 end
 
+-----------------------------
+-- Sector maps
+-----------------------------
+do
+  --- Two rooms side by side, 128 square each, through a line with a special on it: the west one
+  --- with its floor at 0, the east one's at a height a test says, with tag 7. Cut by a node along
+  --- the line between them
+  --- @param private table
+  --- @param floor number The east room's floor
+  --- @param ceiling number? Its ceiling, 128 if left out
+  --- @return SectorMap
+  local function twoRooms(private, floor, ceiling)
+    private.SectorMap.Register("two_rooms", {
+      folder = "Rooms",
+      skyFlat = "F_SKY1",
+      vertices = { 0, 0, 128, 0, 256, 0, 256, 128, 128, 128, 0, 128 },
+      sectors = {
+        { floor = 0, ceiling = 128, floorPicture = "FLOOR", ceilingPicture = "FLOOR", light = 160, special = 0, tag = 0 },
+        { floor = floor, ceiling = ceiling or 128, floorPicture = "FLOOR", ceilingPicture = "FLOOR", light = 160, special = 0, tag = 7 },
+      },
+      sides = {
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 1 },
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 1 },
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 2 },
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 2 },
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 2 },
+        { x = 0, y = 0, upper = "-", lower = "-", middle = "WALL", sector = 1 },
+        { x = 0, y = 0, upper = "WALL", lower = "WALL", middle = "-", sector = 2 },
+        { x = 0, y = 0, upper = "WALL", lower = "WALL", middle = "-", sector = 1 },
+      },
+      lines = {
+        { from = 1, to = 6, front = 1, flags = 1, special = 0, tag = 0 },
+        { from = 6, to = 5, front = 2, flags = 1, special = 0, tag = 0 },
+        { from = 5, to = 4, front = 3, flags = 1, special = 0, tag = 0 },
+        { from = 4, to = 3, front = 4, flags = 1, special = 0, tag = 0 },
+        { from = 3, to = 2, front = 5, flags = 1, special = 0, tag = 0 },
+        { from = 2, to = 1, front = 6, flags = 1, special = 0, tag = 0 },
+        { from = 2, to = 5, front = 7, back = 8, flags = 4, special = 88, tag = 7 },
+      },
+      segs = {
+        { from = 1, to = 6, line = 1, back = false, offset = 0 },
+        { from = 6, to = 5, line = 2, back = false, offset = 0 },
+        { from = 2, to = 1, line = 6, back = false, offset = 0 },
+        { from = 5, to = 2, line = 7, back = true, offset = 0 },
+        { from = 5, to = 4, line = 3, back = false, offset = 0 },
+        { from = 4, to = 3, line = 4, back = false, offset = 0 },
+        { from = 3, to = 2, line = 5, back = false, offset = 0 },
+        { from = 2, to = 5, line = 7, back = false, offset = 0 },
+      },
+      subsectors = { { first = 1, count = 4 }, { first = 5, count = 4 } },
+      nodes = { { x = 128, y = 0, dx = 0, dy = 128, frontBox = { 128, 0, 128, 256 }, backBox = { 128, 0, 0, 128 }, front = -2, back = -1 } },
+      things = { { x = 64, y = 64, angle = 0, type = 1, flags = 7 } },
+      walls = { WALL = { width = 64, height = 64 } },
+      flats = { FLOOR = { width = 64, height = 64 } },
+      animations = { { "FLOOR", "FLOOR2" } },
+      animationTics = 8,
+      spriteFrames = { LAMPA = { { "LAMPA0", false } } },
+      sprites = { LAMPA0 = { width = 16, height = 48, left = 8, top = 48, fileWidth = 16, fileHeight = 64 } },
+    })
+    return private.SectorMap.Load("two_rooms")
+  end
+
+  local function mapEngine()
+    local private = {}
+    assert(loadfile("Engine/SectorMap.lua"))(ADDON_NAME, private)
+    return private
+  end
+
+  local function player(x, y)
+    return { x = x, y = y, z = 0, radius = 16, height = 56 }
+  end
+
+  function tests.SectorMapFindsTheSectorEveryPointIsIn()
+    local map = twoRooms(mapEngine(), 0)
+    equal(1, map:SectorAt(10, 60).index, "west")
+    equal(2, map:SectorAt(200, 60).index, "east")
+    -- And for a real map: just in front of every seg is the sector it is seen from
+    local private = mapEngine()
+    assert(loadfile("ForeverGames_Freedoom/Maps/E1M1.lua"))(ADDON_NAME, private)
+    local e1m1 = private.SectorMap.Load("freedoom_e1m1")
+    for index, seg in ipairs(e1m1.segs) do
+      local length = math.sqrt((seg.x2 - seg.x1) ^ 2 + (seg.y2 - seg.y1) ^ 2)
+      local x = (seg.x1 + seg.x2) / 2 + (seg.y2 - seg.y1) / length * 0.5
+      local y = (seg.y1 + seg.y2) / 2 - (seg.x2 - seg.x1) / length * 0.5
+      assert(e1m1:SectorAt(x, y) == seg.front, "seg " .. index .. " looks into another sector")
+    end
+  end
+
+  function tests.SectorMapStepsUpAStepButNotAWall()
+    local private = mapEngine()
+    local map = twoRooms(private, 24)
+    local walker = player(64, 64)
+    map:Slide(walker, 128, 0)
+    map:Settle(walker)
+    equal(192, walker.x, "up a step of 24")
+    equal(24, walker.z, "and stands on it")
+
+    map = twoRooms(private, 25)
+    walker = player(64, 64)
+    map:Slide(walker, 128, 0)
+    assert(walker.x <= 128 - 16 + 0.001, "not up a step of 25, got to " .. walker.x)
+
+    map = twoRooms(private, 0, 50)
+    walker = player(64, 64)
+    map:Slide(walker, 128, 0)
+    assert(walker.x <= 128 - 16 + 0.001, "not under a ceiling lower than it is tall, got to " .. walker.x)
+  end
+
+  function tests.SectorMapSlidesAlongAWall()
+    local map = twoRooms(mapEngine(), 0)
+    local walker = player(64, 64)
+    map:Slide(walker, -100, 20)
+    assert(walker.x >= 16 and walker.x < 24, "stopped at the wall, at " .. walker.x)
+    assert(math.abs(walker.y - 84) < 1e-9, "and went along it, to " .. walker.y)
+    local blocked = map:Check(10, 64, 16)
+    assert(blocked, "nowhere in a wall to stand")
+  end
+
+  function tests.SectorMapSaysWhatLineWasWalkedOver()
+    local map = twoRooms(mapEngine(), 0)
+    local walker, crossed = player(64, 64), {}
+    map:Slide(walker, 30, 0, crossed)
+    equal(0, #crossed, "not over it yet")
+    map:Slide(walker, 60, 0, crossed)
+    equal(1, #crossed, "over it once")
+    equal(7, crossed[1].index, "the line between the rooms")
+    local line, front = map:Trace(100, 64, 0, 64)
+    equal(7, line and line.index, "it is what is in reach")
+    equal(false, front, "from behind it")
+    line, front = map:Trace(160, 64, math.pi, 64)
+    equal(true, front, "and from in front")
+    equal(nil, (map:Trace(64, 64, 0, 20)), "out of reach")
+  end
+
+  function tests.SectorMapMovesFloorsAndKeepsTime()
+    local map = twoRooms(mapEngine(), 48)
+    local east = map:Tagged(7)[1]
+    equal(2, east.index, "found by its tag")
+    equal(0, map:Neighbouring(east, "floor"), "the floor next to it")
+    local arrived, timed = 0, 0
+    map:Move(east, "floor", 0, { speed = 24, onArrive = function()
+      arrived = arrived + 1
+    end })
+    map:After(1.5, function()
+      timed = timed + 1
+    end)
+    map:Tick(1)
+    equal(24, east.floor, "half way down")
+    equal(0, map:Moving(east, "floor"), "and on its way")
+    map:Tick(1)
+    equal(0, east.floor, "all the way")
+    equal(1, arrived, "and said so once")
+    equal(1, timed, "the time came")
+    equal(nil, map:Moving(east, "floor"), "and stopped")
+
+    local blocked = false
+    map:Move(east, "ceiling", 0, { speed = 64, canMove = function(_, height)
+      return height >= 56
+    end, onBlocked = function()
+      blocked = true
+    end })
+    map:Tick(0.5)
+    equal(96, east.ceiling, "on its way")
+    map:Tick(0.5)
+    equal(64, east.ceiling, "still room under it")
+    assert(not blocked, "nothing in the way yet")
+    map:Tick(0.5)
+    equal(64, east.ceiling, "but not into whoever is there")
+    assert(blocked, "and said so")
+
+    map = twoRooms(mapEngine(), 0)
+    equal("FLOOR", map:Frame("FLOOR"), "an animation's first frame")
+    map:Tick(8 / 35)
+    equal("FLOOR2", map:Frame("FLOOR"), "and the next")
+    equal("WALL", map:Frame("WALL"), "what isn't animated stays")
+  end
+
+  function tests.SectorMapKeepsThingsInTheirPlace()
+    local map = twoRooms(mapEngine(), 0)
+    local lamp = { x = 100, y = 64, angle = 0, radius = 16, height = 48, solid = true }
+    map:AddThing(lamp)
+    equal(1, lamp.sector.index, "in the west room")
+    local walker = player(40, 64)
+    map:Slide(walker, 100, 0)
+    assert(walker.x <= 100 - 32 + 0.001, "a solid thing is in the way, got to " .. walker.x)
+    local touching = map:Touching(70, 64, 16, {})
+    equal(1, #touching, "and is touched by whoever stands next to it")
+    map:MoveThing(lamp, 200, 64)
+    equal(2, lamp.sector.index, "moved to the east room")
+    equal(0, #map:Touching(70, 64, 16, {}), "and isn't where it was")
+    map:RemoveThing(lamp)
+    equal(0, #map:Touching(200, 64, 16, {}), "gone")
+    walker = player(40, 64)
+    map:Slide(walker, 160, 0)
+    equal(200, walker.x, "nothing in the way any more")
+
+    local hanging = { x = 64, y = 30, angle = 0, radius = 16, height = 40, hanging = true }
+    map:AddThing(hanging)
+    equal(128 - 40, map:Bottom(hanging), "hangs from the ceiling")
+    hanging.hanging = false
+    equal(0, map:Bottom(hanging), "or stands on the floor")
+  end
+
+  --- What a view draws over the walls and floors, from where and facing which way, pieces counted
+  local function drawnOver(private, map, x, angle)
+    private.Strips = { New = function()
+      return { frame = {}, Layout = function() end }
+    end }
+    assert(loadfile("GUI/SectorView.lua"))(ADDON_NAME, private)
+    local view = private.SectorView.New({}, {})
+    view:SetMap(map)
+    local level, over = nil, 0
+    local function piece()
+      if level then
+        over = over + 1
+      end
+    end
+    view:Draw({ x = x, y = 64, z = 41, angle = angle }, {
+      Begin = function() end,
+      SetLevel = function(_, to) level = to end,
+      Quad = piece,
+      Mapped = piece,
+      Finish = function() return 0 end,
+    })
+    return over
+  end
+
+  function tests.SectorViewHidesThingsBehindWalls()
+    local private = mapEngine()
+    local map = twoRooms(private, 0)
+    map:AddThing({ x = 200, y = 64, angle = 0, radius = 16, height = 48, picture = "LAMPA" })
+    assert(drawnOver(private, map, 40, 0) > 0, "seen across the rooms")
+    equal(0, drawnOver(private, map, 40, math.pi), "not when looking away")
+    map.sectors[2].floor = 128
+    equal(0, drawnOver(private, map, 40, 0), "nor through a wall")
+  end
+
+  function tests.FreedoomPicksThingsUpByDoomsRules()
+    local Freedoom = loadEngine().Freedoom
+    local carried = Freedoom.NewInventory()
+    equal(nil, (Freedoom.PickUp(carried, 2011)), "no stimpack for whoever is well")
+    carried.health = 20
+    equal("freedoom_got_medineed", (Freedoom.PickUp(carried, 2012)), "a medikit for whoever needs it")
+    equal(45, carried.health, "25 more")
+    equal("freedoom_got_stim", (Freedoom.PickUp(carried, 2011)))
+    equal(55, carried.health)
+    carried.health = 199
+    Freedoom.PickUp(carried, 2014)
+    Freedoom.PickUp(carried, 2014)
+    equal(200, carried.health, "bonuses go up to 200 and no further")
+    equal("freedoom_got_armor", (Freedoom.PickUp(carried, 2018)))
+    equal(100, carried.armor)
+    equal(nil, (Freedoom.PickUp(carried, 2018)), "no second vest")
+    carried.ammo.bullets = 200
+    equal(nil, (Freedoom.PickUp(carried, 2007)), "no bullets when full")
+    Freedoom.PickUp(carried, 8)
+    equal(400, carried.max.bullets, "a backpack carries twice as much")
+    equal(210, carried.ammo.bullets, "and comes with some")
+    local message, grin = Freedoom.PickUp(carried, 2001)
+    equal("freedoom_got_shotgun", message)
+    assert(grin, "a new weapon is worth a grin")
+    equal(4 + 8, carried.ammo.shells, "and two clips of shells")
+    assert(not Freedoom.Unlocks(carried, 26), "no blue key yet")
+    assert(Freedoom.Unlocks(carried, 1), "a door without a lock opens")
+    Freedoom.PickUp(carried, 40)
+    assert(Freedoom.Unlocks(carried, 26), "the skull opens it as well as the card")
+    assert(not Freedoom.Unlocks(carried, 28), "but not the red door")
+  end
+
+  function tests.ActorsGoThroughTheirStates()
+    local private = mapEngine()
+    assert(loadfile("Engine/Actors.lua"))(ADDON_NAME, private)
+    local Actors = private.Actors
+    local did = {}
+    local actor = {
+      sprite = "TROO",
+      sequences = {
+        stand = { { "A", 2, "look" }, { "B", 0 }, { "C", 1 }, next = "stand" },
+        die = { { "D", 1, "scream" }, { "E", -1 } },
+        burst = { sprite = "BEXP", { "A", 1 } },
+      },
+      act = function(self, action)
+        did[#did + 1] = action
+        if action == "scream" and self.turn then
+          Actors.Start(self, "burst")
+        end
+      end,
+    }
+    Actors.Start(actor, "stand")
+    equal("TROOA", actor.picture, "the first frame")
+    equal("look", did[1], "and what it does")
+    Actors.Tick(actor)
+    equal("TROOA", actor.picture, "for two tics")
+    Actors.Tick(actor)
+    equal("TROOC", actor.picture, "a step of no time is gone straight past")
+    Actors.Tick(actor)
+    equal("TROOA", actor.picture, "round again")
+    Actors.Start(actor, "die")
+    Actors.Tick(actor)
+    equal("TROOE", actor.picture, "down")
+    for _ = 1, 10 do
+      Actors.Tick(actor)
+    end
+    equal("TROOE", actor.picture, "and staying down")
+    actor.turn = true
+    Actors.Start(actor, "die")
+    equal("BEXPA", actor.picture, "what an action does goes first, in another sprite")
+    Actors.Tick(actor)
+    assert(actor.removed, "and the end of it is the end of the thing")
+    equal(nil, actor.picture)
+  end
+
+  function tests.SectorMapSeesShootsAndHears()
+    local private = mapEngine()
+    local map = twoRooms(private, 0)
+    local imp = { x = 200, y = 64, angle = 0, radius = 20, height = 56, solid = true, shootable = true }
+    map:AddThing(imp)
+    assert(map:Sees(40, 64, 41, 200, 64, 0, 56), "across the rooms")
+    local shot = map:Shoot(40, 64, 36, 0, 2048, nil, function(thing)
+      return thing.shootable
+    end, {})
+    assert(shot.thing == imp, "a shot hits it")
+    shot = map:Shoot(40, 64, 36, math.pi, 2048, nil, function()
+      return true
+    end, {})
+    equal(nil, shot.thing, "not when fired the other way")
+    assert(shot.x < 5 and shot.x > -1, "it stops at the wall, at " .. shot.x)
+
+    -- The east room raised higher than the eye: the floor at the back of it can't be seen from
+    -- below, but somebody standing on it can
+    map = twoRooms(private, 60)
+    assert(not map:Sees(40, 64, 41, 240, 64, 60, 62), "not the floor of it, from below")
+    assert(map:Sees(40, 64, 41, 240, 64, 60, 116), "but a monster standing on it")
+
+    -- Shot on a ledge higher than the gun, as Doom aimed
+    map = twoRooms(private, 60)
+    imp.x = 200
+    map:AddThing(imp)
+    shot = map:Shoot(40, 64, 36, 0, 2048, nil, function(thing)
+      return thing.shootable
+    end, {})
+    assert(shot.thing == imp, "a monster on a ledge above is aimed at and hit")
+    map:RemoveThing(imp)
+    shot = map:Shoot(40, 64, 36, 0, 2048, nil, function()
+      return true
+    end, {})
+    equal(nil, shot.thing, "with nothing there")
+    assert(shot.x > 120 and shot.x < 128, "a level shot stops at the ledge's edge, at " .. shot.x)
+
+    -- Heard across an open line, not a shut one
+    map = twoRooms(private, 0)
+    map:Noise(map.sectors[1], imp)
+    assert(map.sectors[2].soundTarget == imp, "heard next door")
+    map = twoRooms(private, 128)
+    map:Noise(map.sectors[1], imp)
+    equal(nil, map.sectors[2].soundTarget, "not through a shut door")
+  end
+
+  function tests.SectorMapWalksThingsDoomsWay()
+    local private = mapEngine()
+    local map = twoRooms(private, -40)
+    local monster = { x = 100, y = 64, angle = 0, radius = 20, height = 56, solid = true }
+    map:AddThing(monster)
+    local moved = map:TryMoveThing(monster, 140, 64)
+    assert(not moved, "not off a ledge it can't step back up")
+    assert(map:TryMoveThing(monster, 140, 64, true), "unless it may")
+    equal(2, monster.sector.index, "and is in the other room")
+    map = twoRooms(private, 30)
+    map:AddThing(monster)
+    monster.x, monster.y = 100, 64
+    map:MoveThing(monster, 100, 64)
+    assert(not map:TryMoveThing(monster, 140, 64), "nor up a step too high")
+  end
+
+  function tests.FreedoomArmourTakesSomeOfABlow()
+    local Freedoom = loadEngine().Freedoom
+    local player = { shootable = true }
+    local run = { player = player, inventory = Freedoom.NewInventory(), tic = 0 }
+    Freedoom.Damage(run, player, 30)
+    equal(70, run.inventory.health, "all of it without")
+    run.inventory.armor, run.inventory.armorClass = 100, 1
+    Freedoom.Damage(run, player, 30)
+    equal(50, run.inventory.health, "a third of it with the green vest")
+    equal(90, run.inventory.armor, "which wears down")
+    run.inventory.armor, run.inventory.armorClass = 200, 2
+    Freedoom.Damage(run, player, 30)
+    equal(35, run.inventory.health, "half with the blue")
+    Freedoom.Damage(run, player, 200)
+    equal(0, run.inventory.health)
+    assert(run.dead, "and dead")
+    assert(not player.shootable, "past hurting")
+  end
+
+  --- Freedoom's view on the fake client, showing a game just begun on a map
+  --- @param level string? "e1m1" if left out
+  local function freedoomView(level)
+    Client.Install()
+    local private = loadEngine()
+    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Strips.lua", "GUI/SectorView.lua", "ForeverGames_Freedoom/Hud.lua" }) do
+      assert(loadfile(file))(ADDON_NAME, private)
+    end
+    -- As the maps' own addon puts them, when it is loaded
+    for map = 1, 9 do
+      assert(loadfile("ForeverGames_Freedoom/Maps/E1M" .. map .. ".lua"))()
+    end
+    local game = private.Games.Get("freedoom")
+    local stage = CreateFrame("Frame", nil, UIParent)
+    local view = game.createView(stage)
+    view:Layout(800, 600)
+    local state = game.newState(1, nil, { map = level })
+    view:Update({ match = { id = level or "m1" }, state = state, seat = 1, canMove = true, submit = function() end, changed = true })
+    return view, private
+  end
+
+  function tests.FreedoomPlaysEveryMapOfTheEpisode()
+    -- Doom's scrolling walls are only for the look of them
+    local cosmetic = { [48] = true }
+    for map = 1, 9 do
+      local level = "e1m" .. map
+      local view, private = freedoomView(level)
+      local run = view.run
+      equal(level, run.level, "the map picked")
+      for _, line in ipairs(run.map.lines) do
+        assert(line.special == 0 or private.Freedoom.Specials[line.special] or cosmetic[line.special],
+          level .. " has a line that does what nothing here does: " .. line.special)
+      end
+      local monsters = 0
+      for _, actor in ipairs(run.actors) do
+        monsters = monsters + ((actor.info and not actor.info.barrel) and 1 or 0)
+      end
+      assert(monsters > 0, level .. " has somebody in it")
+      for _ = 1, 35 do
+        view:tick(1 / 35)
+      end
+    end
+  end
+
+  function tests.FreedoomKeepsABestTimeForEveryMap()
+    local game = loadEngine().Games.Get("freedoom")
+    local state = game.newState(1, nil, { map = "e1m5" })
+    equal("freedoom_e1m5", state.map)
+    equal(nil, game.record(state, 100), "nothing kept for a map not got out of")
+    state.out = true
+    local records = game.record(state, 100)
+    equal("e1m5", records[1].key, "kept under the map")
+    assert(records[1].lower, "the less time the better")
+    equal("e1m1", game.newState(1, nil, {}).level, "the first map unless another is picked")
+  end
+
+  function tests.FreedoomGhostSamplesAreFiveLetters()
+    local Freedoom = loadEngine().Freedoom
+    for _, case in ipairs({ { -416, 256, 0, false }, { 3104.7, -2160.2, 2.5, true }, { 0, 0, 6.2, false } }) do
+      local sample = Freedoom.GhostSample(case[1], case[2], case[3], case[4])
+      equal(5, #sample, "five letters")
+      assert(sample:match("^[%w%-_]+$"), "of those a race takes: " .. sample)
+      local place = Freedoom.GhostPlace(sample)
+      assert(math.abs(place.x - case[1]) <= 4 and math.abs(place.y - case[2]) <= 4, "where, to within half of 8 units")
+      local off = (place.angle - case[3] + math.pi) % (2 * math.pi) - math.pi
+      assert(math.abs(off) <= math.pi / 32 + 1e-9, "which way, to within half of a 32nd of a turn")
+      equal(case[4], place.firing, "and whether firing")
+    end
+    equal(nil, Freedoom.GhostPlace("abc"), "too short")
+    equal(nil, Freedoom.GhostPlace("ab+cd"), "a letter it doesn't take")
+  end
+
+  function tests.FreedoomRacesAGhostWithItsNameOverItsHead()
+    local view, private = freedoomView()
+    local run = view.run
+    local player = run.player
+    local Freedoom = private.Freedoom
+    -- Bob's run: standing 160 ahead of where the player starts, then walking towards them
+    local trail = {}
+    for index = 0, 9 do
+      trail[#trail + 1] = Freedoom.GhostSample(player.x + 160 - index * 8, player.y, math.pi, index == 9)
+    end
+    local seconds, kept = 0, {}
+    local game = private.Games.Get("freedoom")
+    view:Update({
+      match = { id = "m1" }, state = game.newState(1, nil, {}), seat = 1, canMove = true, submit = function() end, changed = true,
+      clock = function()
+        return seconds
+      end,
+      race = {
+        rival = "Bob-Realm", theirs = 42, ghost = trail,
+        sample = function(text)
+          kept[#kept + 1] = text
+          return true
+        end,
+      },
+    })
+    local ghost = run.ghost
+    assert(ghost, "Bob's ghost is in the map")
+    equal("Bob", view.plate.name.text, "with his first name")
+    for _ = 1, 35 do
+      seconds = seconds + 1 / 35
+      view:tick(1 / 35)
+    end
+    assert(#kept > 0, "the player's own run is kept as they go")
+    assert(Freedoom.GhostPlace(kept[#kept]), "in samples that read back")
+    assert(ghost.x < player.x + 160 and ghost.x > player.x + 80, "walking towards the player as Bob did, at " .. ghost.x)
+    assert(ghost.picture:match("^PLAY[A-D]$"), "with a step of the marine's walk: " .. ghost.picture)
+    assert(view.plate:IsShown(), "his name over his head")
+    assert(ghost.alpha < 1, "seen through")
+
+    -- Behind the player he isn't seen, and nor is his name
+    run.angle = math.pi
+    view:tick(1 / 35)
+    assert(not view.plate:IsShown(), "not seen, no name")
+
+    -- Once his run is over he fades away
+    seconds = seconds + 10
+    for _ = 1, 3 do
+      view:tick(1 / 35)
+    end
+    equal(nil, run.ghost, "gone")
+  end
+
+  function tests.FreedoomTeleportsFromTheFrontOnly()
+    local view, private = freedoomView("e1m4")
+    local run = view.run
+    local line
+    for _, each in ipairs(run.map.lines) do
+      if (each.special == 97 or each.special == 39) and not line then
+        line = each
+      end
+    end
+    assert(line, "a teleport")
+    local x, y = run.player.x, run.player.y
+    assert(not private.Freedoom.Trigger(run, line, "walk", nil, false), "not from behind")
+    equal(x, run.player.x, "and stayed where they were")
+    assert(private.Freedoom.Trigger(run, line, "walk", nil, true), "from the front")
+    local landed = false
+    for _, landing in ipairs(run.teleports) do
+      if landing.x == run.player.x and landing.y == run.player.y then
+        landed = landing.sector.tag == line.tag
+      end
+    end
+    assert(landed, "to where the teleport lands")
+  end
+
+  function tests.FreedoomViewDrawsOnlyWhatChanged()
+    local view = freedoomView()
+    local screen = view.screen
+    local drawn = screen.stamp
+    view:draw()
+    equal(drawn, screen.stamp, "nothing changed, nothing drawn")
+    view.run.angle = view.run.angle + 0.1
+    view:draw()
+    equal(drawn + 1, screen.stamp, "turned")
+    view.run.map:Changed()
+    view:draw()
+    equal(drawn + 2, screen.stamp, "something in the map changed")
+    view:draw()
+    equal(drawn + 2, screen.stamp, "and not again")
+  end
+
+  function tests.FreedoomMonstersComeAtAShot()
+    math.randomseed(7)
+    local view = freedoomView()
+    local run = view.run
+    local map = run.map
+    -- Into the room most monsters share, away from them
+    local counts, busiest = {}, nil
+    for _, actor in ipairs(run.actors) do
+      if actor.info and not actor.info.barrel then
+        counts[actor.sector] = (counts[actor.sector] or 0) + 1
+        if not busiest or counts[actor.sector] > counts[busiest.sector] then
+          busiest = actor
+        end
+      end
+    end
+    local placed
+    for _, away in ipairs({ 256, 192, 128 }) do
+      for turn = 0, 15 do
+        local x, y = busiest.x + math.cos(turn * math.pi / 8) * away, busiest.y + math.sin(turn * math.pi / 8) * away
+        if not placed and map:SectorAt(x, y) == busiest.sector and not map:Check(x, y, 16, nil, run.player) then
+          placed = { x, y }
+        end
+      end
+    end
+    map:MoveThing(run.player, placed[1], placed[2])
+    map:Settle(run.player)
+    run.angle = math.atan2(busiest.y - placed[2], busiest.x - placed[1])
+    view.down.F = true
+    local health = run.inventory.health
+    for _ = 1, 35 * 6 do
+      view:tick(1 / 35)
+    end
+    local awake, dead = 0, 0
+    for _, actor in ipairs(run.actors) do
+      if actor.info and not actor.info.barrel then
+        awake = awake + (actor.target and 1 or 0)
+        dead = dead + (actor.shootable and 0 or 1)
+      end
+    end
+    assert(awake > 0, "the shots were heard")
+    assert(dead > 0, "and somebody was shot dead")
+    assert(run.inventory.ammo.bullets < 50, "with bullets")
+    assert(run.inventory.health < health, "and they shot back")
+  end
+
+  --- Freedoom's first map with nobody in it but the player and as many of its monsters as are
+  --- asked for, each with 1000 health, who stand where they are put and only feel what is done to them
+  local function freedoomAlone(count)
+    local view, private = freedoomView()
+    local run = view.run
+    local kept = {}
+    for _, actor in ipairs(run.actors) do
+      if #kept < count and actor.info and not actor.info.barrel and not actor.info.floats then
+        local still = { { "A", -1 } }
+        local sequences = setmetatable({ stand = still, chase = still, pain = still }, { __index = actor.info.sequences })
+        actor.info = setmetatable({ sequences = sequences }, { __index = actor.info })
+        actor.sequences, actor.health = sequences, 1000
+        private.Actors.Start(actor, "stand")
+        kept[#kept + 1] = actor
+      else
+        run.map:RemoveThing(actor)
+      end
+    end
+    run.actors = { unpack(kept) }
+    return view, kept
+  end
+
+  --- Somewhere on the map, and a way to face from there, with nothing in the way as far ahead
+  --- and as wide either side as asked, all on one floor; facing along the map's lines if asked
+  local function freedoomOpen(run, far, wide, along)
+    local map, player = run.map, run.player
+    local function nothing()
+      return false
+    end
+    for _, thing in ipairs(map.data.things) do
+      local floor = map:SectorAt(thing.x, thing.y).floor
+      if not map:Check(thing.x, thing.y, player.radius, nil, player) then
+        for turn = 0, 15, along and 4 or 1 do
+          local angle, open = turn * math.pi / 8, true
+          for side = -4, 4 do
+            local way = angle + wide * side / 4
+            if map:Shoot(thing.x, thing.y, floor + 41, way, far + 64, player, nothing, {}).line then
+              open = false
+            end
+            for ahead = 32, far, 32 do
+              open = open and map:SectorAt(thing.x + math.cos(way) * ahead, thing.y + math.sin(way) * ahead).floor == floor
+            end
+          end
+          if open then
+            map:MoveThing(player, thing.x, thing.y)
+            map:Settle(player)
+            run.angle = angle
+            return thing.x, thing.y, angle
+          end
+        end
+      end
+    end
+    error("nowhere open enough")
+  end
+
+  --- Gives the player a weapon and something for it, changes to it with its number key and
+  --- waits for it to come up
+  local function freedoomArm(view, weapon, key, ammo, amount)
+    local run = view.run
+    run.inventory.weapons[weapon] = true
+    run.inventory.ammo[ammo] = amount
+    view.ticker:Fire("OnKeyDown", key)
+    equal(weapon, run.inventory.pending, key .. " changes to it")
+    for _ = 1, 70 do
+      view:worldTic()
+    end
+    equal(weapon, run.inventory.weapon, "in hand")
+    equal(0, run.gunMoving, "and up")
+  end
+
+  --- Fires once, and lets the world go on for so many tics
+  local function freedoomFire(view, tics)
+    view.run.firing = true
+    view:worldTic()
+    view.run.firing = false
+    for _ = 1, tics do
+      view:worldTic()
+    end
+  end
+
+  function tests.FreedoomRocketGoesUpOnWhatItHits()
+    math.randomseed(3)
+    local view, monsters = freedoomAlone(2)
+    local run = view.run
+    local map = run.map
+    local x, y, angle = freedoomOpen(run, 320, 0.4)
+    local hit, beside = monsters[1], monsters[2]
+    local cos, sin = math.cos(angle), math.sin(angle)
+    map:MoveThing(hit, x + cos * 256, y + sin * 256)
+    map:MoveThing(beside, x + cos * 256 - sin * 48, y + sin * 256 + cos * 48)
+    freedoomArm(view, "launcher", "5", "rockets", 5)
+    freedoomFire(view, 0)
+    local at
+    for _ = 1, 40 do
+      view:worldTic()
+      for _, actor in ipairs(run.actors) do
+        if not at and actor.picture == "MISLB" then
+          at = { x = actor.x, y = actor.y }
+        end
+      end
+    end
+    assert(at, "the rocket went up")
+    equal(4, run.inventory.ammo.rockets, "a rocket fired")
+    --- What a blast of 128 from where it went up does to somebody, Doom's way
+    local function blast(monster)
+      return 128 - math.max(0, math.max(math.abs(monster.x - at.x), math.abs(monster.y - at.y)) - monster.radius)
+    end
+    local struck, blasted = 1000 - hit.health, 1000 - beside.health
+    assert(blasted > 0 and math.abs(blasted - blast(beside)) < 1e-6, "the one beside it caught in the blast, no more")
+    local rocket = struck - blast(hit)
+    assert(rocket >= 20 and rocket <= 160 and math.abs(rocket / 20 - math.floor(rocket / 20 + 0.5)) < 1e-6,
+      "the one it hit took the rocket as well as the blast, " .. rocket)
+    equal(100, run.inventory.health, "and nothing reached whoever fired it from that far")
+  end
+
+  function tests.FreedoomRocketUpCloseHurtsWhoeverFiredIt()
+    math.randomseed(5)
+    local view = freedoomAlone(0)
+    local run = view.run
+    local map, player = run.map, run.player
+    local x, y, angle = freedoomOpen(run, 64, 0, true)
+    local cos, sin = math.cos(angle), math.sin(angle)
+    local wall = map:Shoot(x, y, player.z + 41, angle, 2048, player, function()
+      return false
+    end, {}).distance + 4
+    local placed = false
+    for back = 17, 31 do
+      if not placed and not map:Check(x + cos * (wall - back), y + sin * (wall - back), player.radius, nil, player) then
+        map:MoveThing(player, x + cos * (wall - back), y + sin * (wall - back))
+        placed = true
+      end
+    end
+    assert(placed, "right in front of a wall")
+    freedoomArm(view, "launcher", "5", "rockets", 1)
+    run.inventory.armor, run.inventory.armorClass = 200, 2
+    freedoomFire(view, 40)
+    equal(0, run.inventory.ammo.rockets, "the rocket fired")
+    equal(100 - 64, run.inventory.health, "went up in their face, all 128 of it, half of that through the blue armour")
+    equal(200 - 64, run.inventory.armor)
+  end
+
+  function tests.FreedoomPlasmaBurstsOnAWall()
+    math.randomseed(9)
+    local view = freedoomAlone(0)
+    local run = view.run
+    local map, player = run.map, run.player
+    local x, y, angle = freedoomOpen(run, 128, 0.2)
+    local wall = map:Shoot(x, y, player.z + 41, angle, 4096, player, function()
+      return false
+    end, {}).distance + 4
+    freedoomArm(view, "plasma", "6", "cells", 20)
+    freedoomFire(view, 0)
+    equal(19, run.inventory.ammo.cells, "a cell a shot")
+    assert(run.light > 0, "its flash lights the room")
+    equal(player, player.sector.soundTarget, "and it is heard")
+    local burst
+    for _ = 1, 35 * 6 do
+      view:worldTic()
+      for _, actor in ipairs(run.actors) do
+        if not burst and actor.picture and actor.picture:sub(1, 4) == "PLSE" then
+          burst = math.sqrt((actor.x - x) ^ 2 + (actor.y - y) ^ 2)
+        end
+      end
+    end
+    assert(burst, "it burst")
+    assert(burst <= wall and burst > wall - 64, "on the wall ahead")
+    equal(0, #run.actors, "and was gone")
+  end
+
+  function tests.FreedoomBFGSpraysWhatIsInFront()
+    math.randomseed(11)
+    local view, monsters = freedoomAlone(3)
+    local run = view.run
+    local map = run.map
+    local x, y, angle = freedoomOpen(run, 256, 0.5)
+    for index, monster in ipairs(monsters) do
+      local way = angle + (index - 2) * 0.35
+      map:MoveThing(monster, x + math.cos(way) * 192, y + math.sin(way) * 192)
+    end
+    freedoomArm(view, "bfg", "7", "cells", 80)
+    run.firing = true
+    view:worldTic()
+    run.firing = false
+    local flashes = {}
+    for _ = 1, 35 * 3 do
+      view:worldTic()
+      for _, actor in ipairs(run.actors) do
+        if actor.picture and actor.picture:sub(1, 4) == "BFE2" then
+          flashes[actor] = true
+        end
+      end
+    end
+    equal(40, run.inventory.ammo.cells, "forty cells a shot")
+    for index, monster in ipairs(monsters) do
+      assert(monster.health < 1000, "the tracers found monster " .. index)
+    end
+    assert(next(flashes), "and flashed green on them")
+    equal(100, run.inventory.health, "and nothing came back at whoever fired it")
+  end
+
+  function tests.FreedoomTurnsToWhatCanFireInDoomsOrder()
+    local view = freedoomAlone(0)
+    local run = view.run
+    local inventory = run.inventory
+    --- Holding a weapon, with only these, fires: what it changes to
+    local function dry(holding, weapons, ammo)
+      inventory.weapons, inventory.weapon, inventory.pending = weapons, holding, nil
+      for kind in pairs(inventory.ammo) do
+        inventory.ammo[kind] = ammo[kind] or 0
+      end
+      run.gunMoving, run.gunY = 0, 32
+      freedoomFire(view, 0)
+      return inventory.pending
+    end
+    local all = { fist = true, pistol = true, launcher = true, plasma = true, bfg = true }
+    equal("plasma", dry("bfg", all, { cells = 39, bullets = 50, rockets = 5 }), "the plasma gun first, from a BFG short of cells")
+    local noPlasma = { fist = true, pistol = true, launcher = true, bfg = true }
+    equal("pistol", dry("bfg", noPlasma, { cells = 39, bullets = 50, rockets = 5 }), "the pistol before the rocket launcher")
+    equal("launcher", dry("bfg", noPlasma, { cells = 39, rockets = 5 }), "the launcher when nothing else has anything")
+    equal("bfg", dry("launcher", noPlasma, { cells = 40 }), "the BFG after it")
+    equal("fist", dry("launcher", noPlasma, { cells = 39 }), "and the fist when nothing fires")
+
+    inventory.weapons, inventory.weapon, inventory.pending = { fist = true, pistol = true, plasma = true }, "pistol", nil
+    view.ticker:Fire("OnKeyDown", "7")
+    equal(nil, inventory.pending, "no BFG to change to")
+    view.ticker:Fire("OnKeyDown", "6")
+    equal("plasma", inventory.pending, "6 for the plasma gun")
+  end
+
+  function tests.FreedoomViewPicksUpAndUnlocks()
+    local view = freedoomView()
+    local run = view.run
+    local map, walker = run.map, run.player
+    assert(#run.animated > 0, "things that go through frames")
+
+    -- Stood on a stimpack while hurt
+    local stim
+    for _, sector in ipairs(map.sectors) do
+      for thing in pairs(sector.things) do
+        if thing.type == 2011 then
+          stim = thing
+        end
+      end
+    end
+    assert(stim, "a stimpack lies somewhere")
+    run.inventory.health = 50
+    walker.x, walker.y = stim.x, stim.y
+    map:Settle(walker)
+    view:tick(0.02)
+    equal(60, run.inventory.health, "picked up")
+    assert(not stim.sector, "and gone from the map")
+    equal("freedoom_got_stim", view.message, "and said so")
+
+    -- In front of a blue door
+    local door
+    for _, line in ipairs(map.lines) do
+      if line.special == 26 and line.back then
+        door = line
+        break
+      end
+    end
+    assert(door, "a blue door")
+    local length = door.length
+    local middleX, middleY = (door.x1 + door.x2) / 2, (door.y1 + door.y2) / 2
+    walker.x, walker.y = middleX + door.dy / length * 40, middleY - door.dx / length * 40
+    run.angle = math.atan2(-door.dx, door.dy) + math.pi
+    map:Settle(walker)
+    view:use()
+    equal("freedoom_need_blue", view.message, "locked")
+    equal(nil, map:Moving(door.back.sector, "ceiling"), "and shut")
+    run.inventory.keys.bluecard = true
+    view:use()
+    assert(map:Moving(door.back.sector, "ceiling"), "the card opens it")
+  end
+
+  --- Draws from a point and checks that every pixel of the screen is drawn once, no more
+  local function coverage(private, map, x, y, z, angle, detail)
+    private.Strips = { New = function()
+      return { frame = {}, Layout = function() end }
+    end }
+    assert(loadfile("GUI/SectorView.lua"))(ADDON_NAME, private)
+    local view = private.SectorView.New({}, { detail = detail })
+    view:SetMap(map)
+    local grid, count, level = {}, 0, nil
+    local function cover(left, top, right, bottom)
+      count = count + 1
+      if level then
+        -- Things and what is seen through are drawn over the rest
+        return
+      end
+      for row = top, bottom - 1 do
+        for column = left, right - 1 do
+          local key = row * 320 + column
+          grid[key] = (grid[key] or 0) + 1
+        end
+      end
+    end
+    local sink = {
+      Begin = function() end,
+      SetLevel = function(_, to) level = to end,
+      Quad = function(_, left, top, right, bottom) cover(left, top, right, bottom) end,
+      Mapped = function(_, left, top, right, bottom) cover(left, top, right, bottom) end,
+      Finish = function() return count end,
+    }
+    local stats = view:Draw({ x = x, y = y, z = z, angle = angle }, sink)
+    for key = 0, 320 * 200 - 1 do
+      local times = grid[key] or 0
+      if times ~= 1 then
+        error(string.format("pixel %d,%d drawn %d times from %d,%d facing %.2f", key % 320, math.floor(key / 320), times, x, y, angle), 2)
+      end
+    end
+    return stats
+  end
+
+  function tests.SectorViewDrawsEveryPixelOnce()
+    local private = mapEngine()
+    local map = twoRooms(private, 24)
+    for turn = 0, 15 do
+      coverage(private, map, 40, 70, 41, turn * math.pi / 8)
+      coverage(private, map, 200, 30, 65, turn * math.pi / 8, 2)
+    end
+    assert(loadfile("ForeverGames_Freedoom/Maps/E1M1.lua"))(ADDON_NAME, private)
+    local e1m1 = private.SectorMap.Load("freedoom_e1m1")
+    local looked = 0
+    for _, thing in ipairs(e1m1.data.things) do
+      if looked < 30 then
+        looked = looked + 1
+        local stats = coverage(private, e1m1, thing.x, thing.y, e1m1:SectorAt(thing.x, thing.y).floor + 41, math.rad(thing.angle))
+        assert(stats.pieces > 0 and stats.segs > 0, "something was drawn")
+      end
+    end
+  end
+end
+
+-----------------------------
+-- Races
+-----------------------------
+
+do
+  --- A game for one that is a dash to the end, with a ghost of the way there: "w" gets there and
+  --- "x" falls over on the way
+  --- @param private table
+  --- @param shown table? Filled with what the view is asked to show
+  local function registerDash(private, shown)
+    private.Games.Register({
+      id = "dash",
+      name = "Dash",
+      genre = "solo",
+      version = 1,
+      seats = 1,
+      clock = "open",
+      ghost = { every = 0.5 },
+      newState = function()
+        return {}
+      end,
+      turn = function()
+        return 1
+      end,
+      validate = function(_, _, move)
+        return move == "w" or move == "x"
+      end,
+      apply = function(state, _, move)
+        state.outcome = { winner = move == "w" and 1 or 0 }
+      end,
+      result = function(state)
+        return state.outcome
+      end,
+      record = function(_, seconds, result)
+        if result and result.winner == 1 then
+          return { { key = "time", value = seconds, lower = true } }
+        end
+        return nil
+      end,
+      createView = function()
+        return {
+          Layout = function() end,
+          Update = function(_, view)
+            shown.view = view
+          end,
+        }
+      end,
+    })
+  end
+
+  --- Two players with the games only the tests have, and Alice's challenge to Bob to race one
+  --- @param gameId string? Counting if left out
+  --- @param setup table? How it is set up
+  --- @return World, table alice, table bob, Match mine, Match? theirs
+  local function raced(gameId, setup)
+    local world = World.New()
+    world.prepare = function(private)
+      registerCounting(private)
+      registerDash(private)
+    end
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local mine = assert(alice.session:Invite("Bob-Realm", gameId or "counting", setup))
+    world:Deliver()
+    return world, alice, bob, mine, bob.matches[mine.id]
+  end
+
+  --- Has a player play a game of counting: up so many times, then won or lost
+  --- @param player table
+  --- @param id string
+  --- @param seconds number How long it takes
+  --- @param last string "w" to win, "x" to lose
+  local function count(player, id, seconds, last)
+    assert(player.session:Move(id, "u"))
+    player.session:Spend(id, seconds)
+    assert(player.session:Move(id, last))
+  end
+
+  function tests.RaceIsTakenUpPlayedAndWonByTheQuicker()
+    local world, alice, bob, mine, theirs = raced()
+    local Race = alice.private.Race
+    equal("active", mine.status, "whoever challenges plays at once")
+    equal(true, mine.race.unanswered)
+    equal("Bob-Realm", mine.race.rival)
+    equal(1, #mine.players, "a game for one on each side")
+    assert(theirs, "the challenge arrived")
+    equal("incoming", theirs.status)
+    equal("Alice-Realm", theirs.race.rival)
+    equal(true, bob.session:NeedsAttention(theirs))
+    equal(false, alice.session:NeedsAttention(mine))
+    equal("Bob-Realm", alice.session:Opponents()[1].name)
+    equal("Alice-Realm", bob.session:Opponents()[1].name)
+    equal(false, (bob.session:Move(theirs.id, "u")), "nothing is played before it is taken up")
+
+    -- Alice is done before Bob has answered: her time waits for him
+    count(alice, mine.id, 7.5, "w")
+    equal("finished", mine.status)
+    equal(750, Race.Mine(mine.race))
+    equal(0, #world.queue, "told nobody yet")
+
+    assert(bob.session:Accept(theirs.id))
+    world:Deliver()
+    equal(nil, mine.race.unanswered)
+    equal(750, Race.Theirs(theirs.race), "her time is there to beat")
+    equal(1, mine.race.told)
+    equal(nil, Race.Outcome(theirs.race), "while his run is on")
+    equal(false, bob.session:CanForget(theirs), "a race that is on is given up, not thrown away")
+    assert(bob.session:Move(theirs.id, "u"))
+    equal(false, bob.session:CanUndo(theirs), "and nothing is taken back")
+    bob.session:Spend(theirs.id, 9.25)
+    assert(bob.session:Move(theirs.id, "w"))
+    world:Deliver()
+    equal(925, Race.Theirs(mine.race))
+    equal("won", Race.Outcome(mine.race))
+    equal("lost", Race.Outcome(theirs.race))
+    equal(true, Race.Settled(mine.race))
+    equal(true, Race.Settled(theirs.race))
+    equal(true, alice.session:NeedsAttention(mine), "how Bob did is news to Alice")
+    alice.session:MarkRead(mine.id)
+    equal(false, alice.session:NeedsAttention(mine))
+    equal(7.5, alice.session:Best("counting", "time"), "a run is a game like any other for the records")
+
+    -- Only the times ever went anywhere, and once both are known nothing more is said
+    for _, sent in ipairs(world.sent) do
+      local entry = sent:match(":MOV:[^:]+:%d+:%d+:(.*)$")
+      assert(entry == nil or entry:match("^%d+$"), "a move was sent: " .. sent)
+    end
+    local before = #world.sent
+    world:Tick(2 * 3600)
+    world:Tick(2 * 3600)
+    equal(before, #world.sent, "nothing more to say")
+    assert(alice.session:Forget(mine.id))
+    equal(nil, alice.matches[mine.id], "gone once it is told")
+  end
+
+  function tests.RaceIsDealtTheSameForBoth()
+    local world, alice, bob, mine, theirs = raced("minesweeper", { options = { level = "expert" } })
+    equal("expert", theirs.options.level, "by the rules it was set up with")
+    assert(bob.session:Accept(theirs.id))
+    world:Deliver()
+    local game = alice.private.Games.Get("minesweeper")
+    local first = game.moves(alice.private.Match.State(mine), 1)[1]
+    assert(alice.session:Move(mine.id, first))
+    assert(bob.session:Move(theirs.id, first))
+    equal(written(alice.private.Match.State(mine)), written(bob.private.Match.State(theirs)), "the same field of mines")
+    equal(30, bob.private.Match.State(theirs).columns)
+
+    -- Another race is another deal
+    local other = assert(alice.session:Invite("Bob-Realm", "minesweeper", { options = { level = "expert" } }))
+    assert(alice.session:Move(other.id, first))
+    assert(written(alice.private.Match.State(other)) ~= written(alice.private.Match.State(mine)))
+
+    -- A puzzle is dealt as soon as it begins
+    local puzzles, setter, solver, puzzle, copy = raced("sudoku")
+    assert(solver.session:Accept(copy.id))
+    puzzles:Deliver()
+    equal(written(setter.private.Match.State(puzzle)), written(solver.private.Match.State(copy)), "the same Sudoku")
+  end
+
+  function tests.RaceGoesOnWithEitherOfThemAway()
+    local world = World.New()
+    world.prepare = registerCounting
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local Race = alice.private.Race
+    bob.online = false
+    local id = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    equal(nil, bob.matches[id], "lost on the way")
+    bob.online = true
+    world:Tick(31)
+    local theirs = assert(bob.matches[id], "tried again")
+    equal("incoming", theirs.status)
+
+    -- Bob takes it up and plays it out while Alice is away: neither his answer nor his time get there
+    alice.online = false
+    assert(bob.session:Accept(id))
+    count(bob, id, 4, "x")
+    world:Deliver()
+    equal(true, alice.matches[id].race.unanswered)
+    equal(false, Race.Mine(theirs.race), "his run didn't finish")
+
+    -- Alice comes back and asks again, which Bob answers, and his run follows
+    alice.online = true
+    alice = world:Relog(alice)
+    local mine = alice.matches[id]
+    equal(nil, mine.race.unanswered)
+    world:Tick(1)
+    equal(false, Race.Theirs(mine.race))
+
+    -- She finishes while he is away, and he hears of it when he comes back
+    bob.online = false
+    count(alice, id, 3, "w")
+    world:Deliver()
+    equal(nil, Race.Theirs(theirs.race))
+    bob.online = true
+    bob = world:Relog(bob)
+    theirs = bob.matches[id]
+    equal(300, Race.Theirs(theirs.race))
+    equal("won", Race.Outcome(mine.race))
+    equal("lost", Race.Outcome(theirs.race))
+    equal(true, Race.Settled(mine.race))
+
+    -- A run that is over and taken off the list is still told to the rival
+    local again = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    assert(bob.session:Accept(again))
+    world:Deliver()
+    alice.online = false
+    count(bob, again, 2, "w")
+    world:Deliver()
+    assert(bob.session:Forget(again))
+    equal(true, bob.matches[again].hidden, "kept out of sight until she has it")
+    equal(false, bob.session:NeedsAttention(bob.matches[again]))
+    alice.online = true
+    world:Tick(600)
+    equal(200, Race.Theirs(alice.matches[again].race))
+  end
+
+  function tests.RaceTakesAGhostAlongWithTheTime()
+    local world, alice, bob, mine, theirs = raced("dash")
+    local Race = alice.private.Race
+    assert(bob.session:Accept(theirs.id))
+    world:Deliver()
+    equal(false, alice.session:Sample(mine.id, "a+b"), "a sample doesn't read right")
+    equal(false, alice.session:Sample(mine.id, string.rep("y", Race.SAMPLE_MOST + 1)))
+    equal(false, alice.session:Sample("nope", "a"))
+    -- Four times a second for a long while: one is kept every half second, until there is no
+    -- more room
+    for step = 0, 800 do
+      alice.session:Spend(mine.id, 0.25)
+      alice.session:Sample(mine.id, string.format("p%03d", math.floor(step / 2)) .. string.rep("z", 26))
+    end
+    local samples = mine.race.samples
+    assert(samples > 100 and samples < 200, "kept " .. tostring(samples))
+    assert(#mine.race.trail <= 4000)
+    assert(alice.session:Move(mine.id, "w"))
+    local run = mine.race.run
+    assert(#run > 16, "a run of " .. #run .. " is more than one stretch")
+
+    -- One piece goes missing on the way, and is asked for again
+    local dropped = false
+    world:Deliver(function(message)
+      if not dropped and message.text:find(":MOV:" .. mine.id .. ":5:", 1, true) then
+        dropped = true
+        return true
+      end
+      return false
+    end)
+    local ghost = Race.Ghost(theirs.race)
+    assert(ghost, "the ghost came")
+    equal(samples, #ghost)
+    equal(table.concat(ghost, "+"), table.concat(run, "+", 2))
+    equal(Race.Mine(mine.race), Race.Theirs(theirs.race))
+    local moves = 0
+    for _, sent in ipairs(world.sent) do
+      assert(#sent:match(" (.*)$") <= 255, "too long for a message: " .. sent)
+      moves = moves + (sent:find(":MOV:", 1, true) and 1 or 0)
+    end
+    assert(moves < #run * 2, #run .. " entries took " .. moves .. " messages")
+    equal(nil, Race.Ghost(mine.race), "nothing of Bob's yet")
+    assert(bob.session:Move(theirs.id, "x"))
+    world:Deliver()
+    equal(nil, Race.Ghost(mine.race), "a run that kept no ghost has none")
+    equal("won", Race.Outcome(mine.race))
+  end
+
+  function tests.GameThatNeedsAnAddonIsOnlyOfferedWithIt()
+    local Games = loadEngine().Games
+    local freedoom = Games.Get("freedoom")
+    equal("ForeverGames_Freedoom", freedoom.addon, "Freedoom's maps are an addon of their own")
+    assert(Games.Offered(freedoom), "taken to be there until the client says")
+    Games.SetAddOnCheck(function(addon)
+      return addon ~= "ForeverGames_Freedoom"
+    end)
+    assert(not Games.Offered(freedoom), "not without its maps")
+    for _, game in ipairs(Games.Search()) do
+      assert(game ~= freedoom, "so it isn't found")
+    end
+    for _, game in ipairs(Games.Search("freedoom")) do
+      assert(game ~= freedoom, "not even by name")
+    end
+    assert(Games.Offered(Games.Get("minesweeper")), "a game that needs nothing is offered all the same")
+
+    -- And a race at it is turned down as a game that isn't here
+    local world = World.New()
+    world.prepare = function(private)
+      private.Games.SetAddOnCheck(function(addon)
+        return addon ~= "ForeverGames_Freedoom"
+      end)
+    end
+    local bob = world:AddPlayer("Bob-Realm")
+    world.queue = {}
+    bob.session:Receive("Alice-Realm", "1:RAC:r1:freedoom:" .. freedoom.version)
+    equal("1:DEC:r1:nogame", world.queue[1] and world.queue[1].text)
+  end
+
+  function tests.RaceLeavesOutAGameThatSaysSo()
+    local private = loadEngine()
+    local Race, Games = private.Race, private.Games
+    local minesweeper = Games.Get("minesweeper")
+    assert(Race.Has(minesweeper), "a timed game for one can be raced")
+    minesweeper.raced = false
+    assert(not Race.Has(minesweeper), "unless it says it isn't to be")
+    minesweeper.raced = nil
+  end
+
+  function tests.RaceChallengesThatDontReadRightAreTurnedDown()
+    local Codec = loadEngine().Codec
+    local plain = assert(Codec.Decode("1:RAC:abc:counting:1"))
+    equal("counting", plain.game)
+    equal(1, plain.gameVersion)
+    equal(nil, plain.options)
+    equal("level=expert", Codec.Decode("1:RAC:abc:minesweeper:1:level=expert").options)
+    equal(nil, Codec.Decode("1:RAC:abc:counting"))
+    equal(nil, Codec.Decode("1:RAC:abc:counting:one"))
+    equal(nil, Codec.Decode("1:RAC:a b:counting:1"))
+    equal(nil, Codec.Decode("2:RAC:abc:counting:1"), "another version of the protocol")
+
+    local world = World.New()
+    world.prepare = registerCounting
+    local bob = world:AddPlayer("Bob-Realm")
+    local Race = bob.private.Race
+    --- What Bob says back to a message from Alice
+    local function answer(text, from)
+      world.queue = {}
+      bob.session:Receive(from or "Alice-Realm", text)
+      return world.queue[1] and world.queue[1].text
+    end
+    equal("1:DEC:r1:nogame", answer("1:RAC:r1:nope:1"))
+    equal("1:DEC:r2:version", answer("1:RAC:r2:counting:2"), "another version of the game")
+    equal("1:DEC:r3:version", answer("1:RAC:r3:minesweeper:1:level=impossible"), "rules it doesn't have")
+    equal("1:DEC:r4:version", answer("1:RAC:r4:solitaire:1"), "a game that can't be raced")
+    equal("1:DEC:r5:version", answer("1:RAC:r5:counting:1:_c=2hard"))
+    bob.knows = {}
+    equal("1:DEC:r6:strangers", answer("1:RAC:r6:counting:1"))
+    bob.knows = nil
+    equal(nil, next(bob.matches), "none of it was kept")
+
+    -- A race, and what doesn't read right about the runs told in it
+    equal(nil, answer("1:RAC:r7:counting:1"))
+    assert(bob.session:Accept("r7"))
+    local race = bob.matches.r7.race
+    answer("1:MOV:r7:1:1:soon")
+    answer("1:MOV:r7:1:99:120")
+    answer("1:MOV:r7:2:2:p1")
+    equal(0, #race.heard, "none of that was taken")
+    equal(nil, answer("1:MOV:r7:1:1:120", "Mallory-Realm"), "nor anything from anyone else")
+    equal(0, #race.heard)
+    equal("1:ACK:r7:1", answer("1:MOV:r7:1:1:120"))
+    equal(120, Race.Theirs(race))
+    answer("1:MOV:r7:1:1:5")
+    equal(120, Race.Theirs(race), "told once")
+    equal("1:ACC:r7", answer("1:RAC:r7:counting:1"), "a challenge again is answered again")
+    equal("1:DEC:r8:gone", answer("1:MOV:r8:1:1:120"), "a race that isn't there")
+  end
+
+  function tests.RaceTurnedDownCalledOffAndGivenUp()
+    local world, alice, bob, mine, theirs = raced()
+    local Race = alice.private.Race
+    assert(bob.session:Decline(theirs.id))
+    world:Deliver()
+    equal("declined", mine.race.declined)
+    equal("active", mine.status, "the game goes on, alone")
+    assert(alice.session:Move(mine.id, "u"))
+    equal(true, alice.session:CanForget(mine))
+    world.queue = {}
+    bob.session:Receive("Alice-Realm", "1:RAC:" .. mine.id .. ":counting:1")
+    equal("1:DEC:" .. mine.id, world.queue[1].text, "turned down again rather than shown twice")
+    world:Deliver()
+    equal(true, theirs.hidden)
+
+    -- Called off before it is answered
+    local second = assert(alice.session:Invite("Bob-Realm", "counting"))
+    world:Deliver()
+    assert(bob.matches[second.id])
+    assert(alice.session:Forget(second.id))
+    world:Deliver()
+    equal(nil, bob.matches[second.id], "withdrawn")
+    equal(true, alice.matches[second.id].hidden)
+
+    -- Given up, a run didn't finish, and loses to one that did
+    local third = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    assert(bob.session:Accept(third))
+    world:Deliver()
+    equal(false, (bob.session:Forget(third)))
+    assert(bob.session:Resign(third))
+    world:Deliver()
+    equal(false, Race.Theirs(alice.matches[third].race))
+    count(alice, third, 60, "w")
+    world:Deliver()
+    equal("won", Race.Outcome(alice.matches[third].race))
+    equal("lost", Race.Outcome(bob.matches[third].race))
+
+    -- Neither of two that didn't finish beats the other, nor two that are as quick
+    local fourth = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    assert(bob.session:Accept(fourth))
+    count(alice, fourth, 5, "x")
+    count(bob, fourth, 5, "x")
+    world:Deliver()
+    equal("drawn", Race.Outcome(alice.matches[fourth].race))
+    local fifth = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    assert(bob.session:Accept(fifth))
+    count(alice, fifth, 5, "w")
+    count(bob, fifth, 5, "w")
+    world:Deliver()
+    equal("drawn", Race.Outcome(bob.matches[fifth].race))
+
+    -- One the rival no longer has stops being told
+    local sixth = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    assert(bob.session:Accept(sixth))
+    world:Deliver()
+    bob.matches[sixth] = nil
+    count(alice, sixth, 5, "w")
+    world:Deliver()
+    equal("gone", alice.matches[sixth].race.declined)
+    equal(true, alice.session:CanForget(alice.matches[sixth]))
+
+    -- A game that can't be raced still can't be played by two
+    equal("player_count", select(2, alice.session:Invite("Bob-Realm", "solitaire")))
+  end
+
+  function tests.WizardChallengesSomebodyToARace()
+    local world = World.New()
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local wizard = openWizard(alice)
+    local card = Client.Find(function(widget)
+      return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "minesweeper" and widget:IsVisible()
+    end)[1]
+    equal("players_race", card.players.text)
+    pickGame("minesweeper")
+    equal(true, says("wizard_who_race"))
+    equal(true, says("wizard_race_hint"))
+    equal("Alice-Realm", (seating.Shown()), "the player alone until somebody is picked")
+    equal(true, says("wizard_summary_race_alone"))
+    ruleChoices("minesweeper_option_level")["minesweeper_level_expert"]:Fire("OnClick")
+
+    local box = Client.Find(function(widget)
+      return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+    end)[1]
+    box:SetText("Bob-Realm")
+    box:Fire("OnTextChanged", true)
+    equal("Alice-Realm, Bob-Realm", (seating.Shown()))
+    equal(true, says("wizard_table_race"))
+    equal(true, says("wizard_summary_race"))
+    equal(true, says("wizard_race_rules"), "Bob is shown the rules")
+    equal(0, #Client.Find(function(widget)
+      return widget.kind == "Button" and widget.text == "wizard_link" and widget:IsVisible()
+    end), "a race isn't linked in chat")
+    Client.Button("wizard_race"):Fire("OnClick")
+    equal(false, wizard.IsOpen())
+    world:Deliver()
+    local mine, theirs
+    for _, match in pairs(alice.matches) do
+      mine = match
+    end
+    for _, match in pairs(bob.matches) do
+      theirs = match
+    end
+    equal("active", mine.status)
+    equal("Bob-Realm", mine.race.rival)
+    equal(mine.id, theirs.id)
+    equal("incoming", theirs.status)
+    equal("expert", theirs.options.level, "by the rules it was set up with")
+  end
+
+  function tests.WindowShowsARaceFromTheChallengeToWhoWon()
+    local shown = {}
+    local world = World.New()
+    world.prepare = function(private)
+      registerCounting(private, shown)
+    end
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local MainFrame = openWindow(bob)
+    local id = assert(alice.session:Invite("Bob-Realm", "counting")).id
+    world:Deliver()
+    MainFrame.Open()
+    local row = Client.Find(function(widget)
+      return widget.kind == "Button" and widget.matchId == id and widget:IsVisible()
+    end)[1]
+    equal("Alice-Realm  |cff808080race_of|r", row.name.text)
+    equal("list_challenge", row.status.text)
+    equal(true, row.marker:IsShown(), "a challenge waits on the player")
+
+    -- Taken up from the list, it is on screen at once
+    Client.Button("accept"):Fire("OnClick")
+    world:Deliver()
+    equal("active", bob.matches[id].status)
+    equal(nil, alice.matches[id].race.unanswered)
+    equal(true, says("race_versus"))
+    equal(true, says("race_board"))
+    equal("Alice-Realm", shown.view.race.rival)
+    equal(nil, shown.view.race.theirs)
+    equal(nil, shown.view.race.sample, "a game without a ghost isn't asked for one")
+    equal("status_race_progress", MainFrame.Describe(bob.matches[id]))
+    equal(0, #Client.Find(function(widget)
+      return widget.kind == "Button" and (widget.text == "undo" or widget.text == "start_another") and widget:IsVisible()
+    end), "nothing taken back, nothing started over")
+
+    -- Alice's time comes in while Bob plays, and he gives up
+    count(alice, id, 7.5, "w")
+    world:Deliver()
+    equal(7.5, shown.view.race.theirs)
+    function StaticPopup_Show(which, _, _, proceed)
+      StaticPopupDialogs[which].OnAccept(nil, proceed)
+    end
+    Client.Button("give_up"):Fire("OnClick")
+    world:Deliver()
+    equal("status_race_lost_unfinished", MainFrame.Describe(bob.matches[id]))
+    equal("status_race_won_unfinished", MainFrame.Describe(alice.matches[id]))
+    local board = {}
+    for _, line in ipairs(Client.Find(function(widget)
+      return widget.score ~= nil and widget.place ~= nil and widget:IsVisible()
+    end)) do
+      board[#board + 1] = line.place.text .. " " .. line.name.text .. " " .. line.score.text
+    end
+    equal("1. Alice-Realm race_time, 2. Bob-Realm race_no_time", table.concat(board, ", "), "the quicker first")
+
+    -- And again, the same race
+    Client.Button("race_again"):Fire("OnClick")
+    world:Deliver()
+    local again = 0
+    for _, match in pairs(alice.matches) do
+      again = again + (match.status == "incoming" and match.race and 1 or 0)
+    end
+    equal(1, again)
+  end
+
+  function tests.WindowHandsTheViewOfARaceItsGhost()
+    local shown = {}
+    local world = World.New()
+    world.prepare = function(private)
+      registerDash(private, shown)
+    end
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    local MainFrame = openWindow(bob)
+    local id = assert(alice.session:Invite("Bob-Realm", "dash")).id
+    world:Deliver()
+    assert(bob.session:Accept(id))
+    world:Deliver()
+    for step = 1, 6 do
+      alice.session:Sample(id, "a" .. step)
+      alice.session:Spend(id, 0.5)
+    end
+    assert(alice.session:Move(id, "w"))
+    world:Deliver()
+    MainFrame.Open(id)
+    local race = shown.view.race
+    equal(3, race.theirs)
+    equal("a1+a2+a3+a4+a5+a6", table.concat(race.ghost, "+"), "where she was, every half second")
+    equal(true, race.sample("b1"), "and where he is, for his own")
+    ForeverGamesFrame.detail:Fire("OnUpdate", 0.5)
+    equal(true, shown.view.race.sample("b2"))
+    equal("b1+b2", bob.matches[id].race.trail)
+  end
+end
+
 -- The checks every game is put through, a test for each
 dofile("Tests/EveryGame.lua")(tests, loadEngine)
 
@@ -17270,7 +19931,9 @@ dofile("Tests/EveryGame.lua")(tests, loadEngine)
 -----------------------------
 -- Every test, or with words given on the command line only the ones whose names have one of
 -- them in: lua Tests/RunTests.lua EveryGame_chess Codec
+-- In a block of its own: a chunk has room for only so many locals, and the tests take most of them
 
+do
 local names = {}
 for name in pairs(tests) do
   local wanted = #arg == 0
@@ -17296,3 +19959,4 @@ end
 
 print(string.format("\n%d tests, %d failed", #names, failures))
 os.exit(failures == 0 and 0 or 1)
+end

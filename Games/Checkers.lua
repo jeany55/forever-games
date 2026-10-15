@@ -18,11 +18,13 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 local RED, WHITE = 1, 2
 local SIZE = 8
-local ALL_STEPS = { { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } }
--- Where a man may go, the first two of the above for red and the last two for white
+local BOARD = Grid.New(SIZE)
+local ALL_STEPS = Grid.DIAGONAL
+-- Where a man may go, the two up the board for red and the two down it for white
 local MAN_STEPS = { { ALL_STEPS[1], ALL_STEPS[2] }, { ALL_STEPS[3], ALL_STEPS[4] } }
 -- Half moves without a capture or a man moving that make a draw
 local QUIET_LIMIT = 80
@@ -85,16 +87,6 @@ local function squareOf(number)
   return row * SIZE + 2 * (3 - (number - 1) % 4) + row % 2
 end
 
---- Square reached by stepping from a square, nil when that leaves the board
---- @return number?
-local function offset(square, columns, rows)
-  local column, row = square % SIZE + columns, math.floor(square / SIZE) + rows
-  if column < 0 or column >= SIZE or row < 0 or row >= SIZE then
-    return nil
-  end
-  return row * SIZE + column
-end
-
 --- Whether a man of this seat is crowned on a square
 --- @param seat number
 --- @param square number
@@ -138,8 +130,8 @@ local function addJumps(board, piece, path, captures, moves)
   local seat, square = ownerOf(piece), path[#path]
   local found = false
   for _, step in ipairs(isKing(piece) and ALL_STEPS or MAN_STEPS[seat]) do
-    local over = offset(square, step[1], step[2])
-    local to = offset(square, step[1] * 2, step[2] * 2)
+    local over = BOARD:Step(square, step[1], step[2])
+    local to = BOARD:Step(square, step[1] * 2, step[2] * 2)
     local victim = over and board[over]
     local taken = false
     for _, captured in ipairs(captures) do
@@ -170,7 +162,7 @@ local function legalMoves(board, seat, free)
     if ownerOf(piece) == seat then
       addJumps(board, piece, { square }, {}, jumps)
       for _, step in ipairs(isKing(piece) and ALL_STEPS or MAN_STEPS[seat]) do
-        local to = offset(square, step[1], step[2])
+        local to = BOARD:Step(square, step[1], step[2])
         if to and not board[to] then
           add(steps, { square, to }, {})
         end

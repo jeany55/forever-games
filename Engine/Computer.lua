@@ -60,6 +60,8 @@ local _, private = ...
 local Computer = {}
 private.Computer = Computer
 
+local Tables = private.Tables
+
 -- What a position that is won is worth, from the seat that won it. A win sooner is worth a little
 -- more than one later, a loss later a little more than one sooner
 Computer.WIN = 1000000
@@ -94,31 +96,11 @@ local EXACT, LOWER, UPPER = 1, 2, 3
 -- Copies
 -----------------------------
 
---- @param value any
---- @param made table<table, table> Copies made so far, so that what is shared stays shared
---- @return any
-local function copyOf(value, made)
-  if type(value) ~= "table" then
-    return value
-  end
-  local done = made[value]
-  if done then
-    return done
-  end
-  local result = {}
-  made[value] = result
-  for key, inner in pairs(value) do
-    result[key] = copyOf(inner, made)
-  end
-  return setmetatable(result, getmetatable(value))
-end
-
---- A copy of a position, down to its last table. What one part of it shares with another, the
---- copy shares in the same way
+--- A copy of a position, down to its last table (Tables.Copy)
 --- @param state table
 --- @return table
 function Computer.Copy(state)
-  return copyOf(state, {})
+  return Tables.Copy(state)
 end
 
 --- A table that reads through to another: what is in it is its own, what isn't is the other's.
@@ -291,7 +273,7 @@ end
 --- @return table
 function Brain:Copy(state)
   local copy = self.computer.copy
-  return copy and copy(state) or copyOf(state, {})
+  return copy and copy(state) or Tables.Copy(state)
 end
 
 --- A copy of a position with a move made in it. Counts as a position looked at

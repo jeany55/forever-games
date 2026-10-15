@@ -1158,7 +1158,7 @@ function View:draw()
   end
 
   local skipped = state.skipped[#state.skipped]
-  if skipped and view.live then
+  if skipped and (view.live or view.catching) then
     local name = skipped.seat == seat and L["backgammon_you"] or view.names[skipped.seat]
     self.note:SetText(L["backgammon_skipped"]:format(name, skipped.dice[1], skipped.dice[2]))
   else

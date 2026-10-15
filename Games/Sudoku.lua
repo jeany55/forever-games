@@ -2086,5 +2086,13 @@ private.Games.Register({
     end
     return nil
   end,
+  -- The day's puzzle is a middling one, timed for whoever solved it all by themselves
+  daily = {
+    score = function(state, seconds, result)
+      return result.winner == 1 and state.hints == 0 and seconds or nil
+    end,
+    lower = true,
+    time = true,
+  },
   createView = createView,
 })

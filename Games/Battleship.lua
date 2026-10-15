@@ -22,8 +22,11 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Tables = private.Tables
+local Grid = private.Grid
 
 local SIZE = 10
+local WATERS = Grid.New(SIZE)
 -- The fleet, in the order a move lists it
 local SHIPS = {
   { name = "carrier", size = 5 },
@@ -68,22 +71,6 @@ local function other(seat)
   return seat == 1 and 2 or 1
 end
 
---- @param square number
---- @return string
-local function squareName(square)
-  return string.char(97 + square % SIZE) .. (math.floor(square / SIZE) + 1)
-end
-
---- @param name string
---- @return number? square nil if there is no such square
-local function parseSquare(name)
-  local file, rank = name:match("^([a-j])(%d%d?)$")
-  if not file or (rank ~= "10" and not rank:match("^[1-9]$")) then
-    return nil
-  end
-  return (file:byte() - 97) + (tonumber(rank) - 1) * SIZE
-end
-
 --- The squares a ship lies on
 --- @param size number
 --- @param square number The lowest of them
@@ -122,7 +109,7 @@ local function parseFleet(move)
   for part in (move .. "."):gmatch("([^.]*)%.") do
     local kind = SHIPS[#fleet + 1]
     local name, way = part:match("^(%l%d+)([hv])$")
-    local square = name and parseSquare(name)
+    local square = name and WATERS:Parse(name)
     local cells = kind and square and cellsOf(kind.size, square, way == "v")
     if not cells then
       return nil
@@ -143,7 +130,7 @@ end
 local function fleetMove(ships)
   local parts = {}
   for index = 1, #SHIPS do
-    parts[index] = squareName(ships[index].square) .. (ships[index].vertical and "v" or "h")
+    parts[index] = WATERS:Name(ships[index].square) .. (ships[index].vertical and "v" or "h")
   end
   return table.concat(parts, ".")
 end
@@ -179,7 +166,7 @@ local function validate(state, seat, move)
     end
     return true
   end
-  local square = parseSquare(move)
+  local square = WATERS:Parse(move)
   if not square then
     return false, "invalid_move"
   end
@@ -230,7 +217,7 @@ local function moves(state, seat)
   local list, shots = {}, state.shots[other(seat)]
   for square = 0, SIZE * SIZE - 1 do
     if not shots[square] then
-      list[#list + 1] = squareName(square)
+      list[#list + 1] = WATERS:Name(square)
     end
   end
   return list
@@ -250,7 +237,7 @@ local function apply(state, seat, move)
     return { placed = true }
   end
 
-  local square = parseSquare(move)
+  local square = WATERS:Parse(move)
   local index = state.decks[target][square]
   local ship = index and state.fleets[target][index]
   state.shots[target][square] = ship and HIT or MISS
@@ -273,26 +260,13 @@ local function apply(state, seat, move)
   return { square = square, target = target, hit = ship ~= nil, sunk = sunk and index or nil, notation = move }
 end
 
---- @param value any
---- @return any
-local function copy(value)
-  if type(value) ~= "table" then
-    return value
-  end
-  local result = {}
-  for key, inner in pairs(value) do
-    result[key] = copy(inner)
-  end
-  return result
-end
-
 --- What a player may see: everything of their own, and of the other fleet the ships that have
 --- gone down. Of the rest only that they are there, and how long each is
 --- @param state BattleshipState
 --- @param seat number
 --- @return BattleshipState
 local function visible(state, seat)
-  local seen = copy(state)
+  local seen = Tables.Copy(state)
   local foe = other(seat)
   for index, ship in ipairs(seen.fleets[foe]) do
     if not ship.sunk then
@@ -346,12 +320,8 @@ local function hideFleet(random, apart)
         taken[cell] = true
         if apart then
           -- And the squares around it, for the ships still to come
-          local column, row = cell % SIZE, math.floor(cell / SIZE)
-          for _, beside in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-            local nextColumn, nextRow = column + beside[1], row + beside[2]
-            if nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE then
-              taken[nextRow * SIZE + nextColumn] = true
-            end
+          for _, beside in ipairs(WATERS:Around(cell, Grid.STRAIGHT)) do
+            taken[beside] = true
           end
         end
       end
@@ -431,7 +401,7 @@ local COMPUTER = {
         if hunting and level.blind then
           worth = 0
         end
-        scored[#scored + 1] = { move = squareName(square), score = worth, rank = 0, index = square }
+        scored[#scored + 1] = { move = WATERS:Name(square), score = worth, rank = 0, index = square }
         brain:Spend()
       end
     end
@@ -754,7 +724,7 @@ local function createView(stage)
       return not self.view.state.shots[other(self.view.seat)][square] and square or nil
     end,
     onPlace = function(square)
-      self.view.submit(squareName(square))
+      self.view.submit(WATERS:Name(square))
     end,
   })
 
@@ -964,7 +934,7 @@ function View:noteText()
   local mine = event.seat == view.seat
   local what = event.sunk and "sank" or (event.hit and "hit" or "missed")
   local text = L["battleship_" .. (mine and "you_" or "they_") .. what]
-  local last = event.sunk and shipName(event.sunk) or squareName(event.square):upper()
+  local last = event.sunk and shipName(event.sunk) or WATERS:Name(event.square):upper()
   if mine then
     return text:format(last)
   end

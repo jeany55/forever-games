@@ -731,5 +731,10 @@ private.Games.Register({
       { key = TILE_KEY .. state.size, value = state.best },
     }
   end,
+  daily = {
+    score = function(state)
+      return state.score
+    end,
+  },
   createView = createView,
 })

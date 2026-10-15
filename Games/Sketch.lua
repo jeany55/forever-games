@@ -42,6 +42,7 @@
 local _, private = ...
 local L = private.L
 local Rooms = private.Rooms
+local Phases = private.Phases
 
 --- @class Sketch
 local Sketch = {}
@@ -381,8 +382,10 @@ end
 --- @return number? Seconds left to pick or to draw, nil between rounds
 function Sketch.TimeLeft(room)
   local state = room.state
-  local due = state.phase == "pick" and state.pickBy or (state.phase == "draw" and state.endsAt)
-  return due and math.max(0, due - room:Now()) or nil
+  if state.phase ~= "pick" and state.phase ~= "draw" then
+    return nil
+  end
+  return Phases.Left(state, room:Now())
 end
 
 --- What the players are shown of the word: all of it if they may know, a dash for every letter
@@ -589,7 +592,7 @@ local function receive(room, member, kind, fields)
     end
     wipe(state)
     state.round, state.drawer, state.length, state.list = round, drawer, math.max(10, math.min(600, length)), fields[4] or "b"
-    state.phase, state.pickBy, state.nextAt, state.endsAt = "pick", now + PICK, nil, nil
+    Phases.Begin(state, "pick", now, PICK)
     feed(state, { n = drawer, note = "round" })
     if drawer == room.me then
       state.pieces = {}
@@ -601,7 +604,7 @@ local function receive(room, member, kind, fields)
       return
     end
     state.hash, state.pattern, state.choices = hash, fields[2], nil
-    state.phase, state.endsAt = "draw", now + math.min(state.length, left or state.length)
+    Phases.Begin(state, "draw", now, math.min(state.length, left or state.length))
     if left and state.drawer ~= room.me then
       -- Told by the host on the way in: the picture is well under way
       room:Say("SEE")
@@ -644,14 +647,13 @@ local function receive(room, member, kind, fields)
       state.word = tidy((fields[2]:gsub("_", " ")))
     end
     if state.phase ~= "over" then
-      state.phase, state.pending, state.pieces, state.choices = "over", nil, nil, nil
+      Phases.Begin(state, "over", now, PAUSE)
+      state.pending, state.pieces, state.choices = nil, nil, nil
       feed(state, { note = "over", text = state.word })
-      if room:IsHost() then
-        state.nextAt = now + PAUSE
-      end
     end
   elseif kind == "STOP" and fromHost then
-    state.phase, state.pending, state.pieces, state.choices, state.nextAt = "idle", nil, nil, nil, nil
+    Phases.Begin(state, "idle", now)
+    state.pending, state.pieces, state.choices = nil, nil, nil
     feed(state, { note = "stopped" })
   end
 end
@@ -661,9 +663,9 @@ end
 local function tick(room, now)
   local state = room.state
   if state.drawer == room.me then
-    if state.phase == "pick" and state.choices and now >= state.pickBy then
+    if state.phase == "pick" and state.choices and Phases.Due(state, now) then
       Sketch.Choose(room, 1)
-    elseif state.phase == "draw" and now >= state.endsAt then
+    elseif state.phase == "draw" and Phases.Due(state, now) then
       finish(room)
     elseif state.phase == "draw" then
       local waiting = #state.pieces > 0 or (state.pending and #state.pending.points > 0)
@@ -680,16 +682,16 @@ local function tick(room, now)
   end
 
   if room:IsHost() then
-    if state.phase == "pick" and now > state.pickBy + GRACE then
+    if state.phase == "pick" and Phases.Due(state, now, GRACE) then
       local drawer = room.members[state.drawer]
       if drawer then
         drawer.away = true
       end
       room:Say("END", state.round, "-", "")
-    elseif state.phase == "draw" and now > state.endsAt + GRACE then
+    elseif state.phase == "draw" and Phases.Due(state, now, GRACE) then
       room:Say("END", state.round, "-", "")
-    elseif state.phase == "over" and state.nextAt and now >= state.nextAt then
-      state.nextAt = nil
+    elseif state.phase == "over" and Phases.Due(state, now) then
+      Phases.Until(state, now, nil)
       if room.count >= 2 then
         beginRound(room)
       else
@@ -724,7 +726,7 @@ local function welcome(room, member)
   end
   room:Tell(member, "RND", state.round, state.drawer, state.length, state.list)
   if state.phase == "draw" then
-    room:Tell(member, "WRD", state.hash, state.pattern, math.max(1, math.floor(state.endsAt - room:Now())))
+    room:Tell(member, "WRD", state.hash, state.pattern, math.max(1, math.floor(Phases.Left(state, room:Now()))))
   end
 end
 

@@ -24,6 +24,19 @@
 -- position has to look from the seat exactly like what the seat sees, a copy has to be a copy,
 -- and how good a position is has to be a number well short of a win. And it has to be able to
 -- play a whole game against itself.
+--
+-- A game that is the day's challenge (GameDefinition.daily) has to deal the day's game the same
+-- for everyone, on every client, and say what it came to however it ended: played out, or given
+-- up halfway.
+--
+-- A game that can be raced (Engine/Race.lua) has to deal a race the same on the rival's client,
+-- from nothing but its id and the rules the challenge carried there, set every way they can be.
+-- And every run of it has to come to a time or to not finishing, however it ended.
+--
+-- A game for more than two the computer plays is also played at a table of people with the
+-- computer in a seat, on two clients that talk to each other the way players' clients do: the
+-- host's plays the computer, nothing is ever sent to the computer's seat, and the two logs have to
+-- come out the same.
 
 local MAX_PLIES = 300
 local SEEDS = 3
@@ -33,6 +46,14 @@ local SAMPLE = 30
 local RESIGN_ODDS = 40
 -- How long a game the computer plays against itself may go on for
 local COMPUTER_PLIES = 80
+-- How many rounds of moves a table of people and the computer is played for
+local TABLE_ROUNDS = 30
+-- How many of the day's games are played, and for how many moves at most before they are given up
+local DAILY_SEEDS, DAILY_PLIES = 3, 400
+-- The day they are dealt for, and another
+local DAILY_DATE, OTHER_DATE = "2026-10-14", "2026-10-15"
+-- How many runs of a race are played, and for how many moves at most before they are given up
+local RACE_SEEDS, RACE_PLIES = 2, 400
 
 --- Writes a value out the same way every time, keys in order, so two can be compared
 --- @param value any
@@ -593,16 +614,221 @@ local function playOut(private, game, seats, seed, keys, loadEngine, looks)
   if #elsewhere.log ~= #match.log then
     fail(#match.log, "another client took only " .. #elsewhere.log .. " entries of the log")
   end
-  for length, snapshot in pairs(snapshots) do
-    if length < #match.log and serialize(Match.StateAt(match, length)) ~= snapshot then
+  -- Looked back at from the end, then forward again, then back once more: going back starts
+  -- from the nearest position kept on the way, going forward goes on from where it is
+  local lengths = {}
+  for length in pairs(snapshots) do
+    lengths[#lengths + 1] = length
+  end
+  table.sort(lengths)
+  local order = {}
+  for index = #lengths, 1, -1 do
+    order[#order + 1] = lengths[index]
+  end
+  for _, length in ipairs(lengths) do
+    order[#order + 1] = length
+  end
+  for index = #lengths, 1, -1 do
+    order[#order + 1] = lengths[index]
+  end
+  for _, length in ipairs(order) do
+    if length < #match.log and serialize(Match.StateAt(match, length)) ~= snapshots[length] then
       fail(length, "looking back gives another position than the one played")
     end
+  end
+  for length, snapshot in pairs(snapshots) do
     -- Where a move can be taken back the log is cut short, and has to be where it was then
     local cut = again(match)
     Match.Truncate(cut, length)
     if serialize(Match.State(cut)) ~= snapshot then
       fail(length, "cut back to here, the log replays to another position than the one played")
     end
+  end
+end
+
+--- Plays a game at a table of two people with the computer in the rest of the seats, as few as
+--- the game can be played by, each person on a client of their own that talks to the other's
+--- @param loadEngine fun(): table
+--- @param game GameDefinition
+local function playAtTable(loadEngine, game)
+  local seats
+  for _, count in ipairs(loadEngine().Games.SeatCounts(game)) do
+    seats = seats or (count >= 3 and count or nil)
+  end
+  if not seats or game.together then
+    return
+  end
+
+  local queue, clients, dice = {}, {}, 0
+  for _, name in ipairs({ "Host-Realm", "Guest-Realm" }) do
+    local private = loadEngine()
+    clients[#clients + 1] = {
+      private = private,
+      session = private.Session.New({
+        me = name,
+        matches = {},
+        now = function()
+          return 1000000
+        end,
+        random = function(max)
+          dice = dice + 1
+          return dice % max + 1
+        end,
+        notify = function() end,
+        send = function(target, text)
+          assert(target ~= private.Match.COMPUTER, "sent to the computer's seat: " .. text)
+          queue[#queue + 1] = { from = name, to = target, text = text }
+          return true
+        end,
+      }),
+    }
+  end
+  local host, guest = clients[1], clients[2]
+  local function deliver()
+    for _ = 1, 10000 do
+      local message = table.remove(queue, 1)
+      if not message then
+        return
+      end
+      local to = message.to == "Host-Realm" and host or guest
+      to.session:Receive(message.from, message.text)
+    end
+    error("the clients never stop talking", 0)
+  end
+
+  local match = assert(host.session:Invite({ "Guest-Realm" }, game.id, { computer = { level = "easy", count = seats - 2 } }))
+  deliver()
+  assert(guest.session:Accept(match.id))
+  deliver()
+  local Match, computer = host.private.Match, false
+  for round = 1, TABLE_ROUNDS do
+    if match.status ~= "active" then
+      break
+    end
+    local moved = false
+    for _, client in ipairs(clients) do
+      local mine = client.session:Get(match.id)
+      if mine.status == "active" and client.private.Match.IsMyTurn(mine) then
+        local list = game.moves(client.private.Match.State(mine), mine.me)
+        local ok, err = client.session:Move(match.id, list[round % #list + 1])
+        assert(ok, "a person's move was refused: " .. tostring(err))
+        moved = true
+      elseif client.session:ComputerTurn(mine) then
+        assert(client == host, "the guest's client played the computer")
+        client.session:Think(match.id, nil, true)
+        computer, moved = true, true
+      end
+      deliver()
+    end
+    assert(moved, "nobody moved, and the game isn't over:\n" .. table.concat(match.log, " "))
+  end
+  local theirs = guest.session:Get(match.id)
+  assert(table.concat(match.log, " ") == table.concat(theirs.log, " "), "the clients have different logs:\n" .. table.concat(match.log, " ") .. "\n" .. table.concat(theirs.log, " "))
+  assert(computer or Match.Result(match), "the computer never got to move")
+end
+
+--- The day's challenge at a game: dealt the same for everyone, on whatever client, and what it
+--- came to is a whole number or nothing, however it ended
+--- @param private table
+--- @param game GameDefinition
+--- @param loadEngine fun(): table
+--- @return boolean differs Whether another day's game is dealt another way
+local function checkDaily(private, game, loadEngine)
+  local Daily, Match = private.Daily, private.Match
+  --- @param engine table
+  --- @param id string
+  --- @param date string
+  --- @return Match
+  local function daily(engine, id, date)
+    local match = newMatch(engine, game, id, 1, game.daily.rules)
+    match.daily = date
+    return match
+  end
+  local dealt = serialize(Match.State(daily(private, "dailyA", DAILY_DATE)))
+  assert(serialize(Match.State(daily(private, "dailyB", DAILY_DATE))) == dealt, "the day's game was dealt another way for another player")
+  local elsewhere = loadEngine()
+  assert(serialize(elsewhere.Match.State(daily(elsewhere, "dailyC", DAILY_DATE))) == dealt, "the day's game was dealt another way on another client")
+  -- A game that deals once it has begun (Minesweeper lays its mines where the first square
+  -- opened isn't) is told from another day's by the first move it lists made in each
+  local today, tomorrow = daily(private, "dailyD", DAILY_DATE), daily(private, "dailyE", OTHER_DATE)
+  for _, match in ipairs(game.moves and { today, tomorrow } or {}) do
+    local first = game.moves(Match.State(match), 1)[1]
+    if first then
+      assert(Match.Append(match, Match.MoveEntry(match, first)))
+    end
+  end
+  local differs = serialize(Match.State(today)) ~= serialize(Match.State(tomorrow))
+
+  for seed = 1, game.moves and DAILY_SEEDS or 0 do
+    local match, random = daily(private, "daily" .. seed, DAILY_DATE), private.Random.New(seed)
+    -- One of them given up a few moves in
+    local giveUp = seed == 1 and 5 or DAILY_PLIES
+    while not Match.Result(match) and #match.log < giveUp do
+      local list = game.moves(Match.State(match), 1)
+      if #list == 0 then
+        break
+      end
+      assert(Match.Append(match, Match.MoveEntry(match, list[random:Roll(#list)])))
+    end
+    if not Match.Result(match) then
+      assert(Match.Append(match, Match.ResignEntry(1)))
+    end
+    local state, result = Match.State(match), Match.Result(match)
+    local before = serialize(state)
+    local score = Daily.Score(game, state, 100 + seed, result)
+    local where = string.format("the day's game %s after %d moves", result.reason, #match.log)
+    assert(score == false or (type(score) == "number" and score == math.floor(score) and score >= 0), where .. " came to " .. tostring(score))
+    assert(serialize(state) == before, where .. ": working out what it came to changed the position")
+  end
+  return differs
+end
+
+--- A race is dealt the same for the rival, on another client, from its id and the rules as the
+--- challenge carried them, and every run of it comes to a whole number of hundredths of a second
+--- or to not finishing, however it ended
+--- @param private table
+--- @param game GameDefinition
+--- @param loadEngine fun(): table
+local function checkRace(private, game, loadEngine)
+  local Games, Match, Race = private.Games, private.Match, private.Race
+  local elsewhere = loadEngine()
+  local there = elsewhere.Games.Get(game.id)
+  for index, chosen in ipairs(variants(Games, game)) do
+    local sent = Games.EncodeOptions(game, chosen)
+    local read, understood = elsewhere.Games.DecodeOptions(there, sent)
+    local where = "the race with the rules " .. (sent or "usual")
+    assert(understood, where .. " wasn't understood on the other side")
+    local id = "race" .. index
+    local mine, theirs = newMatch(private, game, id, 1, chosen), newMatch(elsewhere, there, id, 1, read)
+    -- A game that deals once it has begun is dealt the rest by the first move, made by both
+    local first = game.moves and game.moves(Match.State(mine), 1)[1]
+    if first then
+      assert(Match.Append(mine, Match.MoveEntry(mine, first)))
+      assert(elsewhere.Match.Append(theirs, elsewhere.Match.MoveEntry(theirs, first)), where .. ": the first move wasn't taken on the other side")
+    end
+    assert(serialize(Match.State(mine)) == serialize(elsewhere.Match.State(theirs)), where .. " was dealt another way for the rival")
+  end
+
+  for seed = 1, game.moves and RACE_SEEDS or 0 do
+    local match, random = newMatch(private, game, "run" .. seed, 1), private.Random.New(seed)
+    -- One of them given up a few moves in
+    local giveUp = seed == 1 and 5 or RACE_PLIES
+    while not Match.Result(match) and #match.log < giveUp do
+      local list = game.moves(Match.State(match), 1)
+      if #list == 0 then
+        break
+      end
+      assert(Match.Append(match, Match.MoveEntry(match, list[random:Roll(#list)])))
+    end
+    if not Match.Result(match) then
+      assert(Match.Append(match, Match.ResignEntry(1)))
+    end
+    local state, result = Match.State(match), Match.Result(match)
+    local before = serialize(state)
+    local time = Race.Time(game, state, 100 + seed, result)
+    local where = string.format("a run %s after %d moves", result.reason, #match.log)
+    assert(time == false or (type(time) == "number" and time == math.floor(time) and time >= 0), where .. " came to " .. tostring(time))
+    assert(serialize(state) == before, where .. ": working out its time changed the position")
   end
 end
 
@@ -616,6 +842,19 @@ local function checkGame(private, game, keys, loadEngine)
   local looks = {}
   sandboxed(not private.Games.IsSolo(game), function()
     checkDeals(private, game, keys)
+    if private.Daily.Has(game) then
+      local ok, differs = pcall(checkDaily, private, game, loadEngine)
+      if not ok then
+        error("the day's challenge: " .. tostring(differs), 0)
+      end
+      assert(differs, "the day's challenge is the same every day")
+    end
+    if private.Race.Has(game) then
+      local ok, err = pcall(checkRace, private, game, loadEngine)
+      if not ok then
+        error("a race: " .. tostring(err), 0)
+      end
+    end
     if game.moves then
       for _, seats in ipairs(private.Games.SeatCounts(game)) do
         for seed = 1, SEEDS do
@@ -640,6 +879,10 @@ local function checkGame(private, game, keys, loadEngine)
       playItself(private, game, fewest, keys)
       if most ~= fewest then
         playItself(private, game, most, keys)
+      end
+      local ok, err = pcall(playAtTable, loadEngine, game)
+      if not ok then
+        error("at a table of people with the computer: " .. tostring(err), 0)
       end
     end)
   end

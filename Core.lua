@@ -24,10 +24,19 @@ ForeverGames = LibStub("AceAddon-3.0"):NewAddon(private.ADDON_NAME, "AceConsole-
 local FLUSH_INTERVAL = 15
 -- How often a room sends what is waiting and its game looks at the clock
 local ROOM_BEAT = 0.25
+-- How many milliseconds a frame the computer may think for the tables of people it sits at, when
+-- they aren't on screen. Less than the window gives it: the player is doing something else
+local DRIVE_MS = 3
 -- Wait for the client to settle after login before announcing ourselves
 local HELLO_DELAY = 5
 -- Lines shown by /fg log
 local LOG_LINES = 20
+
+--- The date in UTC, which is when a day's challenge begins and ends for the whole guild
+--- @return string
+local function today()
+  return date("!%Y-%m-%d")
+end
 
 local defaults = {
   -- Matches belong to the character that is playing them
@@ -60,6 +69,11 @@ local defaults = {
     versus = {},
     -- How the player last set up a game against the computer in the wizard, by game id
     computer = {},
+    -- The last day each game's challenge was taken on, by game id, so that every character
+    -- has the one go at it between them
+    dailies = {},
+    -- What the guild made of the challenges of the last few days, see Engine/Daily.lua
+    boards = {},
     -- Whether the window of the games for a room is small, and where each size of it was left
     party = { mini = false },
     -- The questions of Trivia this player asked as a host, and when, see Games/Trivia.lua
@@ -70,6 +84,16 @@ local defaults = {
 local dataObject
 
 function ForeverGames:OnInitialize()
+  -- A game that needs an addon of its own is only offered while that addon can be loaded: there,
+  -- switched on, and fit for this client
+  Games.SetAddOnCheck(function(addon)
+    local loadable = C_AddOns and C_AddOns.IsAddOnLoadable
+    if not loadable then
+      return true
+    end
+    local ok, can = pcall(loadable, addon, UnitName("player"), true)
+    return ok and can == true
+  end)
   self.db = LibStub("AceDB-3.0"):New("ForeverGamesDB", defaults, true)
   private.UseLog(self.db.char.log)
   self:RegisterChatCommand("fg", "HandleSlashCommand")
@@ -99,6 +123,8 @@ function ForeverGames:OnEnable()
     random = math.random,
     clock = debugprofilestop,
     log = private.Log,
+    today = today,
+    dailies = self.db.profile.dailies,
     notify = function(event, match)
       self:OnMatchEvent(event, match)
     end,
@@ -116,6 +142,18 @@ function ForeverGames:OnEnable()
     end,
   })
 
+  private.daily = private.Daily.New({
+    me = Transport.PlayerName(),
+    now = time,
+    today = today,
+    broadcast = Transport.Broadcast,
+    whisper = Transport.Send,
+    boards = self.db.profile.boards,
+    onChange = function()
+      MainFrame.Refresh()
+    end,
+  })
+  private.daily:Prune()
   private.Trivia.asked = self.db.profile.trivia
   private.rooms = Rooms.New({
     me = Transport.PlayerName(),
@@ -136,7 +174,7 @@ function ForeverGames:OnEnable()
         return
       end
       -- Nothing but a room is ever talked about in a group
-      if channel == "GROUP" or private.presence:Handle(sender, text, viaGuild) then
+      if channel == "GROUP" or private.presence:Handle(sender, text, viaGuild) or private.daily:Handle(sender, text) then
         return
       end
       -- Games are only ever played over whispers
@@ -184,6 +222,16 @@ function ForeverGames:OnEnable()
   C_Timer.NewTicker(ROOM_BEAT, function()
     private.rooms:Tick()
   end)
+
+  -- The computer's seats at the tables of people this client plays them at are played whether or
+  -- not the window is open, a little at a time, and not in the middle of a fight. The game on
+  -- screen has the window see to it
+  local driver = CreateFrame("Frame")
+  driver:SetScript("OnUpdate", function(_, elapsed)
+    if not InCombatLockdown() then
+      private.session:Drive(elapsed, DRIVE_MS, MainFrame.Pondering())
+    end
+  end)
 end
 
 -----------------------------
@@ -204,6 +252,20 @@ end
 local function toastText(event, match)
   -- A game against the computer goes on only while the player looks at it
   if Match.IsComputerMatch(match) then
+    return nil
+  end
+  -- A race is the player's own game: only the rival's answer and how they did are news
+  if match.race then
+    local rival = Transport.DisplayName(match.race.rival)
+    if match.hidden then
+      return nil
+    elseif event == "invite" then
+      return L["toast_race"]:format(rival, gameName(match))
+    elseif event == "accepted" then
+      return L["toast_race_accepted"]:format(rival, gameName(match))
+    elseif event == "raced" or event == "declined" then
+      return gameName(match) .. ": " .. MainFrame.Describe(match)
+    end
     return nil
   end
   local opponent = MainFrame.Names(match)
@@ -241,6 +303,9 @@ function ForeverGames:OnMatchEvent(event, match)
   if event == "joined" then
     -- The player clicked a link to get here, the game is what they are waiting to see
     MainFrame.Open(match.id)
+  elseif event == "daily" then
+    private.Log("daily", match.daily, match.game, tostring(match.score))
+    private.daily:Post(match.daily, match.game, match.score)
   end
 
   local text = toastText(event, match)
@@ -413,7 +478,7 @@ function ForeverGames:HandleSlashCommand(input)
     local wanted, game = argument:lower(), nil
     for _, candidate in ipairs(Games.List()) do
       local named = wanted == "" or wanted == candidate.id or wanted == candidate.name:lower()
-      if not game and named and Games.PlaysAlone(candidate) then
+      if not game and named and Games.PlaysAlone(candidate) and Games.Offered(candidate) then
         game = candidate
       end
     end
@@ -421,9 +486,23 @@ function ForeverGames:HandleSlashCommand(input)
     local setup = { options = game and self.db.profile.rules[game.id] }
     if game and not Games.CanSeat(game, 1) then
       local last = self.db.profile.computer[game.id] or {}
-      setup.computer, setup.seat = { level = last.level, count = last.count }, last.seat
+      setup.computer, setup.seat = { levels = last.levels, level = last.level, count = last.count }, last.seat
     end
     local match, err = private.session:Invite({}, game and game.id, setup)
+    if match then
+      MainFrame.Open(match.id)
+    else
+      self:Print(L["err_" .. err])
+    end
+  elseif command == "daily" or command == "today" then
+    -- Today's challenge at the game that is named, or at the first that has one
+    local wanted, game = argument:lower(), nil
+    for _, candidate in ipairs(private.Daily.Games()) do
+      if not game and (wanted == "" or wanted == candidate.id or wanted == candidate.name:lower()) then
+        game = candidate
+      end
+    end
+    local match, err = private.session:Daily(game and game.id or wanted)
     if match then
       MainFrame.Open(match.id)
     else

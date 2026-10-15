@@ -878,5 +878,11 @@ private.Games.Register({
   moves = moves,
   result = result,
   progress = progress,
+  -- The day's tiles, played alone for points
+  daily = {
+    score = function(state)
+      return state.score
+    end,
+  },
   createView = createView,
 })

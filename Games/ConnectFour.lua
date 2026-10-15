@@ -11,11 +11,11 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 local COLUMNS, ROWS = 7, 6
 local LINE = 4
--- The four ways a line can run, each is also looked along backwards
-local DIRECTIONS = { { 1, 0 }, { 0, 1 }, { 1, 1 }, { 1, -1 } }
+local RACK = Grid.New(COLUMNS, ROWS)
 
 --- @class ConnectFourState
 --- @field board table<number, number> Seat owning the disc on each square
@@ -44,25 +44,9 @@ end
 --- @return number[]?
 local function lineThrough(board, square)
   local seat = board[square]
-  local column, row = square % COLUMNS, math.floor(square / COLUMNS)
-  for _, direction in ipairs(DIRECTIONS) do
-    local line = { square }
-    for _, sign in ipairs({ 1, -1 }) do
-      local nextColumn, nextRow = column + direction[1] * sign, row + direction[2] * sign
-      while nextColumn >= 0 and nextColumn < COLUMNS and nextRow >= 0 and nextRow < ROWS do
-        local other = nextRow * COLUMNS + nextColumn
-        if board[other] ~= seat then
-          break
-        end
-        line[#line + 1] = other
-        nextColumn, nextRow = nextColumn + direction[1] * sign, nextRow + direction[2] * sign
-      end
-    end
-    if #line >= LINE then
-      return line
-    end
-  end
-  return nil
+  return RACK:Line(square, Grid.LINES, function(other)
+    return board[other] == seat
+  end, LINE)
 end
 
 --- @param state ConnectFourState
@@ -142,23 +126,8 @@ end
 -- counted from the bottom, so the first player's threats in an odd row and the second player's
 -- in an even one are the ones that come good in the end.
 
--- Every four squares in a line, by square
---- @type number[][]
-local WINDOWS = {}
-for row = 0, ROWS - 1 do
-  for column = 0, COLUMNS - 1 do
-    for _, direction in ipairs(DIRECTIONS) do
-      local lastColumn, lastRow = column + direction[1] * (LINE - 1), row + direction[2] * (LINE - 1)
-      if lastColumn >= 0 and lastColumn < COLUMNS and lastRow >= 0 and lastRow < ROWS then
-        local window = {}
-        for step = 0, LINE - 1 do
-          window[step + 1] = (row + direction[2] * step) * COLUMNS + column + direction[1] * step
-        end
-        WINDOWS[#WINDOWS + 1] = window
-      end
-    end
-  end
-end
+-- Every four squares in a line
+local WINDOWS = RACK:Windows(LINE, Grid.LINES)
 -- What four with so many of one player's discs and none of the other's are worth to them
 local FILLED = { 1, 8, 0 }
 -- A square that would finish four, and one that is in a row that falls to its player

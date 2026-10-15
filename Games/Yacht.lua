@@ -566,7 +566,7 @@ function View:throwDice(event)
         self:refresh()
       end)
     end
-  elseif event and event.kept and view.changed and view.live and not self.tossing then
+  elseif event and event.kept and view.changed and (view.live or view.catching) and not self.tossing then
     local only = {}
     for index = 1, DICE do
       only[index] = event.kept:sub(index, index) ~= "1" or nil
@@ -774,7 +774,7 @@ function View:Update(view)
   self:throwDice(event)
   self:refresh()
 
-  if event and event.box and view.changed and view.live then
+  if event and event.box and view.changed and (view.live or view.catching) then
     local Widgets = private.Widgets
     self:mark(event.box, "+" .. event.scored)
     Widgets.PlaySound(SCORE_SOUND)

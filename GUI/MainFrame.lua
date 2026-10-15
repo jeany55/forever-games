@@ -9,6 +9,9 @@
 -- status line, resigning and draw offers, the list of moves and stepping back through them. A
 -- game the player plays alone has no opponent to name and nobody to wait for: it can be given
 -- up or started again at any time, and a move can be taken back where the game allows it.
+-- The day's challenge has the guild's board of it beside it, where a game's moves would be.
+-- A game that moved on while the player was away is shown moving on: the moves of the others
+-- they missed one after the other, each made in front of them, before the game as it stands.
 -- A game against the computer is played out here too: while it is on screen the computer
 -- thinks a little every frame, and makes its move once it has looked as though it thought about
 -- it and the game is done showing the move before.
@@ -22,6 +25,7 @@ local L = private.L
 local Computer = private.Computer
 local Games = private.Games
 local Match = private.Match
+local Race = private.Race
 local Transport = private.Transport
 local Widgets = private.Widgets
 local Wizard = private.Wizard
@@ -104,6 +108,8 @@ local HEADER_TOP = 32
 local STAGE_TOP, STAGE_BOTTOM, STAGE_SIDE = 66, 72, 12
 local MOVES_WIDTH = 150
 local MOVE_ROW_HEIGHT = 20
+-- The guild's board of the day's challenge, and where its list starts under its title
+local BOARD_WIDTH, BOARD_ROW_HEIGHT, BOARD_TOP = 190, 20, 44
 local STEP_BUTTON_WIDTH = 36
 -- Names listed in the "who is available" tooltip before it is cut short
 local TOOLTIP_NAMES = 15
@@ -119,6 +125,9 @@ local SPINNER_DOT = 4
 local LOOKING_FOR = 6
 -- How many milliseconds of a frame the computer may think for
 local THINK_MS = 8
+-- How many moves of the others' the player has to have missed to be shown them one after the
+-- other (a single one is shown being made anyway), and the seconds each is on screen at least
+local MISSED_LEAST, MISSED_PAUSE = 2, 0.9
 
 local DECLINE_REASONS = {
   off = "status_declined_off",
@@ -128,6 +137,8 @@ local DECLINE_REASONS = {
   strangers = "status_declined_strangers",
   gone = "status_declined_gone",
 }
+-- What a race says instead, where it says something else, see MatchRace.declined
+local RACE_DECLINES = { declined = "status_race_declined", gone = "status_race_gone" }
 local SOURCE_LABELS = { guild = "source_guild", friend = "source_friend", other = "source_other" }
 
 local frame
@@ -144,6 +155,11 @@ local views = {}
 -- match moves on, so news is never hidden behind an old position.
 --- @type { id: string, ply: number, total: number }?
 local review
+-- Set while the moves the player missed are shown one after the other: in which match, how far
+-- in they had seen it, how far in it is shown now, how many moves there are to show, and for
+-- how many seconds the one on screen has been
+--- @type { id: string, from: number, ply: number, missed: number, waited: number }?
+local catching
 -- What the move list last scrolled to, so it only follows the game when something changed
 local movesShown
 local refreshing = false
@@ -189,8 +205,14 @@ end
 function MainFrame.Names(match, seats)
   local others = Match.Others(match)
   if not seats and #others > 1 and Match.IsLocal(match) then
-    -- A whole table of them is said in one go
-    return L["computers_counted"]:format(#others, levelName(Match.Level(match)))
+    -- A whole table of them is said in one go, and how good they are where they are all as good
+    local levels = Match.Levels(match)
+    for _, level in ipairs(levels) do
+      if level ~= levels[1] then
+        return L["computers_counted_mixed"]:format(#others)
+      end
+    end
+    return L["computers_counted"]:format(#others, levelName(levels[1]))
   end
   local names = {}
   for index, seat in ipairs(seats or others) do
@@ -202,6 +224,59 @@ function MainFrame.Names(match, seats)
   return L["names_and"]:format(table.concat(names, ", ", 1, #names - 1), names[#names])
 end
 
+--- How the time of a run in a race is shown, to the hundredth of a second: "1:23.45"
+--- @param hundredths number
+--- @return string
+function MainFrame.RaceTime(hundredths)
+  return L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)
+end
+
+--- How a run in a race came out: its time, that it didn't finish, or that it isn't over yet
+--- @param time number|false|nil Hundredths of a second, see Race.Mine
+--- @return string
+local function raceTimeText(time)
+  if time == nil then
+    return L["race_running"]
+  end
+  return time and MainFrame.RaceTime(time) or L["race_no_time"]
+end
+
+--- Where a race stands, in a line: the challenge, the run on the way, or how the two compare
+--- @param match Match
+--- @param game GameDefinition
+--- @return string? nil for one that is no race any more and is over, which is said as a game for one
+local function describeRace(match, game)
+  local race = match.race
+  local rival = Transport.DisplayName(race.rival)
+  if match.status == "incoming" then
+    return L["status_race_incoming"]:format(rival)
+  end
+  local mine, theirs, outcome = Race.Mine(race), Race.Theirs(race), Race.Outcome(race)
+  if outcome == "won" then
+    return theirs and L["status_race_won"]:format(rival, raceTimeText(mine), raceTimeText(theirs)) or L["status_race_won_unfinished"]:format(rival)
+  elseif outcome == "lost" then
+    return mine and L["status_race_lost"]:format(rival, raceTimeText(theirs), raceTimeText(mine)) or L["status_race_lost_unfinished"]:format(rival)
+  elseif outcome == "drawn" then
+    return mine and L["status_race_tied"]:format(rival, raceTimeText(mine)) or L["status_race_neither"]:format(rival)
+  elseif race.declined then
+    return match.status == "active" and L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival) or nil
+  elseif mine ~= nil then
+    return mine and L["status_race_waiting"]:format(raceTimeText(mine), rival) or L["status_race_waiting_none"]:format(rival)
+  end
+  local note
+  if race.unanswered then
+    note = L["status_race_asked"]:format(rival)
+  elseif theirs then
+    note = L["status_race_to_beat"]:format(rival, raceTimeText(theirs))
+  elseif theirs == false then
+    note = L["status_race_unfinished"]:format(rival)
+  else
+    note = L["status_race_on"]:format(rival)
+  end
+  local progress = game.progress and game.progress(Match.State(match))
+  return progress and L["status_race_progress"]:format(progress, note) or note
+end
+
 --- One line summary of where a match stands
 --- @param match Match
 --- @return string
@@ -211,6 +286,10 @@ function MainFrame.Describe(match)
   local game = Games.Get(match.game)
   if not game then
     return L["status_missing_game"]
+  end
+  local raced = match.race and describeRace(match, game)
+  if raced then
+    return raced
   end
   if Match.IsSolo(match) then
     -- Nobody to wait for and nobody to lose to: how it is going, as the game puts it
@@ -227,8 +306,8 @@ function MainFrame.Describe(match)
     return progress and L["status_won_with"]:format(progress) or L["status_won"]
   end
 
-  if Match.IsComputerMatch(match) and match.status == "finished" and not Match.Result(match) then
-    -- Out of a table of the computer's, which doesn't play on without the player
+  if Match.HasComputers(match) and match.status == "finished" and not Match.Result(match) then
+    -- Out of a table the computer sits at, which it doesn't play on at without people
     return L[match.beaten and "status_lost" or "status_you_resigned"]
   end
 
@@ -242,9 +321,9 @@ function MainFrame.Describe(match)
   elseif match.status == "finished" then
     local result = Match.Result(match)
     local text
-    if result and Match.IsTogether(match) and result.reason == "resign" then
-      -- Everyone left it
-      return L["status_gave_up"]
+    if result and result.reason == "resign" and result.winner == 0 then
+      -- Everyone left it, or every person did and the computer doesn't play on without them
+      return L[Match.IsTogether(match) and "status_gave_up" or "status_you_resigned"]
     elseif result and result.all then
       local progress = game.progress and game.progress(Match.State(match))
       return progress and L["status_won_with"]:format(progress) or L["status_won"]
@@ -291,6 +370,11 @@ function MainFrame.Describe(match)
   end
   local turn = Match.Turn(match)
   if turn and Match.IsComputer(match, turn) then
+    local driver = Match.Driver(match)
+    if driver and driver ~= match.me then
+      -- It moves when the client it plays on is about
+      return L["status_computer_elsewhere"]:format(MainFrame.Names(match, { turn }), MainFrame.Names(match, { driver }))
+    end
     return L["status_computer_thinking"]:format(MainFrame.Names(match, { turn }))
   end
   return L["status_their_turn"]:format(turn and MainFrame.Names(match, { turn }) or opponent)
@@ -303,6 +387,33 @@ local function waitingOnMe(match)
   -- A game played alone is always the player's to move in, and one against the computer is
   -- there to be picked up whenever: neither waits on anybody
   return match.status == "incoming" or (Match.IsMyTurn(match) and not Match.IsLocal(match))
+end
+
+--- What a day's challenge is called: today's, or the one of the day it was
+--- @param match Match
+--- @return string
+local function dailyName(match)
+  local game = Games.Get(match.game)
+  local name = game and game.name or match.game
+  if match.daily == private.session:Today() then
+    return L["daily_today"]:format(name)
+  end
+  return L["daily_of"]:format(name, match.daily)
+end
+
+--- How a result at a day's challenge is shown
+--- @param gameId string
+--- @param score number|false
+--- @return string
+function MainFrame.DailyScore(gameId, score)
+  if score == false then
+    return L["daily_nothing"]
+  end
+  local game = Games.Get(gameId)
+  if game and game.daily and game.daily.time then
+    return Widgets.Time(score)
+  end
+  return L["daily_points"]:format(score)
 end
 
 --- @param err string? Error code from the session
@@ -323,6 +434,14 @@ end
 
 --- @param match Match
 local function rematch(match)
+  if match.race and (not match.race.declined or match.race.declined == "gone") then
+    -- Another deal of the same game against the same rival, by the same rules
+    local newMatch, err = private.session:Invite(match.race.rival, match.game, { options = match.options })
+    if not newMatch then
+      return report(err)
+    end
+    return MainFrame.Select(newMatch.id)
+  end
   local game = Games.Get(match.game)
   -- A game that was played alone before the computer was the engine's is played against it now,
   local outgrown = Match.IsSolo(match) and game ~= nil and not Games.CanSeat(game, 1) and Computer.Plays(game)
@@ -334,7 +453,7 @@ local function rematch(match)
     local level = Match.Level(match) or (Computer.IsLevel(options.skill) and options.skill) or Computer.DEFAULT_LEVEL
     local setup = {
       options = match.options,
-      computer = { level = level, count = count },
+      computer = outgrown and { level = level, count = count } or { levels = Match.Levels(match) },
       seat = (count == 1 and not outgrown) and 3 - match.me or nil,
     }
     local newMatch, err = private.session:Invite({}, match.game, setup)
@@ -344,11 +463,18 @@ local function rematch(match)
     return MainFrame.Select(newMatch.id)
   end
   local others = {}
-  for index, seat in ipairs(Match.Others(match)) do
-    others[index] = match.players[seat]
+  for _, seat in ipairs(Match.Others(match)) do
+    if not Match.IsComputer(match, seat) then
+      others[#others + 1] = match.players[seat]
+    end
   end
-  -- By the rules the last one was played by
-  local newMatch, err = private.session:Invite(others, match.game, { options = match.options })
+  -- By the rules the last one was played by, with the computer in as many seats as it was, each
+  -- as good as it was
+  local setup = { options = match.options }
+  if Match.HasComputers(match) then
+    setup.computer = { levels = Match.Levels(match) }
+  end
+  local newMatch, err = private.session:Invite(others, match.game, setup)
   if not newMatch then
     return report(err)
   end
@@ -413,6 +539,23 @@ local function soloActionsFor(match)
     end
   end
 
+  -- The day's challenge is played the once, to the end: given up, it counts as the player's go
+  if match.daily then
+    if match.status ~= "active" then
+      return { { text = L["daily_new_game"], tip = L["daily_new_game_tip"], onClick = again }, { text = L["remove"], onClick = forget } }
+    end
+    return {
+      {
+        text = L["give_up"],
+        onClick = function()
+          StaticPopup_Show("FOREVERGAMES_GIVE_UP", L["daily_give_up_confirm"]:format(name), nil, function()
+            session:Resign(id)
+          end)
+        end,
+      },
+    }
+  end
+
   if match.status ~= "active" then
     return { { text = L["play_again"], onClick = again }, { text = L["remove"], onClick = forget } }
   end
@@ -428,6 +571,62 @@ local function soloActionsFor(match)
         session:Undo(id)
       end,
     }
+  end
+  return actions
+end
+
+--- Buttons offered for a race, in display order. A run that is on is given up rather than thrown
+--- away, the rival is told it didn't finish. One the rival hasn't taken up yet can be called off
+--- @param match Match
+--- @return { text: string, onClick: fun(), disabled: boolean?, tip: string? }[]
+local function raceActionsFor(match)
+  local session, id, race = private.session, match.id, match.race
+  local rival = Transport.DisplayName(race.rival)
+  local function forget()
+    session:Forget(id)
+  end
+  if race.declined and (race.declined ~= "gone" or match.status == "active") then
+    -- No race any more, a game for one like any other
+    return soloActionsFor(match)
+  end
+  if match.status == "incoming" then
+    return {
+      {
+        text = L["accept"],
+        onClick = function()
+          session:Accept(id)
+        end,
+      },
+      {
+        text = L["decline"],
+        onClick = function()
+          session:Decline(id)
+        end,
+      },
+    }
+  elseif match.status ~= "active" then
+    return {
+      {
+        text = L["race_again"],
+        onClick = function()
+          rematch(match)
+        end,
+      },
+      { text = L["remove"], onClick = forget },
+    }
+  end
+  local actions = {
+    {
+      text = L["give_up"],
+      onClick = function()
+        StaticPopup_Show("FOREVERGAMES_GIVE_UP", L["race_give_up_confirm"]:format(rival), nil, function()
+          session:Resign(id)
+        end)
+      end,
+    },
+  }
+  if race.unanswered then
+    actions[2] = { text = L["withdraw"], tip = L["race_withdraw_tip"], onClick = forget }
   end
   return actions
 end
@@ -494,6 +693,9 @@ end
 --- @return { text: string, onClick: fun(), disabled: boolean?, tip: string? }[]
 local function actionsFor(match)
   local session, id = private.session, match.id
+  if match.race then
+    return raceActionsFor(match)
+  end
   if Match.IsSolo(match) then
     return soloActionsFor(match)
   end
@@ -712,6 +914,12 @@ end
 local function nameFor(match)
   local game = Games.Get(match.game)
   local name = game and game.name or match.game
+  if match.daily then
+    return dailyName(match)
+  end
+  if match.race then
+    return Transport.DisplayName(match.race.rival) .. "  |cff808080" .. L["race_of"]:format(name) .. "|r"
+  end
   if Match.IsSolo(match) then
     return name
   end
@@ -881,6 +1089,13 @@ end
 --- @param match Match
 --- @return string?
 local function deliveryNote(match)
+  local race = match.race
+  if race and race.unanswered then
+    return L["status_outgoing_hint"]
+  elseif race and Race.On(race) and race.run and race.told < #race.run then
+    -- The run is over and its time is still to get to the rival
+    return L[Transport.IsLocked() and "race_pending_locked" or "pending_unreachable"]:format(Transport.DisplayName(race.rival))
+  end
   if match.status == "outgoing" then
     return L["status_outgoing_hint"]
   end
@@ -896,11 +1111,12 @@ end
 --- How much room the selected game's view gets
 --- @param history boolean Whether the move list is taking its share
 --- @return number width, number height
-local function stageSize(history)
+--- @param side number? How wide what is beside the stage is, if anything is
+local function stageSize(side)
   local width = frame:GetWidth() - INSET * 2 - STAGE_SIDE * 2
   local height = frame:GetHeight() - HEADER_TOP - INSET - STAGE_TOP - STAGE_BOTTOM
-  if history then
-    width = width - MOVES_WIDTH - GAP
+  if side then
+    width = width - side - GAP
   end
   return width, height
 end
@@ -909,6 +1125,9 @@ end
 --- @param match Match
 --- @return number
 local function shownPly(match)
+  if catching and catching.id == match.id then
+    return catching.ply
+  end
   if review and review.id == match.id and review.total == #match.log then
     return review.ply
   end
@@ -919,6 +1138,11 @@ end
 --- @param match Match
 --- @param ply number
 local function reviewTo(match, ply)
+  -- Looking back is the player's own way through it, the moves they missed included
+  if catching then
+    private.session:Saw(catching.id, math.huge)
+    catching = nil
+  end
   local total = #match.log
   ply = math.max(0, math.min(total, ply))
   review = ply < total and { id = match.id, ply = ply, total = total } or nil
@@ -1043,6 +1267,165 @@ local function refreshMoves(match, ply)
   detail.steps[4]:SetEnabled(ply < total)
 end
 
+--- Starts showing the player the moves they missed in a game, if there are enough of them
+--- @param match Match
+local function catchUp(match)
+  if (catching and catching.id == match.id) or (review and review.id == match.id) then
+    return
+  end
+  local missed, seen = private.session:Missed(match)
+  if missed >= MISSED_LEAST then
+    catching = { id = match.id, from = seen, ply = seen, missed = missed, waited = 0 }
+  elseif catching then
+    -- That was another game, which is left where it got to
+    catching = nil
+  end
+end
+
+--- Goes on to the next of the moves the player missed, once the one on screen has been shown
+--- @param elapsed number Seconds since the last frame
+local function catchingUp(elapsed)
+  local match = catching and catching.id == selectedId and private.session:Get(catching.id)
+  if not match then
+    catching = nil
+    return
+  end
+  catching.waited = catching.waited + elapsed
+  local entry = views[match.game]
+  if catching.waited < MISSED_PAUSE or (entry and entry.view.Busy and entry.view:Busy()) then
+    return
+  end
+  -- On to the next move of the others', past whatever there is between
+  local events, ply = Match.Events(match), catching.ply
+  repeat
+    ply = ply + 1
+  until ply >= #match.log or (events[ply].kind == "move" and events[ply].seat ~= match.me)
+  catching.ply, catching.waited = ply, 0
+  if ply >= #match.log then
+    -- The last of them is made in the game as it stands
+    catching = nil
+  end
+  MainFrame.Refresh()
+end
+
+--- Straight to the game as it stands, whatever is left to show of what the player missed
+local function skipCatchingUp()
+  if catching then
+    private.session:Saw(catching.id, math.huge)
+    catching = nil
+    MainFrame.Refresh()
+  end
+end
+
+--- A line of the guild's board of the day's challenge: where they came, who, and what they had
+--- @param content Frame
+--- @return Frame
+local function createBoardRow(content)
+  local row = CreateFrame("Frame", nil, content)
+  row.mine = row:CreateTexture(nil, "BACKGROUND")
+  row.mine:SetAllPoints()
+  row.mine:SetColorTexture(1, 0.82, 0, 0.16)
+  row.place = Widgets.Label(row, "GameFontDisableSmall")
+  row.place:SetPoint("LEFT", 2, 0)
+  row.place:SetWidth(22)
+  row.place:SetJustifyH("RIGHT")
+  row.score = Widgets.Label(row, "GameFontHighlightSmall")
+  row.score:SetPoint("RIGHT", -4, 0)
+  row.name = Widgets.Label(row, "GameFontHighlightSmall")
+  row.name:SetPoint("LEFT", 30, 0)
+  row.name:SetPoint("RIGHT", row.score, "LEFT", -6, 0)
+  row.name:SetWordWrap(false)
+  return row
+end
+
+--- @param row Frame
+--- @param entry DailyEntry|{ game: string, me: boolean }
+local function fillBoardRow(row, entry)
+  row.mine:SetShown(entry.me)
+  row.place:SetText(entry.place and (entry.place .. ".") or "")
+  row.name:SetText(Transport.DisplayName(entry.name))
+  row.score:SetText(MainFrame.DailyScore(entry.game, entry.score))
+  if entry.score == false then
+    row.score:SetTextColor(unpack(Widgets.GREY))
+  else
+    row.score:SetTextColor(1, 1, 1)
+  end
+end
+
+--- Shows how the guild did at the day's challenge on screen, and asks them now and then
+--- @param match Match
+local function refreshBoard(match)
+  local board = frame.detail.board
+  local daily = private.daily
+  if not daily then
+    return
+  end
+  daily:Ask(match.daily)
+  board.title:SetText(L["daily_board"])
+  local entries = daily:Board(match.daily, match.game)
+  for _, entry in ipairs(entries) do
+    entry.game, entry.me = match.game, entry.name == match.players[match.me]
+  end
+  board.list:Update(entries, fillBoardRow)
+  if #entries == 0 then
+    board.note:SetText(L["daily_board_empty"])
+  elseif match.status == "active" then
+    board.note:SetText(L["daily_board_playing"])
+  else
+    board.note:SetText(L["daily_board_count"]:format(#entries))
+  end
+end
+
+--- @param row Frame One of the board's
+--- @param entry { name: string, time: number|false|nil, place: number?, me: boolean? }
+local function fillRaceRow(row, entry)
+  row.mine:SetShown(entry.me == true)
+  row.place:SetText(entry.place and (entry.place .. ".") or "")
+  row.name:SetText(Transport.DisplayName(entry.name))
+  row.score:SetText(raceTimeText(entry.time))
+  if type(entry.time) == "number" then
+    row.score:SetTextColor(1, 1, 1)
+  else
+    row.score:SetTextColor(unpack(Widgets.GREY))
+  end
+end
+
+--- Shows the two runs of the race on screen where the guild's board would be, the quicker first
+--- once both are known
+--- @param match Match
+local function refreshRaceBoard(match)
+  local board, race = frame.detail.board, match.race
+  board.title:SetText(L["race_board"])
+  local mine = { name = match.players[match.me], time = Race.Mine(race), me = true }
+  local theirs = { name = race.rival, time = Race.Theirs(race) }
+  local outcome = Race.Outcome(race)
+  if outcome then
+    mine.place, theirs.place = outcome == "lost" and 2 or 1, outcome == "won" and 2 or 1
+  end
+  board.list:Update(outcome == "lost" and { theirs, mine } or { mine, theirs }, fillRaceRow)
+  board.note:SetText(L[race.unanswered and "race_board_asked" or "race_board_note"])
+end
+
+--- What the view of a game is told about the race it is a run in, see GameView.race
+--- @param match Match
+--- @param game GameDefinition
+--- @return RaceView?
+local function raceView(match, game)
+  local race = match.race
+  if not race or race.declined then
+    return nil
+  end
+  local theirs = Race.Theirs(race)
+  return {
+    rival = Transport.DisplayName(race.rival),
+    theirs = theirs and theirs / 100 or theirs,
+    ghost = Race.Ghost(race),
+    sample = game.ghost and function(text)
+      return private.session:Sample(match.id, text)
+    end or nil,
+  }
+end
+
 --- @param body Frame
 --- @return Frame
 local function createDetailPanel(body)
@@ -1120,6 +1503,23 @@ local function createDetailPanel(body)
   detail.note:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, 46)
   detail.note:SetJustifyH("CENTER")
 
+  -- While the moves the player missed are shown: straight to the game as it stands. Space does
+  -- the same
+  detail.skip = Widgets.Button(detail, L["missed_skip"], 110, 26)
+  detail.skip:SetPoint("BOTTOMLEFT", 12, 12)
+  detail.skip:SetScript("OnClick", skipCatchingUp)
+  -- Shown only for as long, so that the rest of the time the game's own keys are the only ones
+  detail.keys = CreateFrame("Frame", nil, detail)
+  detail.keys:SetAllPoints()
+  detail.keys:Hide()
+  Widgets.Keys(detail.keys, function(key)
+    if key == "SPACE" and catching then
+      skipCatchingUp()
+      return true
+    end
+    return false
+  end)
+
   -- The moves so far, for games that write them down. Clicking one shows the position after it
   detail.moves = Widgets.Panel(detail)
   detail.moves:SetPoint("TOPRIGHT", -STAGE_SIDE, -STAGE_TOP)
@@ -1128,6 +1528,21 @@ local function createDetailPanel(body)
   detail.moves.list = Widgets.List(detail.moves, MOVES_WIDTH - 8, MOVE_ROW_HEIGHT, createMoveRow)
   detail.moves.list.frame:SetPoint("TOPLEFT", 4, -4)
   detail.moves.list.frame:SetPoint("BOTTOMRIGHT", -4, 4)
+
+  -- How everyone in the guild did at the day's challenge, in the same place
+  detail.board = Widgets.Panel(detail)
+  detail.board:SetPoint("TOPRIGHT", -STAGE_SIDE, -STAGE_TOP)
+  detail.board:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, STAGE_BOTTOM)
+  detail.board:SetWidth(BOARD_WIDTH)
+  detail.board.title = Widgets.Label(detail.board, "GameFontNormal", L["daily_board"])
+  detail.board.title:SetPoint("TOPLEFT", 8, -8)
+  detail.board.note = Widgets.Label(detail.board, "GameFontDisableSmall")
+  detail.board.note:SetPoint("TOPLEFT", 8, -26)
+  detail.board.note:SetPoint("TOPRIGHT", -8, -26)
+  detail.board.note:SetWordWrap(false)
+  detail.board.list = Widgets.List(detail.board, BOARD_WIDTH - 8, BOARD_ROW_HEIGHT, createBoardRow)
+  detail.board.list.frame:SetPoint("TOPLEFT", 4, -BOARD_TOP)
+  detail.board.list.frame:SetPoint("BOTTOMRIGHT", -4, 4)
 
   -- To the start, back a move, on a move, to the game as it stands
   local steps = {
@@ -1212,7 +1627,11 @@ local function refreshDetail(match, fresh)
   local waiting = waitingOnMe(match)
 
   detail.icon:SetTexture(iconFor(match))
-  if Match.IsSolo(match) then
+  if match.daily then
+    detail.header:SetText(dailyName(match))
+  elseif match.race then
+    detail.header:SetText(L["race_versus"]:format(game and game.name or match.game, Transport.DisplayName(match.race.rival)))
+  elseif Match.IsSolo(match) then
     detail.header:SetText(game and game.name or match.game)
   else
     local title = L[#match.players > 2 and "with_players" or "versus"]
@@ -1232,6 +1651,10 @@ local function refreshDetail(match, fresh)
   end
 
   local history = showBoard and game.history == true
+  local daily = showBoard and match.daily ~= nil
+  -- A race has the two runs where the day's challenge has the guild's board, while it is one
+  local raced = showBoard and match.race ~= nil and (not match.race.declined or Race.Outcome(match.race) ~= nil)
+  local boarded = daily or raced
   detail.seat:SetText((showBoard and game.seatLabel) and L["you_are"]:format(game.seatLabel(match.me, #match.players)) or "")
   -- A challenge says what it is a challenge to: the rules are part of what is being accepted
   local rules = game and Games.DescribeOptions(game, match.options, #match.players) or {}
@@ -1242,19 +1665,45 @@ local function refreshDetail(match, fresh)
   detail.message:SetText(showBoard and "" or message)
   detail.rules.lines = rules
   detail.rules:SetShown(showBoard and #rules > 0)
-  detail.moves:SetShown(history)
+  detail.moves:SetShown(history and not boarded)
   for _, button in ipairs(detail.steps) do
-    button:SetShown(history)
+    button:SetShown(history and not boarded)
+  end
+  detail.board:SetShown(boarded)
+  if daily then
+    refreshBoard(match)
+  elseif raced then
+    refreshRaceBoard(match)
   end
 
-  local width, height = stageSize(history)
+  local width, height = stageSize((boarded and BOARD_WIDTH) or (history and MOVES_WIDTH) or nil)
   detail.stageArea:SetSize(width, height)
+  if showBoard then
+    catchUp(match)
+  end
   local ply = showBoard and shownPly(match) or #match.log
   local live = ply == #match.log
   if live then
     review = nil
+    if catching and catching.id == match.id then
+      catching = nil
+    end
   end
-  detail.note:SetText(live and (deliveryNote(match) or "") or L["review_note"])
+  local caught = catching ~= nil and catching.id == match.id
+  if showBoard and (live or caught) then
+    private.session:Saw(match.id, ply)
+  end
+  detail.skip:SetShown(caught)
+  detail.keys:SetShown(caught)
+  if caught then
+    local events, shown = Match.Events(match), 0
+    for index = catching.from + 1, ply do
+      shown = shown + ((events[index].kind == "move" and events[index].seat ~= match.me) and 1 or 0)
+    end
+    detail.note:SetText(L["missed_note"]:format(math.max(1, shown), catching.missed))
+  else
+    detail.note:SetText(live and (deliveryNote(match) or "") or L["review_note"])
+  end
 
   if showBoard then
     local entry = views[game.id]
@@ -1278,7 +1727,8 @@ local function refreshDetail(match, fresh)
     local event = events[ply]
     local played = nil
     if changed and event and event.kind == "move" then
-      local stepped = sameMatch and ply == before.ply + 1
+      -- Stepped forward a move, or on to the next the player missed past what there was between
+      local stepped = sameMatch and (ply == before.ply + 1 or (caught and ply > before.ply))
       local arrived = fresh == true and live and event.seat ~= match.me
       played = (stepped or arrived) and event or nil
     end
@@ -1313,8 +1763,10 @@ local function refreshDetail(match, fresh)
       fresh = fresh == true,
       changed = changed,
       played = played,
+      catching = caught or nil,
+      race = raceView(match, game),
     })
-    if history then
+    if history and not boarded then
       refreshMoves(match, ply)
     end
   end
@@ -1962,7 +2414,9 @@ local function create()
   -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend, and
   -- the computer plays only while its game is
   frame.detail:SetScript("OnUpdate", function(_, elapsed)
-    if selectedId and not review and not Wizard.IsOpen() then
+    if catching and not Wizard.IsOpen() then
+      catchingUp(elapsed)
+    elseif selectedId and not review and not Wizard.IsOpen() then
       private.session:Spend(selectedId, elapsed)
       ponder(elapsed)
     end
@@ -2064,6 +2518,16 @@ end
 --- @return boolean
 function MainFrame.IsViewing(id)
   return frame ~= nil and frame:IsShown() and not Wizard.IsOpen() and selectedId == id
+end
+
+--- The match the window lets the computer think in (see ponder): the one on screen, unless the
+--- player is looking back through it
+--- @return string?
+function MainFrame.Pondering()
+  if frame and frame:IsShown() and frame.detail:IsVisible() and selectedId and not review and not Wizard.IsOpen() then
+    return selectedId
+  end
+  return nil
 end
 
 --- @param id string? Match to show. Without one the window is where it was left: on the front page, or on the game that was being looked at

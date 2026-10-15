@@ -32,6 +32,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Tables = private.Tables
 
 -- How many rooms the monastery has
 local SIZES, USUAL_SIZE = { 6, 9, 12 }, 9
@@ -848,23 +849,12 @@ local TALENTS = {
   },
 }
 
---- A copy of a table and every table in it
---- @param source table
---- @return table
-local function copy(source)
-  local result = {}
-  for key, value in pairs(source) do
-    result[key] = type(value) == "table" and copy(value) or value
-  end
-  return result
-end
-
 --- What a class is with the talents learnt
 --- @param class string
 --- @param learned table<string, number> Ranks by talent id
 --- @return WarcraftsteinClass
 local function build(class, learned)
-  local spec = copy(CLASSES[class])
+  local spec = Tables.Copy(CLASSES[class])
   for _, tree in ipairs(TALENTS[class]) do
     for _, known in ipairs(tree.talents) do
       local rank = learned[known.id] or 0
@@ -3282,5 +3272,13 @@ private.Games.Register({
     end
     return nil
   end,
+  -- The day's maze, raced to the way out
+  daily = {
+    score = function(state, seconds)
+      return state.found and seconds or nil
+    end,
+    lower = true,
+    time = true,
+  },
   createView = createView,
 })

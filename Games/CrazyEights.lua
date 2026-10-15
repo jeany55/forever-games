@@ -21,11 +21,13 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Deck = private.Deck
+local Tables = private.Tables
 
-local RANKS, SUITS = "A23456789TJQK", "SHDC"
+local RANKS, SUITS = Deck.RANKS, Deck.SUITS
 local WILD = "8"
 -- A card the local player doesn't get to see the face of
-local HIDDEN = "?"
+local HIDDEN = Deck.HIDDEN
 -- Cards dealt to each player, by how many play
 local DEALT = { [2] = 7 }
 local DEALT_CROWD = 5
@@ -54,19 +56,13 @@ local DRAW, PASS = "d", "p"
 -- Rules
 -----------------------------
 
---- @param card string
---- @return string rank, string suit
-local function parts(card)
-  return card:sub(1, 1), card:sub(2, 2)
-end
-
 --- Whether a card may go on the pile
 --- @param state CrazyEightsState
 --- @param card string
 --- @return boolean
 local function playable(state, card)
-  local rank, suit = parts(card)
-  return rank == WILD or suit == state.suit or rank == parts(state.pile[#state.pile])
+  local rank, suit = Deck.Parts(card)
+  return rank == WILD or suit == state.suit or rank == Deck.Parts(state.pile[#state.pile])
 end
 
 --- Whether there is a card left to draw, in the deck or under the top of the pile
@@ -90,13 +86,7 @@ end
 --- @param rules table<string, any>? The usual ones if left out
 --- @return CrazyEightsState
 local function newState(seats, random, rules)
-  local deck = {}
-  for suit in SUITS:gmatch(".") do
-    for rank in RANKS:gmatch(".") do
-      deck[#deck + 1] = rank .. suit
-    end
-  end
-  random:Shuffle(deck)
+  local deck = Deck.Shuffled(random)
 
   --- @type CrazyEightsState
   local state = { seats = seats, hands = {}, deck = deck, pile = {}, turn = 1, drew = false, idle = 0, out = {} }
@@ -104,32 +94,16 @@ local function newState(seats, random, rules)
     state.hands[seat] = {}
   end
   local dealt = rules and rules.dealt or 0
-  for _ = 1, dealt > 0 and dealt or DEALT[seats] or DEALT_CROWD do
-    for seat = 1, seats do
-      table.insert(state.hands[seat], table.remove(deck))
-    end
-  end
+  Deck.Deal(deck, state.hands, dealt > 0 and dealt or DEALT[seats] or DEALT_CROWD)
 
   -- The pile starts with the first card that isn't an eight
   local starter = #deck
-  while parts(deck[starter]) == WILD do
+  while Deck.Parts(deck[starter]) == WILD do
     starter = starter - 1
   end
   state.pile[1] = table.remove(deck, starter)
-  state.suit = select(2, parts(state.pile[1]))
+  state.suit = select(2, Deck.Parts(state.pile[1]))
   return state
-end
-
---- @param hand string[]
---- @param card string
---- @return number? Where in the hand the card is
-local function find(hand, card)
-  for index, held in ipairs(hand) do
-    if held == card then
-      return index
-    end
-  end
-  return nil
 end
 
 --- @param state CrazyEightsState
@@ -158,7 +132,7 @@ local function validate(state, seat, move)
     return false, "invalid_move"
   end
   local card = rank .. suit
-  if not find(state.hands[seat], card) then
+  if not Deck.Find(state.hands[seat], card) then
     return false, "invalid_move"
   end
   if not playable(state, card) then
@@ -176,7 +150,7 @@ local function moves(state, seat)
   local list = {}
   for _, card in ipairs(state.hands[seat]) do
     if playable(state, card) then
-      if parts(card) == WILD then
+      if Deck.Parts(card) == WILD then
         for suit in SUITS:gmatch(".") do
           list[#list + 1] = card .. suit
         end
@@ -236,9 +210,9 @@ local function apply(state, seat, move, random)
   end
 
   local card, called = move:sub(1, 2), move:sub(3, 3)
-  table.remove(hand, find(hand, card))
+  table.remove(hand, Deck.Find(hand, card))
   state.pile[#state.pile + 1] = card
-  state.suit = called ~= "" and called or select(2, parts(card))
+  state.suit = called ~= "" and called or select(2, Deck.Parts(card))
   if #hand == 0 then
     state.outcome = { winner = seat }
   else
@@ -261,29 +235,16 @@ local function drop(state, seat)
   end
 end
 
---- @param count number
---- @return string[] That many cards seen from the back
-local function backs(count)
-  local cards = {}
-  for index = 1, count do
-    cards[index] = HIDDEN
-  end
-  return cards
-end
-
 --- What a player may see: their own hand and the pile. Of the deck and the other hands, only
 --- how many cards there are
 --- @param state CrazyEightsState
 --- @param seat number
 --- @return CrazyEightsState
 local function visible(state, seat)
-  local seen = {}
-  for key, value in pairs(state) do
-    seen[key] = value
-  end
-  seen.deck, seen.pile, seen.hands = backs(#state.deck), { unpack(state.pile) }, {}
+  local seen = Tables.Shallow(state)
+  seen.deck, seen.pile, seen.hands = Deck.Backs(#state.deck), { unpack(state.pile) }, {}
   for other, hand in ipairs(state.hands) do
-    seen.hands[other] = other == seat and { unpack(hand) } or backs(#hand)
+    seen.hands[other] = other == seat and { unpack(hand) } or Deck.Backs(#hand)
   end
   return seen
 end
@@ -321,7 +282,7 @@ local function standing(state, seat)
   end
   local suits = {}
   for _, card in ipairs(hand) do
-    local rank, suit = parts(card)
+    local rank, suit = Deck.Parts(card)
     if rank == WILD then
       score = score + EIGHT
     else
@@ -341,27 +302,9 @@ end
 --- @param random Random
 --- @return CrazyEightsState
 local function guess(seen, seat, random)
-  local known = {}
-  for _, card in ipairs(seen.hands[seat]) do
-    known[card] = true
-  end
-  for _, card in ipairs(seen.pile) do
-    known[card] = true
-  end
-  local unseen = {}
-  for suit in SUITS:gmatch(".") do
-    for rank in RANKS:gmatch(".") do
-      if not known[rank .. suit] then
-        unseen[#unseen + 1] = rank .. suit
-      end
-    end
-  end
-  random:Shuffle(unseen)
+  local unseen = random:Shuffle(Deck.Unseen(seen.hands[seat], seen.pile))
 
-  local world = {}
-  for key, value in pairs(seen) do
-    world[key] = value
-  end
+  local world = Tables.Shallow(seen)
   world.pile, world.hands, world.out = { unpack(seen.pile) }, {}, {}
   for other in pairs(seen.out) do
     world.out[other] = true
@@ -391,7 +334,7 @@ local COMPUTER = {
     if move == DRAW or move == PASS then
       return -2
     end
-    return parts(move) == WILD and -1 or 0
+    return Deck.Parts(move) == WILD and -1 or 0
   end,
   levels = {
     easy = { depth = 1, slip = 0.35, among = 3, samples = 2 },
@@ -451,12 +394,11 @@ View.__index = View
 local function sorted(hand)
   local cards = { unpack(hand) }
   table.sort(cards, function(a, b)
-    local rankA, suitA = parts(a)
-    local rankB, suitB = parts(b)
+    local suitA, suitB = Deck.Suit(a), Deck.Suit(b)
     if suitA ~= suitB then
       return (SUIT_ORDER[suitA] or 0) < (SUIT_ORDER[suitB] or 0)
     end
-    return (RANKS:find(rankA, 1, true) or 0) < (RANKS:find(rankB, 1, true) or 0)
+    return Deck.Rank(a) < Deck.Rank(b)
   end)
   return cards
 end
@@ -484,7 +426,7 @@ local function createView(stage)
   self.hand = Cards.Hand(stage)
   self.hand.frame:SetPoint("BOTTOM")
   self.hand.onPick = function(card)
-    if parts(card) == WILD then
+    if Deck.Parts(card) == WILD then
       -- Which suit comes next has to be said with it
       self.pending = card
       self:draw()

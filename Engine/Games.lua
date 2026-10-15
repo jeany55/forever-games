@@ -23,6 +23,14 @@
 -- challenge and nothing to send: it begins as soon as it is picked, it is always the player's
 -- turn, and with `undo` a move can be taken back. The engine can keep the time it is played for
 -- (`clock`) and remember the best the player ever did at it (`record`): see Games/Minesweeper.lua.
+-- And it can be the day's challenge (`daily`), dealt the same way for the whole guild every
+-- day, with a board of how everyone did: see Engine/Daily.lua.
+--
+-- A game for one that is timed and keeps records can be raced against somebody, with nothing
+-- more from the game: both are dealt the same, each plays it whenever they like, and the
+-- quicker time wins (Engine/Race.lua). A game can give the race a ghost of the rival's run to
+-- race against (`ghost`): its view keeps where the player is every so often, and is shown where
+-- the rival was (GameView.race).
 --
 -- A game can let whoever sets it up change some of its rules (`options`): what a bonus is worth,
 -- whether taking is compulsory. What they chose travels with the challenge and is kept with the
@@ -63,10 +71,13 @@ local _, private = ...
 --- @field clock fun(): number For a game that is timed (`clock`): how many seconds it has been played for by now. Asked whenever the view likes, it goes on counting between updates
 --- @field best fun(key: string): number?, boolean For a game that keeps records (`record`): the best there ever was under a key, and whether it was this match that set it
 --- @field played MatchEvent? The move to show being made: set when the position follows from the last one shown by that move, or when the opponent made it while the player wasn't looking
+--- @field catching boolean? The window is showing the player the moves the others made while they were away, one after the other, before the game as it stands. Not `live`, and nothing can be played, but `played` is to be shown being made as it would be in the game as it stands: the dice thrown, the turn played out. A view that says it is still showing a move (`Busy`) is waited for before the next
+--- @field race RaceView? The game for one is a race against somebody, who is playing the same deal on their own (Engine/Race.lua): who, how they did, and for a game with a `ghost` where they were as they played
 
 --- @class GameViewObject
 --- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
 --- @field Update fun(self: GameViewObject, view: GameView) Show a position. Called on every change and often when nothing changed at all, so it has to be cheap and must not restart animations
+--- @field Busy (fun(self: GameViewObject): boolean)? Whether it is still showing a move being made. The window waits for it before the computer makes its next move, and before showing the next of the moves the player missed
 
 --- Something about a game that whoever sets it up may change
 --- @class GameOption
@@ -113,6 +124,10 @@ local _, private = ...
 --- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
 --- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
 --- @field computer GameComputer? The game can be played against the computer, and this is what it knows about playing it (Engine/Computer.lua). `{}` will do for a game with `moves`
+--- @field addon string? What the game needs to be played is an addon of its own, loaded when it is (its maps, say, too much to load at every login). The game is only offered, and a challenge to it only taken up, while that addon is there and switched on (Games.Offered)
+--- @field daily GameDaily? For a game that can be played alone: it is a challenge every day, the same for everyone who plays it that day (Engine/Daily.lua)
+--- @field ghost GameGhost? For a game for one that can be raced (`clock` and `record`): the player's run is kept as they go, a few samples a second, goes to the rival with their time, and is shown to the rival while they race it (Engine/Race.lua). Nothing is asked of a game without one
+--- @field raced boolean? False for a game that is timed and keeps records but isn't to be raced, which every other such game can be (Engine/Race.lua)
 
 --- @class Games
 local Games = {}
@@ -122,6 +137,11 @@ private.Games = Games
 local registry = {}
 --- @type GameDefinition[]
 local ordered = {}
+-- Whether an addon a game needs is there and switched on: the client says, the engine knows
+-- nothing of addons (SetAddOnCheck). Until told, every addon is taken to be there
+local addOnThere = function()
+  return true
+end
 
 local REQUIRED = { "newState", "validate", "apply", "result", "createView" }
 -- Seats are a single digit in the log
@@ -351,12 +371,28 @@ function Games.Register(definition)
   assert(definition.moves == nil or type(definition.moves) == "function", "Game " .. definition.id .. " has moves that aren't a function")
   local problem = private.Computer.Problem(definition)
   assert(not problem, "Game " .. definition.id .. " " .. tostring(problem))
+  if definition.daily then
+    assert(Games.CanSeat(definition, 1), "Game " .. definition.id .. " is a daily challenge and can't be played alone")
+    assert(type(definition.daily.score) == "function", "Game " .. definition.id .. " is a daily challenge without a score")
+  end
+  if definition.ghost then
+    assert(private.Race.Has(definition), "Game " .. definition.id .. " has a ghost and can't be raced")
+    local every = definition.ghost.every
+    assert(type(every) == "number" and every > 0, "Game " .. definition.id .. " has a ghost without a time between its samples")
+  end
   local seen = {}
   for _, option in ipairs(definition.options or {}) do
     local named = type(option.id) == "string" and option.id:match("^%w+$") ~= nil and not seen[option.id]
     assert(named, "Game " .. definition.id .. " has an option with a bad or repeated id")
     assert(allows(option, option.default), "Option " .. option.id .. " of " .. definition.id .. " can't be what it is by default")
     seen[option.id] = true
+  end
+  for id, value in pairs(definition.daily and definition.daily.rules or {}) do
+    local known = false
+    for _, option in ipairs(definition.options or {}) do
+      known = known or (option.id == id and allows(option, value))
+    end
+    assert(known, "Game " .. definition.id .. " has a daily challenge with an option it can't be set to: " .. tostring(id))
   end
 
   registry[definition.id] = definition
@@ -374,12 +410,25 @@ function Games.List()
   return ordered
 end
 
+--- Says how to tell whether an addon is there and switched on, for games that need one
+--- @param check fun(addon: string): boolean
+function Games.SetAddOnCheck(check)
+  addOnThere = check
+end
+
+--- Whether a game can be played here: it needs no addon of its own, or the one it needs is there
+--- @param game GameDefinition
+--- @return boolean
+function Games.Offered(game)
+  return game.addon == nil or addOnThere(game.addon) == true
+end
+
 --- The genres there are games of, in the order they first came up
 --- @return string[]
 function Games.Genres()
   local genres, seen = {}, {}
   for _, game in ipairs(ordered) do
-    if game.genre and not seen[game.genre] then
+    if game.genre and not seen[game.genre] and Games.Offered(game) then
       seen[game.genre] = true
       genres[#genres + 1] = game.genre
     end
@@ -400,7 +449,7 @@ function Games.Search(text, genre, players)
 
   local found = {}
   for _, game in ipairs(ordered) do
-    local matches = genre == nil or game.genre == genre
+    local matches = (genre == nil or game.genre == genre) and Games.Offered(game)
     if players then
       local counts = Games.SeatCounts(game)
       matches = matches and (Games.CanSeat(game, players) or (players >= 3 and counts[#counts] >= 3))

@@ -46,6 +46,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Tables = private.Tables
 
 -- The world, in units
 local WIDTH, HEIGHT, COLUMN = 1024, 512, 4
@@ -281,20 +282,6 @@ end
 --- @return number
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
-end
-
---- A copy of a table and of every table in it
---- @param value any
---- @return any
-local function copy(value)
-  if type(value) ~= "table" then
-    return value
-  end
-  local result = {}
-  for key, inner in pairs(value) do
-    result[key] = copy(inner)
-  end
-  return result
 end
 
 -----------------------------
@@ -713,7 +700,7 @@ Sim.__index = Sim
 --- @param watched boolean? Keep what happens for a view
 --- @return WormcraftSim
 function Sim.New(state, slot, watched)
-  local own = copy(state)
+  local own = Tables.Copy(state)
   local self = setmetatable({
     state = own,
     team = own.teams[own.turn],
@@ -1781,7 +1768,7 @@ local function apply(state, seat, move)
     return { class = class, notation = class, team = seat }
   end
 
-  local before = copy(state)
+  local before = Tables.Copy(state)
   local slot, inputs = decode(move)
   local sim = play(state, slot, inputs)
 
@@ -2369,7 +2356,7 @@ private.Wormcraft = {
   cosine = cosine,
   solid = solidIn,
   squadOf = squadOf,
-  copy = copy,
+  copy = Tables.Copy,
   decode = decode,
   newState = newState,
   validate = validate,
@@ -2524,7 +2511,7 @@ end
 --- @return WormcraftView
 local function createView(stage)
   local Widgets = private.Widgets
-  local self = setmetatable({ stage = stage, scale = 1, queue = {}, seen = {}, choices = {}, fx = {}, pools = {}, held = {}, wasAt = {} }, View)
+  local self = setmetatable({ stage = stage, scale = 1, queue = {}, choices = {}, fx = {}, pools = {}, held = {}, wasAt = {} }, View)
   self.width, self.height = 0, 0
 
   local viewport = private.Viewport.New(stage, {
@@ -3985,28 +3972,11 @@ function View:Update(view)
       self.live = nil
     end
     self.replay, self.queue = nil, {}
-    -- The turns the others made since the player last looked, played out again
-    if view.live then
-      local from = self.seen[id]
-      if not from then
-        from = 0
-        for ply = view.ply, 1, -1 do
-          local event = view.events[ply]
-          if event and event.kind == "move" and event.team == view.seat then
-            from = ply
-            break
-          end
-        end
-      end
-      for ply = from + 1, view.ply do
-        local event = view.events[ply]
-        if event and event.kind == "move" and event.before and event.team ~= view.seat then
-          self.queue[#self.queue + 1] = event
-        end
-      end
-    end
-    if view.live then
-      self.seen[id] = view.ply
+    -- A turn somebody else made is played out again in front of the player: the one that just
+    -- came in, and each of those they missed, which the window hands over one after the other
+    local event = view.played
+    if event and event.before and event.team ~= view.seat then
+      self.queue[1] = event
     end
     if #self.queue > 0 then
       self:nextReplay()

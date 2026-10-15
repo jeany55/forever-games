@@ -36,15 +36,32 @@
 -- never anyone's turn but the player's, and nothing about it is ever sent. It doesn't count as
 -- waiting on the player either, a game nobody else is in can wait for as long as it likes.
 --
+-- The day's challenge (Engine/Daily.lua) is a game for one like any other, dealt the way it is
+-- dealt for everyone that day. It is played once a day and through to the end: nothing is taken
+-- back, and it can't be thrown away while it is on. What it came to is worked out the moment it
+-- is over, for the guild's board.
+--
 -- A game against the computer is the player's alone in the same way: nothing about it is sent,
 -- and it waits on nobody. The computer's moves are made here, a little thinking at a time
 -- whenever whoever shows the match asks for it (Session:Think), and go in the log like anyone's.
 -- The player may take a move back, the computer's answer to it with it, where the game allows
 -- that. How each game against it went is counted, by how well it played (Session:Tally).
 --
+-- The computer can take seats at a table of people too, for a game of more than two. The host
+-- challenges the people and says which seats are the computer's and how well it plays them. Once
+-- the game is on the host's client plays those seats (Match.Driver), whether or not the game is
+-- on screen (Session:Drive), and sends the computer's moves to the others like its own. A game
+-- like that is everybody's, and goes like any other game of people: nothing is taken back, and
+-- it isn't counted with the games against the computer.
+--
 -- A game for two can also be left open to whoever wants it: the player links it in chat, and the
 -- first one to click the link asks for it. Asking is as good as accepting, so the challenge that
 -- comes back is on at once. Whoever asks too late, or for a game that was never open, is told so.
+--
+-- A game for one can be raced against somebody (Engine/Race.lua): a challenge to a game each of
+-- them plays alone, with nobody's turn but their own. Whoever sends it plays at once, and whoever
+-- takes it up whenever they like. Once a run is over it is told to the other, offered again the
+-- way moves are until they have it all, and whoever comes back finds out how the other did.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -63,6 +80,8 @@ local _, private = ...
 --- @field clock (fun(): number)? Milliseconds from some time or other, for the computer to tell how long it has been thinking. Without it the computer thinks until it knows, however long that takes
 --- @field versus table<string, table<string, VersusTally>>? How the player's games against the computer went, by game id and level. Persisted. Forgotten with the session if left out
 --- @field log (fun(...: string))? Where to say that something went wrong that the player needn't be bothered with
+--- @field today (fun(): string)? The date in UTC, "2026-10-14", for the day's challenge. Without it there is none
+--- @field dailies table<string, string>? The last day the player took on each game's challenge, by game id. Persisted. Forgotten with the session if left out
 
 --- How the games against the computer at one level went
 --- @class VersusTally
@@ -86,14 +105,19 @@ local _, private = ...
 --- @field mended table<string, table<number, number>> When a log that had parted ways with a seat's without it showing was last set right from the start, by match id
 --- @field asked table<string, { host: string, game: string, expires: number }> Games the player asked for by clicking a link and hasn't heard about yet, by the id they gave them
 --- @field thinking table<string, { ply: number, thinker: Thinker }> What the computer is deciding on in each game against it, by match id, and how long the log was when it started
+--- @field waits table<string, { ply: number, waited: number }> For how many seconds the computer has seemed to think about its move, in each game of people it plays seats in off screen, by match id
+--- @field pendingRace table<string, boolean> Races whose rival still has to be told how much of their run there is here, by match id
+--- @field runOffered table<string, number> How far into the local player's run of a race what is on its way to the rival goes, by match id
 local Session = {}
 Session.__index = Session
 private.Session = Session
 
 local Codec = private.Codec
 local Computer = private.Computer
+local Daily = private.Daily
 local Games = private.Games
 local Match = private.Match
+local Race = private.Race
 local Random = private.Random
 
 local RETRY_BASE = 30
@@ -120,7 +144,8 @@ function Session.New(env)
   env.records = env.records or {}
   env.offers = env.offers or {}
   env.versus = env.versus or {}
-  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, mended = {}, asked = {}, thinking = {} }, Session)
+  env.dailies = env.dailies or {}
+  return setmetatable({ env = env, peers = {}, pendingSync = {}, offered = {}, gathering = {}, checkedIn = {}, mended = {}, asked = {}, thinking = {}, waits = {}, pendingRace = {}, runOffered = {} }, Session)
 end
 
 -----------------------------
@@ -159,6 +184,20 @@ function Session:sendCount(match, seat, type, count)
     return self:send(match, seat, type, count, Match.Digest(match, count))
   end
   return self:send(match, seat, type, count)
+end
+
+--- What to tell the player about an entry someone else, or the computer, just added
+--- @param match Match
+--- @param entry string
+--- @return string
+local function eventFor(match, entry)
+  if match.status == "finished" then
+    return "finished"
+  end
+  if entry == Match.START then
+    return "started"
+  end
+  return Match.IsDrawOffer(entry) and "draw" or "moved"
 end
 
 --- Seats of the players who are sent what happens in a match
@@ -232,14 +271,20 @@ end
 function Session:sendInvite(match, seat)
   local type, fields = "INV", { match.game, match.gameVersion, match.me }
   local game = Games.Get(match.game)
-  fields[#fields + 1] = game and Games.EncodeOptions(game, match.options)
+  local options = {}
+  options[#options + 1] = game and Games.EncodeOptions(game, match.options) or nil
+  options[#options + 1] = Codec.EncodeComputers(match.computers)
+  if #options > 0 then
+    fields[#fields + 1] = table.concat(options, "+")
+  end
   if #match.players == 2 then
     return self:send(match, seat, type, unpack(fields))
   end
 
   fields[#fields + 1], fields[#fields + 2] = #match.players, seat
   for other, name in ipairs(match.players) do
-    if other ~= match.me and other ~= seat then
+    -- The computer's seats were said with the rules
+    if other ~= match.me and other ~= seat and not Match.IsComputer(match, other) then
       if #Codec.Encode(type, match.id, unpack(fields)) + #tostring(other) + #name + 2 > Codec.MAX_LENGTH then
         if not self:send(match, seat, type, unpack(fields)) then
           return false
@@ -283,6 +328,10 @@ end
 --- @param match Match
 --- @return boolean
 function Session:NeedsAttention(match)
+  -- A race is the player's own game, but a challenge to one, and how the rival did, are news
+  if match.race and not match.hidden then
+    return match.status == "incoming" or match.unread == true
+  end
   if match.hidden or Match.IsLocal(match) then
     return false
   end
@@ -333,6 +382,9 @@ function Session:Opponents()
           last[name] = math.max(last[name] or 0, match.updated or 0)
         end
       end
+      if match.race then
+        last[match.race.rival] = math.max(last[match.race.rival] or 0, match.updated or 0)
+      end
     end
   end
   local list = {}
@@ -364,7 +416,8 @@ function Session:openMatchesWith(peer)
   local count = 0
   for _, match in pairs(self.env.matches) do
     local seat = Match.SeatOf(match, peer)
-    if not match.hidden and match.status ~= "finished" and match.status ~= "declined" and seat and seat ~= match.me then
+    local racing = match.race ~= nil and match.race.rival == peer and not match.race.declined
+    if not match.hidden and match.status ~= "finished" and match.status ~= "declined" and ((seat and seat ~= match.me) or racing) then
       count = count + 1
     end
   end
@@ -374,8 +427,10 @@ end
 --- Starts a game for one. There is nobody to ask, so it is on at once
 --- @param game GameDefinition
 --- @param options table<string, any>? How the rules are set, the usual way if left out
+--- @param daily string? The day whose challenge it is
+--- @param race MatchRace? The race it is a run in
 --- @return Match
-function Session:startSolo(game, options)
+function Session:startSolo(game, options, daily, race)
   local now = self.env.now()
   --- @type Match
   local match = {
@@ -390,10 +445,101 @@ function Session:startSolo(game, options)
     seen = {},
     created = now,
     updated = now,
+    daily = daily,
+    race = race,
   }
   self.env.matches[match.id] = match
   self.env.notify("changed", match)
   return match
+end
+
+-----------------------------
+-- The day's challenge
+-----------------------------
+
+--- The date it is now, in UTC
+--- @return string?
+function Session:Today()
+  return self.env.today and self.env.today()
+end
+
+--- The match of a day's challenge at a game, if the player still has it
+--- @param gameId string
+--- @param date string
+--- @return Match?
+function Session:DailyMatch(gameId, date)
+  for _, match in pairs(self.env.matches) do
+    if match.daily == date and match.game == gameId and not match.hidden then
+      return match
+    end
+  end
+  return nil
+end
+
+--- Whether the player has had their go at today's challenge at a game, whether or not they still
+--- have the match
+--- @param gameId string
+--- @return boolean
+function Session:PlayedToday(gameId)
+  local today = self:Today()
+  return today ~= nil and self.env.dailies[gameId] == today
+end
+
+--- Today's challenge at a game: the one the player is playing, or played and still has, or a new
+--- one if they haven't had their go at it yet
+--- @param gameId string
+--- @return Match?, string? error
+function Session:Daily(gameId)
+  local game = Games.Get(gameId)
+  local today = self:Today()
+  if not Daily.Has(game) or not today then
+    return nil, "no_daily"
+  end
+  local match = self:DailyMatch(gameId, today)
+  if match then
+    return match
+  end
+  if self.env.dailies[gameId] == today then
+    return nil, "daily_played"
+  end
+  self.env.dailies[gameId] = today
+  return self:startSolo(game, game.daily.rules, today)
+end
+
+--- Works out what a day's challenge came to once it is over, the once
+--- @param match Match
+function Session:scoreDaily(match)
+  local game = Games.Get(match.game)
+  local result = match.daily and match.score == nil and Daily.Has(game) and Match.Result(match)
+  if not result then
+    return
+  end
+  match.score = Daily.Score(game, Match.State(match), match.played or 0, result)
+  self.env.notify("daily", match)
+end
+
+--- How well the computer is to play each of the seats it takes, as a game is set up
+--- @param computer { levels: string[]?, level: string?, count: number? }
+--- @return string[]? nil if that isn't something it can do
+local function levelsOf(computer)
+  -- A list of its own, to be seated from
+  local levels = type(computer.levels) == "table" and { unpack(computer.levels) } or {}
+  if #levels == 0 then
+    local count = computer.count or 1
+    if type(count) ~= "number" or count < 1 then
+      return nil
+    end
+    levels = {}
+    for index = 1, count do
+      levels[index] = computer.level or Computer.DEFAULT_LEVEL
+    end
+  end
+  for _, level in ipairs(levels) do
+    if not Computer.IsLevel(level) then
+      return nil
+    end
+  end
+  return levels
 end
 
 --- Starts a game against the computer. It is on at once, there is nobody to ask
@@ -401,15 +547,15 @@ end
 --- @param setup InviteSetup
 --- @return Match?, string? error
 function Session:startComputer(game, setup)
-  local level, count = setup.computer.level or Computer.DEFAULT_LEVEL, setup.computer.count or 1
   if not Computer.Plays(game) then
     return nil, "no_computer"
   end
-  if not Computer.IsLevel(level) or type(count) ~= "number" or count < 1 or not Games.CanSeat(game, count + 1) then
+  local levels = levelsOf(setup.computer)
+  if not levels or not Games.CanSeat(game, #levels + 1) then
     return nil, "player_count"
   end
 
-  local now, seats = self.env.now(), count + 1
+  local now, seats = self.env.now(), #levels + 1
   local players, computers, mySeat = {}, {}, nil
   if seats == 2 and (setup.seat == 1 or setup.seat == 2) then
     mySeat = setup.seat
@@ -418,7 +564,7 @@ function Session:startComputer(game, setup)
   end
   for seat = 1, seats do
     players[seat] = seat == mySeat and self.env.me or Match.COMPUTER
-    computers[seat] = seat ~= mySeat and level or nil
+    computers[seat] = seat ~= mySeat and table.remove(levels, 1) or nil
   end
   --- @type Match
   local match = {
@@ -450,10 +596,12 @@ end
 --- @field options table<string, any>? How the rules are set, by option id. The usual way if left out
 --- @field seat number? For a game of two, the seat the local player takes. At random if left out
 --- @field id string? The id of a match that was asked for, which it goes by
---- @field computer { level: string?, count: number? }? Against the computer instead of anyone: how well it plays, Computer.DEFAULT_LEVEL if left out, and how many seats it takes, one if left out
+--- @field computer { levels: string[]?, level: string?, count: number? }? The computer plays too: how well it plays each seat it takes, or how well it plays (Computer.DEFAULT_LEVEL if left out) and in how many seats (one if left out). With nobody challenged the game is against it alone, and with people it sits at the table with them. Which seat is which is drawn like everyone's
 
 --- Challenges one player, or several to a game for more than two. With nobody to challenge it
---- starts a game for one, where the game is one, or against the computer, where that is asked for
+--- starts a game for one, where the game is one, or against the computer, where that is asked for.
+--- The computer can sit with the people challenged as well, in a game for more than two. One
+--- player challenged to a game for one is challenged to race it, see Session:startRace
 --- @param targets string|string[] Full player names
 --- @param gameId string
 --- @param setup InviteSetup?
@@ -490,7 +638,21 @@ function Session:Invite(targets, gameId, setup)
     end
     invited[target] = true
   end
-  if not Games.CanSeat(game, #targets + 1) then
+  if #targets == 1 and not Games.CanSeat(game, 2) and Race.Has(game) and not setup.computer then
+    return self:startRace(game, targets[1], setup)
+  end
+  local levels, computers = {}, 0
+  if setup.computer then
+    if not Computer.Plays(game) then
+      return nil, "no_computer"
+    end
+    levels = levelsOf(setup.computer)
+    if not levels then
+      return nil, "player_count"
+    end
+    computers = #levels
+  end
+  if not Games.CanSeat(game, #targets + computers + 1) then
     return nil, "player_count"
   end
   for _, target in ipairs(targets) do
@@ -501,12 +663,15 @@ function Session:Invite(targets, gameId, setup)
 
   local now = self.env.now()
   local players, mySeat
-  if #targets == 1 then
+  if #targets == 1 and computers == 0 then
     mySeat = (setup.seat == 1 or setup.seat == 2) and setup.seat or self.env.random(2)
     players = { mySeat == 1 and self.env.me or targets[1], mySeat == 1 and targets[1] or self.env.me }
   else
-    -- Everyone sits somewhere at random
+    -- Everyone sits somewhere at random, and so does the computer
     players = { self.env.me, unpack(targets) }
+    for _ = 1, computers do
+      players[#players + 1] = Match.COMPUTER
+    end
     for index = #players, 2, -1 do
       local other = self.env.random(index)
       players[index], players[other] = players[other], players[index]
@@ -534,8 +699,14 @@ function Session:Invite(targets, gameId, setup)
   if #players > 2 then
     match.host, match.accepted = mySeat, {}
   end
+  for seat, name in ipairs(players) do
+    if name == Match.COMPUTER then
+      match.computers = match.computers or {}
+      match.computers[seat] = table.remove(levels, 1)
+    end
+  end
   self.env.matches[id] = match
-  for _, seat in ipairs(Match.Others(match)) do
+  for _, seat in ipairs(peersOf(match)) do
     self:sendInvite(match, seat)
   end
   self.env.notify("changed", match)
@@ -659,7 +830,11 @@ function Session:Accept(id)
   match.status = "active"
   match.unread = nil
   -- If this is lost the inviter keeps repeating the challenge and gets the acceptance then
-  self:send(match, inviter, "ACC")
+  if match.race then
+    self:sendRival(match, "ACC")
+  else
+    self:send(match, inviter, "ACC")
+  end
   self:touch(match, "changed")
   return true
 end
@@ -677,7 +852,11 @@ function Session:Decline(id)
   match.status = "declined"
   match.hidden = true
   match.unread = nil
-  self:send(match, inviter, "DEC")
+  if match.race then
+    self:sendRival(match, "DEC")
+  else
+    self:send(match, inviter, "DEC")
+  end
   self:touch(match, "changed")
   return true
 end
@@ -698,6 +877,8 @@ function Session:appendOwn(id, entry)
   match.unread = nil
   self:pushAll(match)
   self:record(match)
+  self:scoreDaily(match)
+  self:finishRun(match)
   self:beaten(match)
   self:Tally(match)
   self:touch(match, "changed")
@@ -864,7 +1045,8 @@ function Session:CanUndo(match)
   if Match.IsComputerMatch(match) then
     return Computer.TakesBack(game) and beforeLastMove(match) ~= nil
   end
-  return game.undo == true and Match.IsSolo(match) and #match.log > 0
+  -- Neither the day's challenge nor a race: what a move turned up could be looked at and tried again
+  return game.undo == true and Match.IsSolo(match) and not match.daily and not match.race and #match.log > 0
 end
 
 --- Takes the local player's last move back
@@ -888,11 +1070,12 @@ end
 -- The computer
 -----------------------------
 
---- The seat the computer is to move in, in a game against it that waits on it
+--- The seat the computer is to move in, in a game it plays in that waits on it here: against
+--- the player, or at a table of people where this client plays the computer's seats
 --- @param match Match
---- @return number? nil if it isn't the computer's move
+--- @return number? nil if it isn't the computer's move, or it is somebody else's client's to make
 function Session:ComputerTurn(match)
-  if not Match.IsComputerMatch(match) or match.status ~= "active" then
+  if match.status ~= "active" or Match.Driver(match) ~= match.me then
     return nil
   end
   local turn = Match.Turn(match)
@@ -944,20 +1127,33 @@ function Session:computerMoves(match, seat, thinker)
   end
   self:beaten(match)
   self:Tally(match)
-  self:touch(match, "changed")
+  if Match.IsLocal(match) then
+    self:touch(match, "changed")
+    return
+  end
+  -- At a table of people it is a move like theirs
+  self:pushAll(match)
+  local entry = match.log[#match.log]
+  local event = eventFor(match, entry)
+  self:touch(match, event, event ~= "moved" or Match.CanMove(match))
 end
 
---- Ends a game against the computer for the player once the others have put them out of it
+--- Ends a game the computer plays in once the people in it are all out of it: the computer
+--- doesn't play on among itself. Every client of a table of people comes to that from the log
 --- @param match Match
 function Session:beaten(match)
   local game = Games.Get(match.game)
-  if match.status ~= "active" or not Match.IsComputerMatch(match) or not game or not game.beaten then
+  if match.status ~= "active" or not Match.HasComputers(match) or not game or not game.beaten then
     return
   end
-  if game.beaten(Match.State(match), match.me) then
-    self.thinking[match.id] = nil
-    match.status, match.beaten = "finished", true
+  local state = Match.State(match)
+  for seat = 1, #match.players do
+    if not Match.IsComputer(match, seat) and not Match.IsOut(match, seat) and not game.beaten(state, seat) then
+      return
+    end
   end
+  self.thinking[match.id] = nil
+  match.status, match.beaten = "finished", true
 end
 
 --- Lets the computer think about its move in a game against it, if it is the computer's move
@@ -972,10 +1168,14 @@ function Session:Think(id, ms, ready)
     self.thinking[id] = nil
     return false
   end
-  -- Only the match being looked at is thought about: what was half thought out for another goes
-  for other in pairs(self.thinking) do
-    if other ~= id then
-      self.thinking[other] = nil
+  -- Of the games against the computer alone only the one being looked at is thought about: what
+  -- was half thought out for another goes. A table of people is waiting on it whatever is
+  if Match.IsLocal(match) then
+    for other in pairs(self.thinking) do
+      local that = self.env.matches[other]
+      if other ~= id and (not that or Match.IsLocal(that)) then
+        self.thinking[other] = nil
+      end
     end
   end
   local thought = self.thinking[id]
@@ -996,6 +1196,44 @@ function Session:Think(id, ms, ready)
   self.thinking[id] = nil
   self:computerMoves(match, seat, thought.thinker)
   return self:ComputerTurn(match) ~= nil
+end
+
+--- Lets the computer think about its moves at the tables of people this client plays its seats
+--- at, one table at a time, whether or not any of them is on screen. Each move waits until the
+--- computer has seemed to think about it for a while, so that the people at the table see them
+--- come one after the other
+--- @param elapsed number Seconds since this was last called
+--- @param ms number? For how long the computer may think now, until it knows if left out
+--- @param shown string? The match on screen, whoever shows it lets the computer think there
+function Session:Drive(elapsed, ms, shown)
+  local ids = {}
+  for id, match in pairs(self.env.matches) do
+    -- Every frame, so what can't be one is passed over first
+    if Match.HasComputers(match) and id ~= shown and not Match.IsLocal(match) and self:ComputerTurn(match) then
+      ids[#ids + 1] = id
+    end
+  end
+  for id in pairs(self.waits) do
+    if not self.env.matches[id] or not self:ComputerTurn(self.env.matches[id]) then
+      self.waits[id] = nil
+    end
+  end
+  -- The one that has waited longest
+  table.sort(ids, function(a, b)
+    return self.env.matches[a].updated < self.env.matches[b].updated or (self.env.matches[a].updated == self.env.matches[b].updated and a < b)
+  end)
+  local id = ids[1]
+  if not id then
+    return
+  end
+  local match = self.env.matches[id]
+  local wait = self.waits[id]
+  if not wait or wait.ply ~= #match.log then
+    wait = { ply = #match.log, waited = 0 }
+    self.waits[id] = wait
+  end
+  wait.waited = wait.waited + elapsed
+  self:Think(id, ms, wait.waited >= Computer.Pause(Games.Get(match.game)))
 end
 
 --- Plays the computer's moves until it is the player's turn again or the game is over, thinking
@@ -1044,8 +1282,13 @@ function Session:CanForget(match)
   if match.status == "incoming" then
     return false
   end
+  if match.race and match.status == "active" and Race.On(match.race) then
+    -- A race that is on is given up rather than thrown away, and the rival told it didn't finish
+    return false
+  end
   if Match.IsSolo(match) then
-    return true
+    -- The day's challenge is given up, which counts, rather than thrown away and played again
+    return not match.daily or match.status ~= "active"
   end
   if Match.IsComputerMatch(match) and match.status == "active" then
     -- Walking away from a game against it would be a way of never losing one
@@ -1067,10 +1310,14 @@ function Session:Forget(id)
     return false, "match_in_progress"
   end
   self.thinking[id] = nil
+  if match.race then
+    self:forgetRace(match)
+    return true
+  end
 
   if match.status == "outgoing" or (match.status == "active" and not Match.Started(match)) then
     -- The host calls it off for everyone, anyone else tells the host they are out after all
-    for _, seat in ipairs(match.status == "outgoing" and Match.Others(match) or { match.host }) do
+    for _, seat in ipairs(match.status == "outgoing" and peersOf(match) or { match.host }) do
       self:send(match, seat, "DEC")
     end
     match.status = "declined"
@@ -1084,12 +1331,380 @@ function Session:Forget(id)
   return true
 end
 
+-----------------------------
+-- What the player missed
+-----------------------------
+-- A player who comes back to a game finds it moved on: one move, or in a game for six a round
+-- of everyone's. The window shows them those one after the other before the game as it stands,
+-- which takes knowing how far they had seen it. That is kept with the match, so it is the same
+-- after a /reload.
+
+--- How far the player has seen a game on screen, as a number of log entries
+--- @param match Match
+--- @return number
+function Session:Seen(match)
+  if match.shown then
+    return math.min(match.shown, #match.log)
+  end
+  -- A match from before this was kept: they saw it at least as far as their own last move
+  local events = Match.Events(match)
+  for index = #events, 1, -1 do
+    if events[index].seat == match.me and events[index].kind ~= "start" then
+      return index
+    end
+  end
+  return 0
+end
+
+--- The player has seen a game on screen this far
+--- @param id string
+--- @param count number Log entries
+function Session:Saw(id, count)
+  local match = self.env.matches[id]
+  if match then
+    -- A log that was cut short since (a move taken back) was seen no further than it goes now
+    match.shown = math.min(math.max(self:Seen(match), count), #match.log)
+  end
+end
+
+--- How many moves of the others' the player hasn't seen yet
+--- @param match Match
+--- @return number missed, number seen How far they had seen it, as a number of log entries
+function Session:Missed(match)
+  local seen, missed = self:Seen(match), 0
+  local events = Match.Events(match)
+  for index = seen + 1, #events do
+    if events[index].kind == "move" and events[index].seat ~= match.me then
+      missed = missed + 1
+    end
+  end
+  return missed, seen
+end
+
 --- @param id string
 function Session:MarkRead(id)
   local match = self.env.matches[id]
   if match and match.unread then
     match.unread = nil
     self.env.notify("changed", match)
+  end
+end
+
+-----------------------------
+-- Races
+-----------------------------
+-- A race is a game for one on each side that goes by the same id, with the rival kept on it
+-- rather than in a seat (MatchRace, Engine/Race.lua). What the two of them say about it is
+-- between them alone: the challenge and its answer, and then each one's run, which is a log of
+-- its own that only ever goes the one way. It is offered a stretch at a time, as the log of a
+-- crowd is, and the rival answers the end of each stretch with how much of it they have.
+
+--- Sends the rival of a race something about it
+--- @param match Match
+--- @param type string
+--- @param ... string|number
+--- @return boolean
+function Session:sendRival(match, type, ...)
+  return self.env.send(match.race.rival, Codec.Encode(type, match.id, ...))
+end
+
+--- Challenges the rival to the race, again for as long as they haven't answered
+--- @param match Match
+--- @return boolean sent
+function Session:sendRace(match)
+  local game = Games.Get(match.game)
+  return self:sendRival(match, "RAC", match.game, match.gameVersion, game and Games.EncodeOptions(game, match.options) or nil)
+end
+
+--- Challenges somebody to race a game for one. The player's own game of it is on at once, and
+--- the rival plays the same deal whenever they take the race up
+--- @param game GameDefinition
+--- @param rival string Full name
+--- @param setup InviteSetup
+--- @return Match?, string? error
+function Session:startRace(game, rival, setup)
+  if self:openMatchesWith(rival) >= MAX_OPEN_PER_PEER then
+    return nil, "too_many_matches"
+  end
+  local match = self:startSolo(game, setup.options, nil, { rival = rival, unanswered = true, told = 0, heard = {} })
+  self:sendRace(match)
+  return match
+end
+
+--- Keeps where the player is now for the ghost of their run, in a race of a game that has one
+--- (GameDefinition.ghost). Only one sample is kept for every so many seconds of the clock, so it
+--- can be called as often as the view likes
+--- @param id string
+--- @param text string What the game makes of where the player is
+--- @return boolean kept
+function Session:Sample(id, text)
+  local match = self.env.matches[id]
+  local game = match and Games.Get(match.game)
+  if not game or not game.ghost or not match.race or match.race.declined or match.status ~= "active" then
+    return false
+  end
+  return Race.Sample(match.race, game.ghost, match.played or 0, text)
+end
+
+--- Works out how a run went once it is over, the once, and tells the rival
+--- @param match Match
+function Session:finishRun(match)
+  local race, game = match.race, Games.Get(match.game)
+  local result = race and not race.run and game and Match.Result(match)
+  if not result then
+    return
+  end
+  race.run = Race.Run(Race.Time(game, Match.State(match), match.played or 0, result) or false, race.trail)
+  race.trail, race.samples = nil, nil
+  self:pushRun(match)
+end
+
+--- Offers the rival the next stretch of the local player's run they don't have yet. What is
+--- on its way already isn't sent again, see Session:pushLog
+--- @param match Match
+--- @param restart boolean? Offer everything they haven't answered again, for retries
+--- @return boolean sent False if a message could not be sent
+function Session:pushRun(match, restart)
+  local race = match.race
+  local run = race.run
+  if not run or not Race.On(race) then
+    return true
+  end
+  local first = restart and race.told or math.max(race.told, self.runOffered[match.id] or 0)
+  local last = math.min(#run, (math.floor(race.told / PUSH_LIMIT) + 1) * PUSH_LIMIT)
+  for n = first + 1, last do
+    if not self:sendRival(match, "MOV", n, #run, run[n]) then
+      return false
+    end
+    self.runOffered[match.id] = n
+  end
+  return true
+end
+
+--- Tries again with whatever the rival of a race is missing: the challenge while they haven't
+--- answered it, and the local player's run once it is over. And asks after theirs now and then
+--- while it doesn't come, the way a match that is waiting on someone checks in with them
+--- @param match Match
+--- @param now number
+--- @param force boolean? Ignore the backoff
+--- @return boolean attempted Whether anything was sent that wants an answer
+function Session:flushRace(match, now, force)
+  local race = match.race
+  if race.declined or match.status == "incoming" or match.status == "declined" then
+    return false
+  end
+  local waiting = not race.unanswered and not (race.length and #race.heard >= race.length)
+  if waiting and now - math.max(match.updated or 0, self.checkedIn[match.id] or 0) >= CHECK_IN then
+    self.checkedIn[match.id] = now
+    self:sendRival(match, "SYN", #race.heard)
+  end
+  local peer = self.peers[race.rival]
+  if not force and peer and peer.nextTry > now then
+    return false
+  end
+  if race.unanswered then
+    self:sendRace(match)
+    return true
+  end
+  local tried = false
+  if self.pendingRace[match.id] then
+    tried = true
+    if self:sendRival(match, "SYN", #race.heard) then
+      self.pendingRace[match.id] = nil
+    end
+  end
+  if race.run and race.told < #race.run then
+    tried = true
+    self:pushRun(match, true)
+  end
+  return tried
+end
+
+--- Takes a race off the player's list. One the rival never answered is called off; one whose
+--- rival is still to hear how the run went is kept out of sight until they have
+--- @param match Match
+function Session:forgetRace(match)
+  local race = match.race
+  if race.unanswered then
+    -- Kept for a while, to turn down whatever the rival says about it after all
+    self:sendRival(match, "DEC")
+    match.status, match.hidden = "declined", true
+    self:touch(match, "changed")
+  elseif Race.On(race) and race.run and race.told < #race.run then
+    match.hidden = true
+    self:touch(match, "changed")
+  else
+    self.env.matches[match.id] = nil
+    self.env.notify("changed", match)
+  end
+end
+
+--- Somebody challenged the player to a race
+--- @param sender string
+--- @param message Message
+function Session:onRace(sender, message)
+  local function refuse(reason)
+    self.env.send(sender, Codec.Encode("DEC", message.id, reason))
+  end
+
+  local game = Games.Get(message.game)
+  -- A game whose addon isn't here can't be played here any more than one that isn't at all
+  if not game or not Games.Offered(game) then
+    return refuse("nogame")
+  end
+  -- A game that can't be raced here is from a version that could
+  if game.version ~= message.gameVersion or not Race.Has(game) then
+    return refuse("version")
+  end
+  local options, understood = Games.DecodeOptions(game, message.options)
+  if not understood then
+    return refuse("version")
+  end
+  if self.env.takes and not self.env.takes(sender) then
+    return refuse("strangers")
+  end
+  if self:openMatchesWith(sender) >= MAX_OPEN_PER_PEER then
+    return refuse("busy")
+  end
+
+  local now = self.env.now()
+  --- @type Match
+  local match = {
+    id = message.id,
+    game = game.id,
+    gameVersion = game.version,
+    players = { self.env.me },
+    options = options,
+    me = 1,
+    log = {},
+    status = "incoming",
+    seen = {},
+    created = now,
+    updated = now,
+    race = { rival = sender, told = 0, heard = {} },
+  }
+  self.env.matches[match.id] = match
+  self:touch(match, "invite", true)
+end
+
+--- The rival challenged the player to a race they have already: they didn't hear the answer
+--- @param match Match
+function Session:onRaceAgain(match)
+  if match.status == "declined" then
+    self:sendRival(match, "DEC")
+  elseif match.status ~= "incoming" then
+    self:sendRival(match, "ACC")
+  end
+end
+
+--- The rival took the race up, or said something that means they did even if the answer itself
+--- got lost. The run is theirs to hear from now on
+--- @param match Match
+function Session:raceAccepted(match)
+  local race = match.race
+  if not race.unanswered then
+    return
+  end
+  race.unanswered = nil
+  self:touch(match, "accepted", true)
+  self:pushRun(match)
+end
+
+--- The rival turned the race down, called it off, or no longer has it
+--- @param match Match
+--- @param message Message
+function Session:onRaceDecline(match, message)
+  local race = match.race
+  if match.status == "incoming" then
+    -- The challenge was withdrawn
+    self.env.matches[match.id] = nil
+    self.env.notify("cancelled", match)
+  elseif race.unanswered then
+    race.unanswered, race.declined = nil, message.reason or "declined"
+    self:touch(match, "declined", true)
+  elseif message.reason == "gone" and not race.declined then
+    -- Nothing more goes to them, and nothing more is coming. Only news where how they did was
+    -- still to come
+    race.declined = "gone"
+    if Race.Theirs(race) == nil then
+      self:touch(match, "declined", true)
+    else
+      self.env.notify("changed", match)
+    end
+  end
+end
+
+--- An entry of the rival's run arrived
+--- @param match Match
+--- @param message Message
+function Session:onRunEntry(match, message)
+  local race = match.race
+  local heard, n = race.heard, message.n
+  if n > #heard + 1 then
+    -- Something in between went missing, ask for it
+    self:sendRival(match, "SYN", #heard)
+    return
+  end
+  local added = n == #heard + 1
+  if added then
+    if not Race.Takes(n, message.total, message.entry) then
+      return
+    end
+    heard[n], race.length = message.entry, message.total
+  end
+  if n == message.total or n % PUSH_LIMIT == 0 then
+    self:sendRival(match, "ACK", #heard)
+  end
+  if added and (n == 1 or n == race.length) then
+    -- How they did is news, and so is their ghost being all there to race against
+    self:touch(match, n == 1 and "raced" or "changed", n == 1)
+  end
+end
+
+--- The rival said how much of the local player's run they have, and with a SYN asks how much
+--- of theirs there is here
+--- @param match Match
+--- @param message Message
+--- @param wantsReply boolean
+function Session:onRunCount(match, message, wantsReply)
+  local race = match.race
+  local run = race.run or {}
+  -- Asked for, or a count that went backwards, what was sent didn't stick
+  local restart = wantsReply or message.n < race.told
+  race.told = math.min(message.n, #run)
+  if race.told < #run then
+    self:pushRun(match, restart)
+  end
+  if wantsReply then
+    self:sendRival(match, "ACK", #race.heard)
+  end
+  self.env.notify("changed", match)
+end
+
+--- Handles whatever the rival of a race says about it
+--- @param match Match
+--- @param message Message
+function Session:onRaceMessage(match, message)
+  local race = match.race
+  if message.type == "DEC" then
+    return self:onRaceDecline(match, message)
+  end
+  if message.type ~= "ACC" and message.type ~= "MOV" and message.type ~= "ACK" and message.type ~= "SYN" then
+    return
+  end
+  if match.status == "declined" then
+    -- Turned down or called off here, and they are still racing
+    self:sendRival(match, "DEC", "gone")
+    return
+  end
+  if race.declined or match.status == "incoming" then
+    return
+  end
+  self:raceAccepted(match)
+  if message.type == "MOV" then
+    self:onRunEntry(match, message)
+  elseif message.type ~= "ACC" then
+    self:onRunCount(match, message, message.type == "SYN")
   end
 end
 
@@ -1105,12 +1720,16 @@ function Session:Flush(force)
   local attempted = {}
 
   for id, match in pairs(self.env.matches) do
+    if match.race and self:flushRace(match, now, force) then
+      attempted[match.race.rival] = true
+    end
     local turn = Match.Turn(match)
-    local waiting = turn and turn ~= match.me and not Match.IsComputer(match, turn)
-    if waiting and now - math.max(match.updated or 0, self.checkedIn[id] or 0) >= CHECK_IN then
+    -- The computer's move is up to whoever's client plays its seats
+    local holder = turn and Match.IsComputer(match, turn) and Match.Driver(match) or turn
+    if holder and holder ~= match.me and now - math.max(match.updated or 0, self.checkedIn[id] or 0) >= CHECK_IN then
       -- Asked once and not again until the next time round, whether or not it gets through
       self.checkedIn[id] = now
-      self:send(match, turn, "SYN", #match.log)
+      self:send(match, holder, "SYN", #match.log)
     end
 
     local sync = match.status == "active" and self.pendingSync[id] or {}
@@ -1156,6 +1775,11 @@ function Session:askAround(crowdsOnly)
         sync[seat] = true
       end
       self.pendingSync[id] = sync
+    end
+    -- A race has a rival to tell how much of their run there is here, for as long as either of
+    -- them has something left to hear
+    if match.race and not crowdsOnly and match.status ~= "incoming" and match.status ~= "declined" then
+      self.pendingRace[id] = Race.On(match.race) and not Race.Settled(match.race) or nil
     end
   end
 end
@@ -1221,7 +1845,8 @@ function Session:onInvite(sender, message)
   end
 
   local game = Games.Get(message.game)
-  if not game then
+  -- A game whose addon isn't here can't be played here any more than one that isn't at all
+  if not game or not Games.Offered(game) then
     return refuse("nogame")
   end
   if game.version ~= message.gameVersion then
@@ -1239,6 +1864,19 @@ function Session:onInvite(sender, message)
   local options, understood = Games.DecodeOptions(game, message.options)
   if not understood then
     return refuse("version")
+  end
+  -- The computer only ever sits with a crowd, and never in the seat of anyone challenged
+  local computers = message.computers
+  if computers and (not message.seats or not Computer.Plays(game)) then
+    return refuse("version")
+  end
+  for seat, level in pairs(computers or {}) do
+    if seat > seats or seat == message.seat or seat == mySeat then
+      return
+    end
+    if not Computer.IsLevel(level) then
+      return refuse("version")
+    end
   end
   local now = self.env.now()
   -- A game the player asked for by clicking a link is one they want, whoever linked it
@@ -1258,6 +1896,7 @@ function Session:onInvite(sender, message)
     gameVersion = game.version,
     players = { [message.seat] = sender, [mySeat] = self.env.me },
     options = options,
+    computers = computers,
     me = mySeat,
     log = {},
     status = "incoming",
@@ -1265,6 +1904,9 @@ function Session:onInvite(sender, message)
     created = now,
     updated = now,
   }
+  for seat in pairs(computers or {}) do
+    match.players[seat] = Match.COMPUTER
+  end
   if not message.seats then
     self.env.matches[match.id] = match
     if wanted then
@@ -1338,20 +1980,6 @@ function Session:markAccepted(match, seat)
   self:touch(match, "accepted", true)
 end
 
---- What to tell the player about an entry someone else just added
---- @param match Match
---- @param entry string
---- @return string
-local function eventFor(match, entry)
-  if match.status == "finished" then
-    return "finished"
-  end
-  if entry == Match.START then
-    return "started"
-  end
-  return Match.IsDrawOffer(entry) and "draw" or "moved"
-end
-
 --- An entry that arrived was added to the log
 --- @param match Match
 --- @param seat number Who it came from
@@ -1365,6 +1993,7 @@ function Session:arrived(match, seat, n)
     end
   end
   match.seen[seat] = n
+  self:beaten(match)
 
   local event = eventFor(match, match.log[n])
   -- With more than two playing, most moves leave it someone else's turn: those aren't news
@@ -1419,6 +2048,7 @@ function Session:onMove(match, seat, message)
   -- two players acted at the same moment. The longer log wins. A tie between two players goes
   -- to seat 1, and among more to the entry that sorts first, which is the same whoever compares:
   -- so every client reaches the same answer without talking about it.
+  -- Whoever's log gives way keeps the resignations it had, see below
   local theirsWins = message.total > length
   if message.total == length then
     if #match.players == 2 then
@@ -1442,7 +2072,16 @@ function Session:onMove(match, seat, message)
     end
     if Match.Append(match, entry) then
       match.seen[seat] = n
-      self:touch(match, eventFor(match, entry), true)
+      -- A resignation says whose it is, and stands whatever was played before it: one that was
+      -- made at the same moment goes back on top. A move doesn't say whose it is, it was made
+      -- from a position that is gone and goes with it
+      for _, old in ipairs(previous) do
+        if Match.IsResignation(old) then
+          Match.Append(match, old)
+        end
+      end
+      self:beaten(match)
+      self:touch(match, eventFor(match, match.log[#match.log]), true)
     else
       for _, old in ipairs(previous) do
         Match.Append(match, old)
@@ -1631,6 +2270,7 @@ function Session:onGone(match, seat)
   -- They can't play on without it, which takes them out of the game. Everyone who finds out
   -- adds the same entry, so it doesn't matter who gets to tell the others first
   if match.status == "active" and not Match.IsOut(match, seat) and Match.Append(match, Match.ResignEntry(seat)) then
+    self:beaten(match)
     self:pushAll(match)
     self:touch(match, eventFor(match, match.log[#match.log]), true)
   else
@@ -1647,7 +2287,7 @@ function Session:onDecline(match, seat, message)
     match.declineReason = message.reason
     match.declinedBy = seat
     -- One player short, a game for more than two is off for the rest as well
-    for _, other in ipairs(Match.Others(match)) do
+    for _, other in ipairs(peersOf(match)) do
       if other ~= seat then
         self:send(match, other, "DEC")
       end
@@ -1694,6 +2334,21 @@ function Session:Receive(sender, text)
   self.peers[sender] = nil
 
   local match = self.env.matches[message.id]
+  -- The rival of a race has no seat in the player's game of it, see Session:onRaceMessage
+  if message.type == "RAC" then
+    if not match then
+      self:onRace(sender, message)
+    elseif match.race and match.race.rival == sender and not match.race.unanswered then
+      self:onRaceAgain(match)
+    end
+    return
+  end
+  if match and match.race then
+    if match.race.rival == sender then
+      self:onRaceMessage(match, message)
+    end
+    return
+  end
   local seat = match and Match.SeatOf(match, sender)
   if match and (not seat or seat == match.me) then
     return

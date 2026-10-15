@@ -13,10 +13,11 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 local BLACK, WHITE = 1, 2
 local SIZE = 8
-local DIRECTIONS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+local BOARD = Grid.New(SIZE)
 
 --- @class ReversiState
 --- @field board table<number, number> Seat owning the disc on each square
@@ -38,12 +39,6 @@ local function other(seat)
   return seat == BLACK and WHITE or BLACK
 end
 
---- @param square number
---- @return string
-local function squareName(square)
-  return string.char(97 + square % SIZE) .. (math.floor(square / SIZE) + 1)
-end
-
 --- The discs a seat would turn over by placing on an empty square
 --- @param board table<number, number>
 --- @param seat number
@@ -51,24 +46,19 @@ end
 --- @return number[]? nil if it would turn none, and the disc can't go there
 local function flipsFor(board, seat, square)
   local flips = nil
-  local column, row = square % SIZE, math.floor(square / SIZE)
-  for _, direction in ipairs(DIRECTIONS) do
-    local across, up = direction[1], direction[2]
-    local nextColumn, nextRow, between = column + across, row + up, 0
-    while nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE do
-      local owner = board[nextRow * SIZE + nextColumn]
+  for _, ray in ipairs(BOARD:Rays(square, Grid.AROUND)) do
+    for index, along in ipairs(ray) do
+      local owner = board[along]
       if owner == seat then
         -- The line is closed off by one of their own, everything in between turns
-        for step = 1, between do
+        for step = 1, index - 1 do
           flips = flips or {}
-          flips[#flips + 1] = (row + up * step) * SIZE + column + across * step
+          flips[#flips + 1] = ray[step]
         end
         break
       elseif not owner then
         break
       end
-      between = between + 1
-      nextColumn, nextRow = nextColumn + across, nextRow + up
     end
   end
   return flips
@@ -101,14 +91,14 @@ end
 --- @param move string
 --- @return boolean, string?
 local function validate(state, seat, move)
-  local file, rank = move:match("^([a-h])([1-8])$")
-  if not file then
+  local square = BOARD:Parse(move)
+  if not square then
     return false, "invalid_move"
   end
   if seat ~= state.turn then
     return false, "not_your_turn"
   end
-  if not state.legal[(file:byte() - 97) + (tonumber(rank) - 1) * SIZE] then
+  if not state.legal[square] then
     return false, "invalid_move"
   end
   return true
@@ -119,7 +109,7 @@ end
 --- @param move string
 --- @return ReversiEvent
 local function apply(state, seat, move)
-  local square = (move:byte(1) - 97) + (tonumber(move:sub(2)) - 1) * SIZE
+  local square = BOARD:Parse(move)
   local flipped = state.legal[square]
   local opponent = other(seat)
 
@@ -154,7 +144,7 @@ local function moves(state)
   local list = {}
   for square = 0, SIZE * SIZE - 1 do
     if state.legal[square] then
-      list[#list + 1] = squareName(square)
+      list[#list + 1] = BOARD:Name(square)
     end
   end
   return list
@@ -208,20 +198,16 @@ local function countMoves(board, seat)
   local count = 0
   for square = 0, SIZE * SIZE - 1 do
     if not board[square] then
-      local column, row = square % SIZE, math.floor(square / SIZE)
-      for _, direction in ipairs(DIRECTIONS) do
-        local nextColumn, nextRow, between = column + direction[1], row + direction[2], 0
+      for _, ray in ipairs(BOARD:Rays(square, Grid.AROUND)) do
         local closed = false
-        while nextColumn >= 0 and nextColumn < SIZE and nextRow >= 0 and nextRow < SIZE do
-          local owner = board[nextRow * SIZE + nextColumn]
+        for index, along in ipairs(ray) do
+          local owner = board[along]
           if owner == seat then
-            closed = between > 0
+            closed = index > 1
             break
           elseif not owner then
             break
           end
-          between = between + 1
-          nextColumn, nextRow = nextColumn + direction[1], nextRow + direction[2]
         end
         if closed then
           count = count + 1
@@ -270,7 +256,7 @@ end
 local COMPUTER = {
   evaluate = standing,
   priority = function(_, move)
-    return WORTH[(move:byte(1) - 97) + (tonumber(move:sub(2)) - 1) * SIZE + 1]
+    return WORTH[BOARD:Parse(move) + 1]
   end,
   key = function(state)
     local squares = {}
@@ -358,7 +344,7 @@ local function createView(stage)
       return self.view.state.legal[square] and square or nil
     end,
     onPlace = function(square)
-      self.view.submit(squareName(square))
+      self.view.submit(BOARD:Name(square))
     end,
   })
 
@@ -409,9 +395,8 @@ function View:Update(view)
   local event = view.played
   if event then
     -- The trapped discs turn over one after the other, outwards from the one that was placed
-    local column, row = event.square % SIZE, math.floor(event.square / SIZE)
     for _, square in ipairs(event.flipped) do
-      local distance = math.max(math.abs(square % SIZE - column), math.abs(math.floor(square / SIZE) - row))
+      local distance = BOARD:Distance(square, event.square)
       board:Flip(square, DISCS[other(event.seat)], (distance - 1) * RIPPLE)
     end
     board:Pop(event.square)

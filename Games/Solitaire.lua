@@ -29,9 +29,10 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Deck = private.Deck
 
-local RANKS, SUITS = "A23456789TJQK", "SHDC"
-local RED = { H = true, D = true }
+local RANKS, SUITS = Deck.RANKS, Deck.SUITS
+local RED = Deck.RED
 local COLUMNS = 7
 local DRAW, FINISH = "d", "a"
 local STOCK, WASTE, HOME = "s", "w", "f"
@@ -61,20 +62,14 @@ local POINTS = { home = 10, played = 5, turned = 5, back = -15, again = -100 }
 --- @return number rank From 1 for the ace to 13 for the king
 --- @return string suit
 local function parts(card)
-  return RANKS:find(card:sub(1, 1), 1, true), card:sub(2, 2)
+  return Deck.Rank(card), Deck.Suit(card)
 end
 
 --- @param seats number
 --- @param random Random
 --- @return SolitaireState
 local function newState(_, random)
-  local deck = {}
-  for suit in SUITS:gmatch(".") do
-    for rank in RANKS:gmatch(".") do
-      deck[#deck + 1] = rank .. suit
-    end
-  end
-  random:Shuffle(deck)
+  local deck = Deck.Shuffled(random)
 
   --- @type SolitaireState
   local state = { stock = deck, waste = {}, homes = {}, columns = {}, score = 0, moves = 0 }
@@ -640,5 +635,11 @@ private.Games.Register({
   progress = function(state)
     return L["solitaire_progress"]:format(state.score, state.moves)
   end,
+  -- The day's deal is played for points, however far it got
+  daily = {
+    score = function(state)
+      return state.score
+    end,
+  },
   createView = createView,
 })

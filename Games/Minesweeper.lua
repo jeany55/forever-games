@@ -29,6 +29,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 local REVEAL, FLAG, CHORD = "r", "f", "c"
 -- How big the field is and how many mines lie in it, by how hard that is
@@ -86,35 +87,12 @@ local OPTIONS = {
 -- Rules
 -----------------------------
 
--- The squares touching each square, by the shape of the field: worked out once, it is asked a lot
-local adjacent = {}
-
 --- The squares that touch a square, up to eight of them
 --- @param state MinesweeperState
 --- @param square number
 --- @return number[]
 local function around(state, square)
-  local columns, rows = state.columns, state.rows
-  local field = adjacent[columns * 100 + rows]
-  if not field then
-    field = {}
-    adjacent[columns * 100 + rows] = field
-  end
-  local touching = field[square]
-  if not touching then
-    touching = {}
-    local column, row = square % columns, math.floor(square / columns)
-    for down = -1, 1 do
-      for across = -1, 1 do
-        local x, y = column + across, row + down
-        if (across ~= 0 or down ~= 0) and x >= 0 and x < columns and y >= 0 and y < rows then
-          touching[#touching + 1] = y * columns + x
-        end
-      end
-    end
-    field[square] = touching
-  end
-  return touching
+  return Grid.New(state.columns, state.rows):Around(square, Grid.AROUND)
 end
 
 --- How many squares apart two squares are, going diagonally where that is shorter
@@ -123,8 +101,7 @@ end
 --- @param to number
 --- @return number
 local function distance(state, from, to)
-  local columns = state.columns
-  return math.max(math.abs(from % columns - to % columns), math.abs(math.floor(from / columns) - math.floor(to / columns)))
+  return Grid.New(state.columns, state.rows):Distance(from, to)
 end
 
 --- Puts squares in the order of how far they are from one, the nearest first
@@ -322,26 +299,22 @@ end
 --- @param event MinesweeperEvent Told what was opened, in the order it was
 local function open(state, seeds, depth, event)
   local opened, depths = event.opened, event.depths
-  local function uncover(square, steps)
-    state.open[square] = count(state, square)
+  Grid.Spread(seeds, function(square, steps)
+    local touching = count(state, square)
+    state.open[square] = touching
     state.opened = state.opened + 1
     opened[#opened + 1], depths[#depths + 1] = square, steps
-  end
-  local next = #opened + 1
-  for _, square in ipairs(seeds) do
-    uncover(square, depth)
-  end
-  while opened[next] do
-    local square, steps = opened[next], depths[next]
-    next = next + 1
-    if state.open[square] == 0 then
-      for _, other in ipairs(around(state, square)) do
-        if canReveal(state, other) then
-          uncover(other, steps + 1)
-        end
+    if touching > 0 then
+      return nil
+    end
+    local onward = {}
+    for _, other in ipairs(around(state, square)) do
+      if canReveal(state, other) then
+        onward[#onward + 1] = other
       end
     end
-  end
+    return onward
+  end, depth)
 end
 
 --- @param state MinesweeperState
@@ -1096,5 +1069,14 @@ private.Games.Register({
     end
     return nil
   end,
+  -- The day's field is a middling one, and only a field that was cleared has a time
+  daily = {
+    rules = { level = "intermediate" },
+    score = function(state, seconds)
+      return state.outcome and state.outcome.winner == 1 and seconds or nil
+    end,
+    lower = true,
+    time = true,
+  },
   createView = createView,
 })

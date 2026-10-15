@@ -40,9 +40,12 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Tables = private.Tables
+local Grid = private.Grid
 local Lexicon = private.Lexicon
 
 local SIZE = 15
+local BOARD = Grid.New(SIZE)
 local CENTRE = 7 * SIZE + 7
 local RACK = 7
 local BLANK = "_"
@@ -207,7 +210,7 @@ end
 --- @param square number
 --- @return string "H8"
 local function nameOf(square)
-  return string.char(65 + square % SIZE) .. (math.floor(square / SIZE) + 1)
+  return BOARD:Name(square):upper()
 end
 
 --- What a word is on Azeroth, in a game that has its words in it
@@ -332,19 +335,18 @@ end
 --- @param across boolean
 --- @return WordsWord
 local function wordThrough(state, placed, square, across)
-  local step = across and 1 or SIZE
+  local right, down = across and 1 or 0, across and 0 or 1
   --- @param from number
-  --- @param by number
+  --- @param sign number 1 to go on, -1 to go back
   --- @return number? The next square that way if it is on the board and has a tile
-  local function beyond(from, by)
-    local to = from + by
-    local onBoard = to >= 0 and to < SIZE * SIZE and (not across or math.floor(to / SIZE) == math.floor(from / SIZE))
-    return onBoard and (state.board[to] or placed[to]) and to or nil
+  local function beyond(from, sign)
+    local to = BOARD:Step(from, right * sign, down * sign)
+    return to and (state.board[to] or placed[to]) and to or nil
   end
 
   local first = square
-  while beyond(first, -step) do
-    first = beyond(first, -step)
+  while beyond(first, -1) do
+    first = beyond(first, -1)
   end
 
   local letters, sum, times, at = {}, 0, 1, first
@@ -359,7 +361,7 @@ local function wordThrough(state, placed, square, across)
     end
     letters[#letters + 1] = tile:upper()
     sum = sum + points
-    at = beyond(at, step)
+    at = beyond(at, 1)
   end
   return { text = table.concat(letters), square = first, across = across, length = #letters, score = sum * times }
 end
@@ -589,10 +591,7 @@ end
 --- @param seat number
 --- @return WordsState
 local function visible(state, seat)
-  local seen = {}
-  for key, value in pairs(state) do
-    seen[key] = value
-  end
+  local seen = Tables.Shallow(state)
   seen.bag, seen.racks = backs(#state.bag), {}
   for other, rack in ipairs(state.racks) do
     seen.racks[other] = other == seat and { unpack(rack) } or backs(#rack)

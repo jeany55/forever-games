@@ -35,6 +35,7 @@
 local _, private = ...
 local L = private.L
 local Rooms = private.Rooms
+local Phases = private.Phases
 
 --- @class Trivia
 local Trivia = {}
@@ -69,8 +70,7 @@ Trivia.asked = { serial = 0, ids = {} }
 --- @param streak number Right answers in a row before it
 --- @return number
 function Trivia.Points(ms, seconds, streak)
-  local share = math.min(1, math.max(0, ms / (seconds * 1000)))
-  local points = math.floor(Trivia.MOST - (Trivia.MOST - Trivia.LEAST) * share + 0.5)
+  local points = Phases.Points(ms / 1000, seconds, Trivia.MOST, Trivia.LEAST)
   return points + math.min(Trivia.STREAK_MOST, Trivia.STREAK * streak)
 end
 
@@ -173,7 +173,6 @@ local function ask(room, k)
     end
   end
   state.text = tidy(entry[1]) .. "|" .. table.concat(answers, "|")
-  state.askedAt = room:Now()
   state.k = k
   sendQuestion(room, nil, 0)
 end
@@ -242,7 +241,7 @@ function Trivia.Resume(room, delay)
     return false
   end
   state.fought = nil
-  state.resumeAt = room:Now() + (delay or 0)
+  Phases.Until(state, room:Now(), delay or 0)
   return true
 end
 
@@ -267,7 +266,7 @@ end
 function Trivia.CanAnswer(room)
   local state = room.state
   local now = room:Now()
-  return state.phase == "ask" and not state.picks[room.me] and now >= state.opensAt and now < state.endsAt
+  return state.phase == "ask" and not state.picks[room.me] and now >= state.opensAt and not Phases.Due(state, now)
 end
 
 --- @param room Room
@@ -277,32 +276,17 @@ function Trivia.TimeLeft(room)
   if state.phase ~= "ask" then
     return nil
   end
-  return math.max(0, state.endsAt - room:Now())
+  return Phases.Left(state, room:Now())
 end
 
 --- @param room Room
 --- @return number answered, number of How many in the room answered the question that is up
 function Trivia.Answered(room)
-  local answered = 0
-  for _, member in pairs(room.members) do
-    answered = answered + (room.state.picks[member.n] and 1 or 0)
-  end
-  return answered, room.count
+  return Phases.Count(room, room.state.picks)
 end
 
---- Everyone in the room, whoever has the most first
---- @param room Room
---- @return RoomMember[]
-function Trivia.Standings(room)
-  local members = room:Members()
-  table.sort(members, function(a, b)
-    if a.score ~= b.score then
-      return a.score > b.score
-    end
-    return a.n < b.n
-  end)
-  return members
-end
+--- Everyone in the room, whoever has the most first (Phases.Standings)
+Trivia.Standings = Phases.Standings
 
 -----------------------------
 -- What is said in the room
@@ -359,12 +343,13 @@ local function takeQuestion(room, fields, now)
     room:ClearScores()
     state.streak = 0
   end
-  state.phase, state.k, state.total, state.seconds = "ask", k, total, seconds
+  -- Read first, then answer
+  Phases.Begin(state, "ask", now, READ + seconds, ago)
+  state.k, state.total, state.seconds = k, total, seconds
   state.question, state.answers = question, pieces
-  state.opensAt = now - ago + READ
-  state.endsAt = state.opensAt + seconds
+  state.opensAt = state.since + READ
   state.picks, state.gained, state.counts, state.right = {}, {}, nil, nil
-  state.stopped, state.resumeAt, state.nextAt = nil, nil, nil
+  state.stopped = nil
 end
 
 --- @param room Room
@@ -385,10 +370,7 @@ local function reveal(room, right)
   end
   local mine = state.picks[room.me]
   state.streak = (mine and mine.choice == right) and state.streak + 1 or 0
-  state.phase = "reveal"
-  if room:IsHost() then
-    state.nextAt = room:Now() + REVEAL
-  end
+  Phases.Begin(state, "reveal", room:Now(), REVEAL)
 end
 
 --- @param room Room
@@ -419,14 +401,14 @@ local function receive(room, member, kind, fields)
     if not (next and total) then
       return
     end
-    state.phase, state.next, state.total = "held", next, total
-    state.incoming, state.nextAt = nil, nil
+    Phases.Begin(state, "held", now)
+    state.next, state.total, state.incoming = next, total, nil
   elseif kind == "END" and fromHost and state.phase ~= "idle" then
-    state.phase, state.total = "over", whole(fields[1], 1, 99) or state.total
-    state.incoming, state.nextAt, state.resumeAt = nil, nil, nil
+    Phases.Begin(state, "over", now)
+    state.total, state.incoming = whole(fields[1], 1, 99) or state.total, nil
   elseif kind == "STOP" and fromHost then
-    state.phase, state.stopped = "idle", true
-    state.incoming, state.nextAt, state.resumeAt, state.fought = nil, nil, nil, nil
+    Phases.Begin(state, "idle", now)
+    state.stopped, state.incoming, state.fought = true, nil, nil
   else
     return
   end
@@ -449,18 +431,18 @@ local function tick(room, now)
   end
   if state.phase == "ask" then
     -- There is no use waiting once everyone answered
-    if now >= state.endsAt + GRACE or (now >= state.opensAt and allAnswered(room)) then
+    if Phases.Due(state, now, GRACE) or (now >= state.opensAt and allAnswered(room)) then
       room:Say("REV", state.k, state.secret)
     end
-  elseif state.phase == "reveal" and state.nextAt and now >= state.nextAt then
-    state.nextAt = nil
+  elseif state.phase == "reveal" and Phases.Due(state, now) then
+    Phases.Until(state, now, nil)
     if state.k >= state.total then
       room:Say("END", state.total)
     else
       ask(room, state.k + 1)
     end
-  elseif state.phase == "held" and state.resumeAt and now >= state.resumeAt then
-    state.resumeAt = nil
+  elseif state.phase == "held" and Phases.Due(state, now) then
+    Phases.Until(state, now, nil)
     ask(room, state.next)
   end
 end
@@ -476,9 +458,10 @@ local function fight(room, fighting)
   if fighting then
     if Trivia.Pause(room) then
       state.fought = true
-    elseif state.phase == "held" and state.resumeAt then
+    elseif state.phase == "held" and state.due then
       -- Another pull before the questions went on
-      state.resumeAt, state.fought = nil, true
+      Phases.Until(state, room:Now(), nil)
+      state.fought = true
     end
   elseif state.fought and state.phase == "held" then
     Trivia.Resume(room, AFTER_FIGHT)
@@ -491,7 +474,9 @@ end
 local function welcome(room, member)
   local state = room.state
   if state.phase == "ask" or state.phase == "reveal" then
-    sendQuestion(room, member, math.floor(room:Now() - state.askedAt))
+    -- Once the answer is out, the time for the question is all gone
+    local ago = state.phase == "ask" and Phases.Ago(state, room:Now()) or READ + state.seconds
+    sendQuestion(room, member, ago)
     if state.phase == "reveal" then
       room:Tell(member, "REV", state.k, state.right)
       return
@@ -948,7 +933,7 @@ function TriviaView:Update(room)
       detail = L["trivia_right_answer"]:format(state.answers[state.right] or "?")
     end
   elseif phase == "held" then
-    detail = L[host and (state.resumeAt and "trivia_resuming" or "trivia_paused_host") or "trivia_paused"]
+    detail = L[host and (state.due and "trivia_resuming" or "trivia_paused_host") or "trivia_paused"]
   elseif phase == "idle" and not host then
     detail = status
   elseif phase == "over" and not host then

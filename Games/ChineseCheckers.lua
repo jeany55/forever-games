@@ -22,6 +22,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local Grid = private.Grid
 
 -- Of the hexagon in the middle of the star. The points are this many rows deep
 local RADIUS = 4
@@ -126,25 +127,24 @@ end
 --- @return table<number, number[]> paths By where it ends up, each starting with `from`
 local function reachable(state, from)
   local board = state.board
-  local paths = { [from] = { from } }
+  local paths = {}
 
   -- Hop by hop, nearest first, so every hole is reached the shortest way there is
-  local queue, head = { from }, 1
-  while queue[head] do
-    local at = queue[head]
-    head = head + 1
+  Grid.Spread({ from }, function(at, _, before)
+    local path = before and { unpack(paths[before]) } or {}
+    path[#path + 1] = at
+    paths[at] = path
+    local onward = {}
     for direction = 1, #STEPS do
       local over = neighbours[at][direction]
       local to = over and neighbours[over][direction]
       -- The marble isn't in the hole it set out from any more, there is nothing there to hop over
-      if to and over ~= from and board[over] and not board[to] and not paths[to] then
-        local path = { unpack(paths[at]) }
-        path[#path + 1] = to
-        paths[to] = path
-        queue[#queue + 1] = to
+      if to and over ~= from and board[over] and not board[to] then
+        onward[#onward + 1] = to
       end
     end
-  end
+    return onward
+  end)
   paths[from] = nil
 
   for direction = 1, #STEPS do
