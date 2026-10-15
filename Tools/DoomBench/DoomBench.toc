@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Doom Bench
+## Notes: How much the client can draw in a frame. A tool for Forever Games, not part of it
+## Author: Jeany
+## Version: 0.1.0
+## SavedVariables: DoomBenchDB
+
+DoomBench.lua
