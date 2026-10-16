@@ -1118,5 +1118,257 @@
    ]
   },
   "source": "c42"
+ },
+ {
+  "id": "darnassuspond",
+  "continent": 1,
+  "x": 9901.0,
+  "y": 2645.1,
+  "mapID": 1457,
+  "zone": "Darnassus",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.58555,
+   "bottom": -0.38465,
+   "facing": 5.4552,
+   "sky": [
+    0.41,
+    0.2602,
+    0.4266
+   ],
+   "ground": [
+    0.2308,
+    0.2475,
+    0.3271
+   ]
+  },
+  "source": "c43"
+ },
+ {
+  "id": "mistsedge",
+  "continent": 1,
+  "x": 6523.3,
+  "y": 793.8,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": "Mist's Edge",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.51695,
+   "bottom": -0.44345,
+   "facing": 0.8161,
+   "sky": [
+    0.4462,
+    0.3579,
+    0.377
+   ],
+   "ground": [
+    0.215,
+    0.1553,
+    0.1322
+   ]
+  },
+  "source": "c44"
+ },
+ {
+  "id": "auberdine",
+  "continent": 1,
+  "x": 6423.9,
+  "y": 520.9,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": "Auberdine",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.45815,
+   "bottom": -0.50225,
+   "facing": 0.5386,
+   "sky": [
+    0.0794,
+    0.0672,
+    0.0551
+   ],
+   "ground": [
+    0.0694,
+    0.0495,
+    0.0381
+   ]
+  },
+  "source": "c45"
+ },
+ {
+  "id": "darkshorewoods",
+  "continent": 1,
+  "x": 6459.3,
+  "y": 248.6,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.36505,
+   "bottom": -0.60515,
+   "facing": 6.2512,
+   "sky": [
+    0.1343,
+    0.1121,
+    0.1046
+   ],
+   "ground": [
+    0.0533,
+    0.0444,
+    0.0287
+   ]
+  },
+  "source": "c46"
+ },
+ {
+  "id": "bashalaran",
+  "continent": 1,
+  "x": 6612.6,
+  "y": 36.8,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": "Bashal'Aran",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.59045,
+   "bottom": -0.37975,
+   "facing": 3.2169,
+   "sky": [
+    0.1154,
+    0.0983,
+    0.087
+   ],
+   "ground": [
+    0.0702,
+    0.055,
+    0.031
+   ]
+  },
+  "source": "c47"
+ },
+ {
+  "id": "bashalaranhill",
+  "continent": 1,
+  "x": 6776.5,
+  "y": 14.5,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": "Bashal'Aran",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.21315,
+   "bottom": -0.82565,
+   "facing": 0.1602,
+   "sky": [
+    0.1078,
+    0.0837,
+    0.0672
+   ],
+   "ground": [
+    0.0919,
+    0.0667,
+    0.0361
+   ]
+  },
+  "source": "c48"
+ },
+ {
+  "id": "ametharan",
+  "continent": 1,
+  "x": 5670.7,
+  "y": 293.6,
+  "mapID": 1439,
+  "zone": "Darkshore",
+  "subzone": "Ameth'Aran",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.27685,
+   "bottom": -0.72765,
+   "facing": 3.4031,
+   "sky": [
+    0.139,
+    0.1144,
+    0.1024
+   ],
+   "ground": [
+    0.0774,
+    0.0632,
+    0.0371
+   ]
+  },
+  "source": "c49"
+ },
+ {
+  "id": "harborkeep",
+  "continent": 0,
+  "x": -8448.5,
+  "y": 1224.5,
+  "mapID": 1453,
+  "zone": "Stormwind City",
+  "subzone": "Stormwind Harbor",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.45815,
+   "bottom": -0.50225,
+   "facing": 3.1253,
+   "sky": [
+    0.5856,
+    0.4171,
+    0.4299
+   ],
+   "ground": [
+    0.2826,
+    0.146,
+    0.0941
+   ]
+  },
+  "source": "c50"
+ },
+ {
+  "id": "thunderbluffbridge",
+  "continent": 1,
+  "x": -1177.5,
+  "y": 31.6,
+  "mapID": 1456,
+  "zone": "Thunder Bluff",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.30625,
+   "bottom": -0.68355,
+   "facing": 0.0887,
+   "sky": [
+    0.6772,
+    0.6028,
+    0.5707
+   ],
+   "ground": [
+    0.3788,
+    0.1985,
+    0.0979
+   ]
+  },
+  "source": "c51"
  }
 ]
