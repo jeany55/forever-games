@@ -70,6 +70,8 @@ local _, private = ...
 --- @field me string Full name of the local player
 --- @field matches table<string, Match> Persisted matches by id
 --- @field send fun(target: string, text: string): boolean Returns false if the message could not be sent right now
+--- @field named (fun(name: string): string?)? The full name of a player named in what somebody sent, which may be written differently from how this client writes it. As it is if left out
+--- @field namedMe (fun(name: string))? Somebody sent the player's own name, the way they write it
 --- @field now fun(): number
 --- @field random fun(max: number): number
 --- @field notify fun(event: string, match: Match)
@@ -286,8 +288,9 @@ function Session:sendInvite(match, seat)
 
   fields[#fields + 1], fields[#fields + 2] = #match.players, seat
   for other, name in ipairs(match.players) do
-    -- The computer's seats were said with the rules
-    if other ~= match.me and other ~= seat and not Match.IsComputer(match, other) then
+    -- The computer's seats were said with the rules. The player challenged is told their own name
+    -- too, to know how it is written here
+    if other ~= match.me and not Match.IsComputer(match, other) then
       if #Codec.Encode(type, match.id, unpack(fields)) + #tostring(other) + #name + 2 > Codec.MAX_LENGTH then
         if not self:send(match, seat, type, unpack(fields)) then
           return false
@@ -2051,7 +2054,11 @@ function Session:onRoster(sender, id, names)
     return
   end
 
+  if names[match.me] and self.env.namedMe then
+    self.env.namedMe(names[match.me])
+  end
   for seat, name in pairs(names) do
+    name = self.env.named and self.env.named(name) or name
     if seat <= gathering.seats and not match.players[seat] and not Match.SeatOf(match, name) then
       match.players[seat] = name
     end
@@ -2434,6 +2441,24 @@ function Session:onDecline(match, seat, message)
   end
 end
 
+--- The seat of a player who was written into the match differently from how they are heard, see
+--- SessionEnv.named. They go by how they are heard from then on
+--- @param match Match
+--- @param sender string
+--- @return number?
+function Session:renamed(match, sender)
+  if not self.env.named then
+    return nil
+  end
+  for seat, name in pairs(match.players) do
+    if seat ~= match.me and not Match.IsComputer(match, seat) and self.env.named(name) == sender then
+      match.players[seat] = sender
+      return seat
+    end
+  end
+  return nil
+end
+
 --- Handles a payload received from another player
 --- @param sender string Full player name
 --- @param text string
@@ -2462,7 +2487,7 @@ function Session:Receive(sender, text)
     end
     return
   end
-  local seat = match and Match.SeatOf(match, sender)
+  local seat = match and (Match.SeatOf(match, sender) or self:renamed(match, sender))
   if match and (not seat or seat == match.me) then
     return
   end

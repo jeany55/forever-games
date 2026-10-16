@@ -562,11 +562,24 @@ function MapView:spot(place)
   return x, y
 end
 
+--- Whether the map shown is the whole world (or more), rather than a continent or a part of one
+--- @return boolean
+function MapView:isWorld()
+  local info = call(C_Map.GetMapInfo, self.mapID)
+  local kind, kinds = info and info.mapType, Enum.UIMapType
+  return kind ~= nil and (kind == kinds.World or kind == kinds.Cosmic)
+end
+
 --- The place in the world a spot on the map shown is
 --- @param x number 0 to 1 across
 --- @param y number
 --- @return Place?
 function MapView:placeAt(x, y)
+  -- The world's own map spans both continents, but the client puts any spot of it on one of
+  -- them: a guess made there could be on the wrong continent and worth nothing
+  if self:isWorld() then
+    return nil
+  end
   local continent, world = call(C_Map.GetWorldPosFromMapPos, self.mapID, CreateVector2D(x, y))
   if not continent or not world then
     return nil
@@ -865,6 +878,12 @@ function MapView:release(button)
   local place = self:placeAt(x, y)
   if place then
     self.onClick(place)
+    return
+  end
+  -- A spot of the whole world is no place: the click goes into the continent there instead
+  local zone = self:zoneAt(x, y)
+  if zone then
+    self:dive(zone.mapID)
   end
 end
 

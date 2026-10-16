@@ -717,6 +717,7 @@ local function createView(stage)
       if self.view and self.fleet.board.frame:IsVisible() then
         self:showFleet()
       end
+      self:showHint()
     end,
   })
   self.waters.board:SetInput({
@@ -756,6 +757,12 @@ local function createView(stage)
   rotate:SetScript("OnClick", function()
     self:rotate()
   end)
+  rotate:SetScript("OnEnter", function(button)
+    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+    GameTooltip:SetText(L["battleship_rotate_tip"], 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  rotate:SetScript("OnLeave", GameTooltip_Hide)
   local random = Widgets.Button(self.panel, L["battleship_random"], 60, BUTTON_HEIGHT)
   random:SetPoint("LEFT", rotate, "RIGHT", BUTTON_GAP, 0)
   random:SetScript("OnClick", function()
@@ -863,6 +870,8 @@ function View:click(square)
   end
   private.Widgets.PlaySound(PLACE_SOUND)
   self:Update(self.view)
+  -- The last ship put down leaves nothing in hand to say how to turn
+  self:showHint()
 end
 
 --- Turns the ship in hand the other way
@@ -872,6 +881,24 @@ function View:rotate()
     draft.vertical = not draft.vertical
     self:Update(self.view)
   end
+end
+
+--- Says next to the cursor how to put down or turn the ship in hand, while it is over the
+--- player's own sea. The note under the fleets says it too, but that is out of the way
+function View:showHint()
+  local frame = self.fleet.board.frame
+  local held = self.view and self.hovered and self:placing() and self:draft().held
+  if not held then
+    if GameTooltip:GetOwner() == frame then
+      GameTooltip:Hide()
+    end
+    return
+  end
+  GameTooltip:SetOwner(frame, "ANCHOR_CURSOR_RIGHT", 24, -24)
+  GameTooltip:SetText(L["battleship_hint_ship"]:format(shipName(held), SHIPS[held].size))
+  GameTooltip:AddLine(L["battleship_hint_place"], 1, 1, 1)
+  GameTooltip:AddLine(L["battleship_hint_rotate"], 0.4, 1, 0.4)
+  GameTooltip:Show()
 end
 
 --- Draws the player's own sea: the fleet as it lies or as it is being arranged, and what was fired at it

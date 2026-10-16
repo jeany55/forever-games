@@ -2422,6 +2422,67 @@ function tests.CrowdStartsOnceEveryoneHasAccepted()
   equal("started:" .. id, guests[1].events[#guests[1].events])
 end
 
+function tests.CrowdIsPlayedWithAClientThatWritesTheRealmAnotherWay()
+  local world = World.New()
+  local alice = world:AddPlayer("Alice-Realm")
+  local bob = world:AddPlayer("Bob-Realm")
+  world:AddPlayer("Carol-Realm")
+  -- Bob's client writes the realm they all share as "Elsewhere". The server gives no realm for
+  -- anyone on it, so Bob hears everyone by that, while the others write it their way
+  local env = bob.session.env
+  env.me = "Bob-Elsewhere"
+  local send = env.send
+  env.send = function(target, text)
+    return send((target:gsub("%-Elsewhere$", "-Realm")), text)
+  end
+  local receive = bob.session.Receive
+  function bob.session.Receive(session, sender, text)
+    return receive(session, (sender:gsub("%-Realm$", "-Elsewhere")), text)
+  end
+  local told = {}
+  env.namedMe = function(name)
+    told[#told + 1] = name
+  end
+  env.named = function(name)
+    return (name:gsub("%-Realm$", "-Elsewhere"))
+  end
+
+  local match = assert(alice.session:Invite({ "Bob-Realm", "Carol-Realm" }, "chinesecheckers"))
+  local id = match.id
+  world:Deliver()
+  equal("Bob-Realm", told[1], "Bob is told how the host writes his name")
+  local mine = bob.matches[id]
+  for seat, name in ipairs(mine.players) do
+    if seat ~= mine.me then
+      assert(name:find("-Elsewhere$"), "Bob knows everyone by how he hears them: " .. name)
+    end
+  end
+
+  local seated = {}
+  for seat, name in ipairs(match.players) do
+    seated[seat] = world.players[name]
+    if seated[seat] ~= alice then
+      assert(seated[seat].session:Accept(id))
+    end
+  end
+  world:Deliver()
+  for _ = 1, 6 do
+    moveSomething(world, seated, id)
+  end
+  equal(7, #mine.log, "Bob has every move, whoever made it")
+  equal(logOf(alice, id), logOf(bob, id))
+
+  -- A match kept from before Bob could tell goes by how they are heard once they are
+  for seat, name in pairs(mine.players) do
+    if seat ~= mine.me then
+      mine.players[seat] = name:gsub("%-Elsewhere$", "-Realm")
+    end
+  end
+  moveSomething(world, seated, id)
+  equal(8, #mine.log)
+  equal(logOf(alice, id), logOf(bob, id))
+end
+
 function tests.CrowdIsCalledOffWhenSomeoneDeclines()
   local world, seated, id, host = invitedCrowd(4)
   local guests = {}
@@ -13490,6 +13551,31 @@ function tests.TransportMakesTheNamesOfUnitsWhole()
   equal("Jeany Beany-Realm", Transport.HeardAs(), "never a name that isn't a longer one of the player's")
 end
 
+function tests.TransportLearnsHowOthersWriteThePlayersRealm()
+  local Transport, client = transportInAGroup()
+  -- Somebody else's client writes this realm "PvPRealm": a name written that way is a stranger's
+  -- until the server says there is somebody of that name here
+  equal("Marvin Al-PvPRealm", Transport.Named("Marvin Al-PvPRealm"))
+  client.hear("Marvin Al", "1:ROOM:0:WHO")
+  equal("Marvin Al-Realm", Transport.Named("Marvin Al-PvPRealm"))
+  -- From then on the realm written that way is this one, whoever it is said of
+  equal("Adone Pxt-Realm", Transport.Named("Adone Pxt-PvPRealm"))
+  equal("Adone Pxt-Realm", Transport.Normalize("Adone Pxt-PvPRealm"))
+  equal("Adone Pxt", Transport.DisplayName(Transport.Named("Adone Pxt-PvPRealm")))
+
+  -- A realm the server gave with what somebody said is another one, however they are named
+  client.hear("Bob-Faraway", "1:ROOM:0:WHO")
+  client.hear("Bob", "1:ROOM:0:WHO")
+  equal("Bob-Faraway", Transport.Named("Bob-Faraway"))
+
+  -- The player's own name, written by somebody else, says how they write the player's realm
+  equal("Carol-Other", Transport.Named("Carol-Other"))
+  Transport.NamedMe("Jeany Beany-Other")
+  equal("Carol-Realm", Transport.Named("Carol-Other"))
+  Transport.NamedMe("Somebody-Third")
+  equal("Carol-Third", Transport.Named("Carol-Third"), "only from a name that is the player's")
+end
+
 function tests.LinksInChatAreTurnedIntoLinks()
   local private = loadEngine()
   private.ADDON_NAME = ADDON_NAME
@@ -14892,6 +14978,35 @@ function tests.WarcraftsteinEveryClassCanFight()
     abbeyHold(walker, {}, 100)
     equal(0, #walker.run.bolts, "nothing left in the air")
   end
+end
+
+-- What the player presses is seen and heard to go off, or they are told why it didn't
+function tests.WarcraftsteinSaysWhatCameOfAKey()
+  local function floated(walker, text)
+    for _, float in ipairs(walker.effects.floats) do
+      if float.busy and float:GetText() == text then
+        return true
+      end
+    end
+    return false
+  end
+  local player, match, walker = abbeyOnScreen(6, "MAGE")
+  local mob = abbeyMeet(player.private.Match.State(match), walker)
+  local L = player.private.L
+  Client.sounds = {}
+  abbeyHold(walker, { "SPACE" }, 1)
+  assert(#Client.sounds > 0, "a bolt is heard going")
+  assert(walker.effects.flash:IsShown(), "and seen")
+  abbeyHold(walker, {}, 60)
+  assert(mob.health < mob.foe.health, "and it lands")
+  walker.run.power = 0
+  abbeyHold(walker, { "SPACE" }, 30)
+  assert(floated(walker, L["warcraftstein_no_mana"]), "out of mana, the player is told")
+  walker.run.power = 100
+  abbeyHold(walker, { "F" }, 1)
+  assert(floated(walker, L["warcraftstein_ability_nova"]:match("^(.-)%.") or "nova"), "an ability says its name")
+  abbeyHold(walker, { "F" }, 1)
+  assert(floated(walker, L["warcraftstein_not_ready"]), "and again too soon, that it isn't ready")
 end
 
 function tests.WarcraftsteinClassesDoWhatTheyDo()
@@ -17009,13 +17124,58 @@ function tests.RoomIsJoinedByWhoeverHearsOfIt()
   equal("shut", bob.events[#bob.events] == "closed" and "shut")
 end
 
+function tests.RoomIsJoinedFromAClientThatWritesTheRealmAnotherWay()
+  local world = RoomWorld.New()
+  local guild = { GUILD = true }
+  local alice, bob = world:Add("Alice-Realm", guild), world:Add("Bob-Realm", guild)
+  local carol = world:Add("Carol-Realm", guild)
+  -- Carol's client writes the realm they all share as "Elsewhere", and hears everyone by it
+  local env = carol.rooms.env
+  env.me = "Carol-Elsewhere"
+  local send = env.send
+  env.send = function(target, text)
+    return send((target:gsub("%-Elsewhere$", "-Realm")), text)
+  end
+  local handle = carol.rooms.Handle
+  function carol.rooms.Handle(rooms, sender, text, channel)
+    return handle(rooms, (sender:gsub("%-Realm$", "-Elsewhere")), text, channel)
+  end
+  local told = {}
+  env.namedMe = function(name)
+    told[#told + 1] = name
+  end
+  env.named = function(name)
+    return (name:gsub("%-Realm$", "-Elsewhere"))
+  end
+
+  local room = assert(alice.rooms:Open("sketch", "GUILD"))
+  world:Run(1)
+  assert(bob.rooms:Join(room.id))
+  world:Run(2)
+  assert(carol.rooms:Join(carol.heard.id))
+  world:Run(2)
+  equal(3, carol.rooms.room.count)
+  local names = {}
+  for _, member in ipairs(carol.rooms.room:Members()) do
+    names[#names + 1] = member.name
+  end
+  equal("Alice-Elsewhere,Bob-Elsewhere,Carol-Realm", table.concat(names, ","), "Carol knows the others by how she hears them")
+  equal("Carol-Realm", told[1], "and is told how the host writes her name")
+
+  -- Somebody written in the other way before Carol could tell goes by how they are heard once they are
+  carol.rooms.room.members[2].name = "Bob-Realm"
+  bob.rooms:Leave()
+  world:Run(1)
+  equal(2, carol.rooms.room.count, "Bob's leaving is heard")
+end
+
 function tests.RoomTakesInvitedGuestsOnly()
   local world, alice, bob = sketchRoom()
   local id = alice.rooms.room.id
   local erin, frank = world:Add("Erin-Realm"), world:Add("Frank-Realm")
 
   -- Frank got hold of the room somehow, nobody asked him
-  frank.rooms:Handle("Alice-Realm", "1:ROOM:" .. id .. ":OPEN:sketch:1:G:0", nil)
+  frank.rooms:Handle("Alice-Realm", "1:ROOM:" .. id .. ":OPEN:sketch:2:G:0", nil)
   assert(frank.rooms:Join(id))
   world:Run(2)
   equal(nil, frank.rooms.room)
@@ -17167,7 +17327,20 @@ function tests.SketchPictureArrivesAsItWasDrawn()
   Sketch.Lift(room)
   world:Run(3)
   equal(1, #bob.rooms.room.state.strokes, "one line, however many messages it came in")
-  equal(302, #bob.rooms.room.state.strokes[1].points)
+  -- Straight stretches up and straight drops: the points it takes and no more
+  local points = bob.rooms.room.state.strokes[1].points
+  equal(22, #points / 2)
+  -- And it still goes where the pen went
+  for step = 1, 150 do
+    local x, y, nearest = 10 + step * 3, 10 + step % 50, math.huge
+    for index = 3, #points, 2 do
+      local x1, y1, x2, y2 = points[index - 2], points[index - 1], points[index], points[index + 1]
+      local dx, dy = x2 - x1, y2 - y1
+      local along = math.max(0, math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)))
+      nearest = math.min(nearest, math.sqrt((x - x1 - along * dx) ^ 2 + (y - y1 - along * dy) ^ 2))
+    end
+    assert(nearest <= 1.5, "the line passes by every point drawn")
+  end
   equal(pictureOf(alice), pictureOf(bob))
   equal(pictureOf(alice), pictureOf(carol))
 
@@ -17222,7 +17395,7 @@ function tests.SketchIsSeenWhenTheHostIsHeardByAnotherName()
   Sketch.Draw(room, 60, 80)
   Sketch.Lift(room)
   world:Run(3)
-  equal("22:10,10,60,80", pictureOf(bob), "the host's drawing gets there")
+  equal("22:10,10,27,33,43,57,60,80", pictureOf(bob), "the host's drawing gets there, in steps")
   equal(pictureOf(alice), pictureOf(carol))
 
   -- What Bob says himself is heard back by his other name, and is said once
@@ -17275,6 +17448,146 @@ function tests.SketchSkipsWhoeverIsNotThere()
   carol.rooms:Leave()
   world:Run(1)
   equal("over", alice.rooms.room.state.phase)
+end
+
+--- Plays the first round of a game Alice hosts to its end, so that Bob draws next
+--- @return string word What Bob draws
+local function sketchToBob(world, alice, bob, carol)
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  local _, word = sketchRound(world, { alice, bob, carol })
+  bob.Sketch.Guess(bob.rooms.room, word)
+  carol.Sketch.Guess(carol.rooms.room, word)
+  world:Run(8)
+  equal(2, carol.rooms.room.state.drawer)
+  local _, bobs = sketchRound(world, { alice, bob, carol })
+  return bobs
+end
+
+-- Seen in game: whoever drew didn't hear the others guess it (their client spelled them another
+-- way), and the round hung until the clock ran out
+function tests.SketchRoundEndsWhenEveryoneGotItThoughWhoeverDrawsMissedIt()
+  local world, alice, bob, carol = sketchRoom()
+  local word = sketchToBob(world, alice, bob, carol)
+  local scores = scoresOf(alice)
+  -- Bob's client knows Carol by a name she isn't heard by
+  bob.rooms.room.members[3].name = "Carol-Elsewhere"
+  equal(true, (select(2, carol.Sketch.Guess(carol.rooms.room, word))))
+  equal(true, (select(2, alice.Sketch.Guess(alice.rooms.room, word))))
+  world:Run(1)
+  equal("draw", bob.rooms.room.state.phase, "Bob is still waiting for Carol")
+  world:Run(3)
+  for _, player in ipairs({ alice, bob, carol }) do
+    equal("over", player.rooms.room.state.phase, player.name .. " is told the round is over")
+    equal(word, player.rooms.room.state.word, "and Bob says what it was")
+    local over = player.rooms.room.state.feed[#player.rooms.room.state.feed]
+    equal(word, over.note == "over" and over.text, "the feed too")
+  end
+  equal(scoresOf(alice), scoresOf(bob))
+  equal(scoresOf(alice), scoresOf(carol))
+  assert(scoresOf(alice) ~= scores, "with points for it")
+end
+
+function tests.SketchFeedIsOfThisRoundOnly()
+  local world, alice, bob, carol = sketchRoom()
+  local word = sketchToBob(world, alice, bob, carol)
+  local state = carol.rooms.room.state
+  equal(1, #state.feed, "nothing from the round before")
+  equal("round", state.feed[1].note)
+
+  -- A guess at the round before that only arrives now is no guess at this one
+  local id = alice.rooms.room.id
+  carol.rooms:Handle("Alice-Realm", "1:ROOM:" .. id .. ":G:1:old news", "GUILD")
+  carol.rooms:Handle("Alice-Realm", "1:ROOM:" .. id .. ":GOT:1", "GUILD")
+  equal(1, #state.feed)
+  equal(nil, state.got[1])
+  assert(alice.Sketch.Guess(alice.rooms.room, "not it"))
+  world:Run(1)
+  equal("not it", state.feed[2].text)
+
+  -- The game ends before the round does: whoever was drawing says what it was
+  alice.Sketch.Stop(alice.rooms.room)
+  world:Run(1)
+  local feed = carol.rooms.room.state.feed
+  equal("stopped", feed[#feed].note)
+  equal("over", feed[#feed - 1].note)
+  equal(word, feed[#feed - 1].text)
+end
+
+function tests.SketchFillsAPatchOfThePicture()
+  local world, alice, bob, carol = sketchRoom()
+  assert(alice.Sketch.Start(alice.rooms.room))
+  world:Run(1)
+  sketchRound(world, { alice, bob, carol })
+  local Sketch, room = alice.Sketch, alice.rooms.room
+
+  -- A box, filled in red
+  Sketch.Pen(room, 1, 2, 100, 100)
+  for _, corner in ipairs({ { 200, 100 }, { 200, 200 }, { 100, 200 }, { 100, 100 } }) do
+    Sketch.Draw(room, corner[1], corner[2])
+  end
+  Sketch.Lift(room)
+  equal(true, Sketch.Fill(room, 2, 150, 150))
+  equal(false, Sketch.Fill(room, 2, 140, 160), "it is red there already")
+  world:Run(3)
+  local fill = bob.rooms.room.state.strokes[2]
+  equal(2, fill.color)
+  equal(table.concat(room.state.strokes[2].area, ","), table.concat(fill.area, ","), "it comes out the same for everyone")
+  -- Inside the box, and not outside it
+  local left, top, right, bottom = math.huge, math.huge, 0, 0
+  for index = 1, #fill.area, 4 do
+    left, top = math.min(left, fill.area[index]), math.min(top, fill.area[index + 1])
+    right, bottom = math.max(right, fill.area[index] + fill.area[index + 2]), math.max(bottom, fill.area[index + 1] + fill.area[index + 3])
+  end
+  assert(left >= 96 and top >= 96 and right <= 204 and bottom <= 204, "the box holds it")
+  assert(left <= 104 and top <= 104 and right >= 196 and bottom >= 196, "and it fills the box")
+
+  -- Outside it fills everything but the box, in blue, and over the red where the red was
+  equal(true, Sketch.Fill(room, 6, 10, 10))
+  equal(true, Sketch.Fill(room, 6, 150, 150))
+  Sketch.Undo(room)
+  world:Run(3)
+  equal(3, #carol.rooms.room.state.strokes)
+  local outside = carol.rooms.room.state.strokes[3]
+  equal(6, outside.color)
+  local covered = 0
+  for index = 1, #outside.area, 4 do
+    covered = covered + outside.area[index + 2] * outside.area[index + 3]
+  end
+  assert(covered > 512 * 384 - 110 * 110, "all around the box")
+end
+
+-- Seen in game: a colour drawn over another came out under it. The client keeps no order among
+-- what is on one frame, so each colour in turn goes on a frame over the one before
+function tests.CanvasDrawsWhatComesLaterOverWhatCameBefore()
+  Client.Install()
+  local private = {}
+  assert(loadfile("GUI/Canvas.lua"))(ADDON_NAME, private)
+  local Canvas = private.Canvas
+  local canvas = Canvas.New(UIParent, { width = 100, height = 100, colors = { { 0, 0, 0 }, { 1, 0, 0 } }, widths = { 2 }, paper = { 1, 1, 1 } })
+  canvas:Layout(100)
+  local black, red, again = { color = 1, width = 1, points = { 0, 0, 50, 50 } }, { color = 2, width = 1, points = { 0, 50, 50, 0 } }, { color = 1, width = 1, points = { 10, 10, 20, 20 } }
+  canvas:Render({ black, red })
+  canvas:Render({ black, red, again })
+  equal(3, canvas.layer, "black, red over it, and black over that")
+  equal(2, canvas.layers[1].used, "a line of two points is two marks")
+  equal(2, canvas.layers[3].used)
+
+  -- The last point of the line being drawn moves on: it is drawn again where it is now
+  again.points[3], again.points[4] = 30, 30
+  canvas:Render({ black, red, again })
+  equal(3, canvas.layer)
+  equal(2, canvas.layers[3].used, "in its place")
+  equal(6, canvas.used)
+
+  -- A fill goes under every line
+  local fill = { color = 2, points = { 5, 5 }, area = { 0, 0, 100, 100 } }
+  canvas:Render({ black, red, again, fill })
+  equal(4, canvas.layer)
+  equal(1, canvas.layers[1].filled, "the fill is the first thing drawn")
+  equal(2, canvas.layers[2].used, "and the lines over it")
+  equal(canvas.layers[1].frame, canvas.layers[1].rects[1].parent)
+  equal(canvas.layers[4].frame, canvas.layers[4].marks[1].line.parent)
 end
 
 function tests.PartyPagesSetUpARoomAndPlayIt()
@@ -17380,8 +17693,8 @@ function tests.PartyPagesSetUpARoomAndPlayIt()
   Client.mouseDown = false
   sheet:Fire("OnUpdate", 0.02)
   world:Run(2)
-  equal("12:100,50,200,150", pictureOf(alice))
-  equal("12:100,50,200,150", pictureOf(bob))
+  equal("12:100,50,125,75,150,100,175,125,200,150", pictureOf(alice))
+  equal("12:100,50,125,75,150,100,175,125,200,150", pictureOf(bob))
 
   -- Made small while it is her turn it stays small: she asked for it
   Client.Button("party_small"):Fire("OnClick")

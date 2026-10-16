@@ -1214,7 +1214,7 @@ local LONGEST_FRAME = 0.1
 local HEALTH_LOW, SWUNG = 30, 0.18
 -- How far the shout of one foe that wakes is heard by others, how long they look for a player
 -- they can't see, how long a foe is shown striking and hurt, and how long a stun lasts
-local CALLS, LOOKS, SHOWN, HURT, STUN = 4, 10, 0.25, 0.2, 1.2
+local CALLS, LOOKS, SHOWN, HURT, STUN = 4, 10, 0.25, 0.3, 1.2
 -- How long something said stays written, and how long until anyone of the Crusade says something again
 local SAID, QUIET = 3, 8
 -- A bolt: squares a second, how far it goes at a time, and how near it has to come to hit
@@ -1229,6 +1229,29 @@ local POTION, GRASP = { health = 35, power = 50 }, 0.45
 -- How near two that walk get to each other, how far a foe walks on one picture, and how near
 -- to where it is going counts as there
 local APART, STRIDE, THERE = 0.45, 0.35, 0.05
+-- The client's own sounds, by file: what each class's blow sounds like going and landing (a
+-- buff's own blow, the cat's claws, sounds like MELEE_SOUNDS), and what doing each ability does
+local STRIKE_SOUNDS = {
+  WARRIOR = { 567936, 567880 },
+  PALADIN = { 567938, 567880 },
+  HUNTER = { 567674, 567672 },
+  ROGUE = { 567937, 567880 },
+  PRIEST = { 569719, 569402 },
+  SHAMAN = { 568228, 568516 },
+  MAGE = { 568765, 568461 },
+  WARLOCK = { 568935, 569138 },
+  DRUID = { 569151, 568008 },
+}
+local MELEE_SOUNDS = { 567937, 567880 }
+local ABILITY_SOUNDS = { whirlwind = 568519, shield = 569738, multishot = 567673, stealth = 569423, heal = 569570,
+  totem = 568641, nova = 569378, tap = 568426, cat = 568546 }
+-- How the player sees that a blow or an ability went off: the view lights up in its colour this
+-- much, for this long; and what a blow's own colour is if it has none
+local CAST_GLOW, CAST_GLOW_SECONDS, STRIKE_COLOR = 0.16, 0.18, { 1, 0.95, 0.8 }
+-- How far what the player holds is thrust up as they strike, as a share of how tall what is seen is
+local THRUST = 0.05
+-- How long until the player is told again why what they pressed didn't happen
+local BALK_AGAIN = 1
 local HURT_TINT, FROZEN_TINT, SLOWED_TINT, ANGRY_TINT = { 1, 0.35, 0.35 }, { 0.5, 0.75, 1 }, { 0.75, 0.95, 0.75 }, { 1, 0.6, 0.55 }
 local POWER_COLORS = { rage = { 0.78, 0.16, 0.16 }, mana = { 0.2, 0.42, 1 }, energy = { 1, 0.88, 0.2 } }
 local XP_COLOR = { 0.62, 0.32, 1 }
@@ -1465,7 +1488,7 @@ end
 --- @return WarcraftsteinView
 local function createView(stage)
   --- @type WarcraftsteinView
-  local self = setmetatable({ stage = stage, columns = {}, count = 0, floors = {}, ceilings = {}, rows = 0, runs = {}, down = {} }, View)
+  local self = setmetatable({ stage = stage, columns = {}, count = 0, floors = {}, ceilings = {}, rows = 0, runs = {}, down = {}, pressed = {} }, View)
   self.depths, self.strips, self.lit, self.seen, self.near, self.stamp = {}, {}, {}, {}, {}, 0
   self.spin, self.spun = 0, 0
   self.width, self.height = 0, 0
@@ -1498,8 +1521,10 @@ local function createView(stage)
       return false
     end
     self.down[key] = true
+    -- Pressed, rather than held: if nothing comes of it, the player is told why
+    self.pressed[key] = true
     return true
-  end)
+  end, true)
   ticker:SetScript("OnKeyUp", function(_, key)
     self.down[key] = nil
   end)
@@ -1512,6 +1537,8 @@ local function createView(stage)
   end)
 
   self.border = Widgets.Panel(stage)
+  -- A click in the view is not a grab at the window: it must not get through and drag it about
+  self.border:EnableMouse(true)
   self.frame = CreateFrame("Frame", nil, self.border)
   self.frame:SetClipsChildren(true)
   local dark = self.frame:CreateTexture(nil, "BACKGROUND", nil, -8)
@@ -1558,7 +1585,10 @@ local function createView(stage)
   ability.key:SetText(CAST)
   ability:SetScript("OnClick", function()
     if self.run and self.view.canMove and not self.book:IsShown() then
-      self:cast()
+      local done, why = self:cast()
+      if not done then
+        self:balk(why)
+      end
       self:render()
       self:gauge()
     end
@@ -2051,7 +2081,8 @@ function View:render()
   self.weapon:SetAlpha(buff and buff.hidden and 0.45 or 1)
   local sway = run.walked * math.pi * 1.4
   self.weapon:ClearAllPoints()
-  self.weapon:SetPoint("BOTTOM", self.frame, "BOTTOM", self.seenWidth * 0.14 + math.sin(sway) * seenHeight * SWAY, -math.abs(math.cos(sway)) * seenHeight * SWAY)
+  local thrust = run.swung / SWUNG * seenHeight * THRUST
+  self.weapon:SetPoint("BOTTOM", self.frame, "BOTTOM", self.seenWidth * 0.14 + math.sin(sway) * seenHeight * SWAY, -math.abs(math.cos(sway)) * seenHeight * SWAY + thrust)
   local veil = buff and buff.veil or (run.safe and SANCTUARY_VEIL) or nil
   self.veil:SetShown(veil ~= nil)
   if veil then
@@ -2632,6 +2663,11 @@ function View:strike()
     return false
   end
   run.power, run.cooldown, run.swung = run.power - (attack.cost or 0), attack.every, SWUNG
+  local sounds = (buff and buff.attack) and MELEE_SOUNDS or STRIKE_SOUNDS[run.class] or MELEE_SOUNDS
+  self:sound(sounds[1])
+  if attack.kind == "bolt" then
+    self:glow(attack.tint or STRIKE_COLOR)
+  end
   -- Whoever strikes is seen
   local unseen = buff ~= nil and buff.hidden == true
   if buff and buff.breaks then
@@ -2655,24 +2691,30 @@ function View:strike()
     end
     self:wound(mob, amount, attack)
   end
+  if #targets > 0 then
+    self:sound(sounds[2])
+  end
   return true
 end
 
 --- The player does the thing their class can do, if it is ready and they have the power for it
 --- @return boolean done
+--- @return string? why Not, by its L key, for the player to be told
 function View:cast()
   local run, pose = self.run, self.pose
   local spec, ability = run.spec, run.spec.ability
   --- @type WarcraftsteinState
   local state = self.view.state
-  if run.ready > 0 or run.power < (ability.cost or 0) then
-    return false
+  if run.ready > 0 then
+    return false, "warcraftstein_not_ready"
+  elseif run.power < (ability.cost or 0) then
+    return false, "warcraftstein_no_" .. spec.power
   end
 
   local kind = ability.kind
   -- No fighting in the sanctuary: only what the player does for themselves
   if run.safe and kind ~= "heal" and kind ~= "buff" and kind ~= "tap" then
-    return false
+    return false, "warcraftstein_no_fighting"
   end
   if kind == "nova" or kind == "volley" then
     local aheadX, aheadY = math.cos(pose.facing), math.sin(pose.facing)
@@ -2693,12 +2735,14 @@ function View:cast()
     run.buff, run.buffLeft = ability, ability.lasts
   elseif kind == "heal" then
     if run.health >= spec.health then
-      return false
+      return false, "warcraftstein_full_health"
     end
     run.health = math.min(spec.health, run.health + ability.heals)
   elseif kind == "tap" then
-    if run.health <= ability.takes or run.power >= POWER then
-      return false
+    if run.health <= ability.takes then
+      return false, "warcraftstein_too_hurt"
+    elseif run.power >= POWER then
+      return false, "warcraftstein_full_" .. spec.power
     end
     run.health, run.power = run.health - ability.takes, math.min(POWER, run.power + ability.gives)
   elseif kind == "totem" then
@@ -2710,7 +2754,36 @@ function View:cast()
     run.totem = { x = x, y = y, left = ability.lasts, wait = 0 }
   end
   run.power, run.ready = run.power - (ability.cost or 0), ability.every
+  -- Done, for all to see and hear: its name, and the view lit up in its colour
+  self:sound(ABILITY_SOUNDS[ability.id])
+  self:glow(ability.veil or STRIKE_COLOR)
+  local name = L["warcraftstein_ability_" .. ability.id]:match("^(.-)%.") or ability.id
+  self.effects:Float(name, self.left + self.seenWidth / 2, MARGIN + self.seenHeight * 0.45, { size = 20, color = private.Widgets.GOLD })
   return true
+end
+
+--- Says why what the player pressed didn't happen, unless they were told just that a moment ago
+--- @param why string? What to say, by its L key
+function View:balk(why)
+  if not why or (why == self.balked and (self.balkLeft or 0) > 0) then
+    return
+  end
+  self.balked, self.balkLeft = why, BALK_AGAIN
+  self.effects:Float(L[why], self.left + self.seenWidth / 2, MARGIN + self.seenHeight * 0.6, { size = 16, color = { 1, 0.4, 0.3 } })
+end
+
+--- Plays one of the client's own sounds, if the player has sound on
+--- @param file number?
+function View:sound(file)
+  if file and PlaySoundFile and ForeverGames.db.profile.sound then
+    PlaySoundFile(file, "SFX")
+  end
+end
+
+--- Lights the view up for a moment in a colour: something the player did went off
+--- @param color number[]
+function View:glow(color)
+  self.effects:Flash({ color[1], color[2], color[3], CAST_GLOW }, CAST_GLOW_SECONDS)
 end
 
 --- Moves the bolts that are on their way, until they meet someone or a wall
@@ -2732,6 +2805,7 @@ function View:fly(elapsed)
           for _, mob in ipairs(run.mobs) do
             if not spent and not mob.dead and not bolt.met[mob] and (mob.x - bolt.x) ^ 2 + (mob.y - bolt.y) ^ 2 < BOLT_GIRTH ^ 2 then
               bolt.met[mob] = true
+              self:sound((STRIKE_SOUNDS[run.class] or MELEE_SOUNDS)[2])
               self:wound(mob, bolt.attack.hits, bolt.attack)
               if bolt.attack.chain then
                 self:chain(mob, bolt.attack)
@@ -2991,11 +3065,26 @@ function View:live(elapsed)
   end
   run.power = math.min(POWER, run.power + (spec.regen or 0) * elapsed)
   run.health = math.min(spec.health, run.health + ((spec.mend or 0) + (safe and SANCTUARY_MEND or 0)) * elapsed)
-  if self.down[CAST] and self:cast() then
-    stirred = true
+  local pressed = self.pressed
+  self.pressed, self.balkLeft = {}, math.max(0, (self.balkLeft or 0) - elapsed)
+  if self.down[CAST] then
+    local done, why = self:cast()
+    if done then
+      stirred = true
+    elseif pressed[CAST] then
+      self:balk(why)
+    end
   end
-  if self.down[STRIKE] and run.cooldown == 0 and not safe and self:strike() then
-    stirred = true
+  if self.down[STRIKE] and safe then
+    if pressed[STRIKE] then
+      self:balk("warcraftstein_no_fighting")
+    end
+  elseif self.down[STRIKE] and run.cooldown == 0 then
+    if self:strike() then
+      stirred = true
+    elseif pressed[STRIKE] then
+      self:balk("warcraftstein_no_" .. spec.power)
+    end
   end
   self:fly(elapsed)
   if run.totem then

@@ -64,6 +64,15 @@ local said = {}
 -- Everyone heard who has more of a name than its first word, by the first word and realm. False
 -- where two were heard who start the same
 local wholeNames = {}
+-- Other ways of writing the player's own realm, as other clients write it in what they send. Not
+-- every client writes a realm the same way ("ClassicBetaPvP2" here may be something else there),
+-- and a name written the other way would be taken for a stranger's
+local realmSpellings = {}
+-- Characters the server said are on the player's realm, by giving no realm with what they said,
+-- by name in lower case
+local localNames = {}
+-- Realms the server gave with what somebody said, which are no other way of writing the player's
+local otherRealms = {}
 
 --- Turns a global format string like "%s has come online." into a pattern capturing its arguments
 --- @param format string?
@@ -115,7 +124,7 @@ function Transport.Normalize(name)
   end
   -- Realms are always written without spaces
   characterRealm = characterRealm and characterRealm:gsub("%s", "")
-  if characterRealm == "" then
+  if characterRealm == "" or realmSpellings[characterRealm] then
     characterRealm = nil
   end
   return character .. "-" .. (characterRealm or realm())
@@ -208,6 +217,51 @@ function Transport.UnitPlayer(unit)
     return nil
   end
   return Transport.Whole((characterRealm and characterRealm ~= "") and (character .. "-" .. characterRealm) or character)
+end
+
+--- @param name string Full player name
+--- @return string character, string realm
+local function split(name)
+  return name:match("^(.*)-(.*)$")
+end
+
+--- Takes a realm somebody else wrote for a name to be the player's own, written their way
+--- @param spelling string
+--- @return boolean learnt
+local function learnSpelling(spelling)
+  if spelling == realm() or otherRealms[spelling] then
+    return false
+  end
+  realmSpellings[spelling] = true
+  private.Log("realm written", spelling, "elsewhere is", realm())
+  return true
+end
+
+--- A player's full name, for a name somebody else wrote in what they sent. A name on the player's
+--- own realm may be written with that realm spelled the way the other client spells it: when the
+--- server said a player of that name is on this realm, and never that the realm is another, that
+--- realm is taken to be this one
+--- @param name string?
+--- @return string?
+function Transport.Named(name)
+  name = Transport.Normalize(name)
+  if not name then
+    return nil
+  end
+  local character, characterRealm = split(name)
+  if characterRealm ~= realm() and localNames[character:lower()] and learnSpelling(characterRealm) then
+    return character .. "-" .. realm()
+  end
+  return name
+end
+
+--- Somebody else wrote the player's own name: its realm is the player's, however it is written
+--- @param name string?
+function Transport.NamedMe(name)
+  name = Transport.Normalize(name)
+  if name and firstWord(name):match("^[^-]*") == firstWord(Transport.PlayerName()):match("^[^-]*") then
+    learnSpelling(select(2, split(name)))
+  end
 end
 
 --- Notes what the player says to everyone, so it is known as theirs when it comes back
@@ -627,6 +681,13 @@ function Transport.Init(newHandlers)
         private.Log("recv unreadable payload, lockdown")
       elseif prefix == PREFIX and (channel == "WHISPER" or channel == "GUILD" or channel == "PARTY" or channel == "RAID") then
         private.Log("recv", channel, sender, text)
+        -- The server gives the realm only of those on another
+        local senderRealm = type(sender) == "string" and sender:match("%-(.+)$")
+        if senderRealm then
+          otherRealms[senderRealm:gsub("%s", "")] = true
+        elseif type(sender) == "string" then
+          localNames[sender:lower()] = true
+        end
         local name = Transport.Normalize(sender)
         if name and channel ~= "WHISPER" then
           learnHeardAs(name, text)

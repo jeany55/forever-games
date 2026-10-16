@@ -441,6 +441,12 @@ function View:showReveal(round)
   else
     self.distance:SetText(guess.guess and L["where_wrong_continent"] or L["where_no_guess"])
   end
+  -- Nothing for it: why, in red, under the 0
+  if guess.points > 0 then
+    self.distance:SetTextColor(1, 1, 1)
+  else
+    self.distance:SetTextColor(unpack(Widgets.RED))
+  end
   self:countUp(guess.points, Places.BEST, "+")
   if guess.points >= Places.BEST then
     Widgets.PlaySound("UI_EPICLOOT_TOAST")
@@ -464,6 +470,19 @@ function View:onward()
   else
     self:play(state.round)
   end
+end
+
+--- The lines under the summary, with what the rival came to once they have said: they may finish
+--- after the player
+function View:refreshSummary()
+  local race = self.view.race
+  local theirs = race and race.theirs or nil
+  local lines = { unpack(self.summary) }
+  if theirs then
+    lines[#lines + 1] = L["where_rival_scored"]:format(race.rival, Where.points(theirs))
+  end
+  self.summaryTheirs = theirs
+  self.list:SetText(table.concat(lines, "\n"))
 end
 
 --- Every place of the game on the map, and what it all came to
@@ -497,14 +516,12 @@ function View:showSummary()
   elseif best then
     lines[#lines + 1] = L["where_best"]:format(Where.points(best))
   end
-  local race = view.race
-  if race and race.theirs then
-    lines[#lines + 1] = L["where_rival_scored"]:format(race.rival, Where.points(race.theirs))
-  end
-  self.list:SetText(table.concat(lines, "\n"))
+  self.summary = lines
+  self:refreshSummary()
   self.list:Show()
   self.listBack:Show()
   self.distance:SetText(L["where_out_of"]:format(Where.points(most)))
+  self.distance:SetTextColor(1, 1, 1)
   self.track:Show()
   self.fill:Show()
   self:countUp(state.total, math.max(1, most))
@@ -539,6 +556,10 @@ function View:Update(view)
   if self.round and not self.revealed and not self.over and state.round > self.round and state.guesses[self.round] then
     self:showReveal(self.round)
     return
+  end
+  -- The rival finished after the player did
+  if self.over and self.summary and (view.race and view.race.theirs or nil) ~= self.summaryTheirs then
+    self:refreshSummary()
   end
   self:refreshHud()
   self:refreshGuess()

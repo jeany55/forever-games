@@ -40,10 +40,10 @@ local function fakeMaps(Client)
   function CreateVector2D(x, y)
     return setmetatable({ x = x, y = y }, Vector)
   end
-  Enum = { UIMapType = { Continent = 2, Zone = 3 } }
+  Enum = { UIMapType = { Cosmic = 0, World = 1, Continent = 2, Zone = 3 } }
   local CONTINENT, ZONE, WORLD, CITY = 1415, 1429, 947, 1453
   local maps = {
-    [WORLD] = { name = "Azeroth", parent = 0, left = -60000, top = -40000, width = 120000, height = 80000 },
+    [WORLD] = { name = "Azeroth", parent = 0, left = -60000, top = -40000, width = 120000, height = 80000, type = 1 },
     [CONTINENT] = { name = "Eastern Kingdoms", parent = WORLD, left = 0, top = 0, width = 30000, height = 20000, type = 2 },
     [ZONE] = { name = "Elwynn Forest", parent = CONTINENT, left = 10000, top = 6666, width = 10000, height = 6666, type = 3 },
     [CITY] = { name = "Stormwind City", parent = CONTINENT, left = 12000, top = 8000, width = 1500, height = 1000, type = 3 },
@@ -75,6 +75,9 @@ local function fakeMaps(Client)
       return id, CreateVector2D((world.x - map.left) / map.width, (world.y - map.top) / map.height)
     end,
     GetMapInfoAtPosition = function(id, x, y)
+      if id == WORLD and x > 0.5 and x < 0.75 and y > 0.5 and y < 0.75 then
+        return { mapID = CONTINENT, name = maps[CONTINENT].name }
+      end
       if id == CONTINENT and x > 0.4 and x < 0.45 and y > 0.4 and y < 0.45 then
         return { mapID = CITY, name = maps[CITY].name }
       end
@@ -385,6 +388,32 @@ return function(tests, loadEngine)
     equal(nil, next(map.pins))
   end
 
+  -- The client puts every spot of the world's map on one continent, so a guess there could be
+  -- on the wrong one and worth nothing: a click on it goes into the continent instead
+  function tests.MapViewGoesIntoTheContinentForAClickOnTheWorld()
+    local Client = dofile("Tests/FakeClient.lua")
+    local continent = fakeMaps(Client)
+    local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Viewport.lua", "GUI/MapView.lua" })
+    private.MapOverlays = OVERLAYS
+    local clicked
+    local map = private.MapView.New(CreateFrame("Frame"), { onClick = function(place)
+      clicked = place
+    end })
+    map:SetSize(600, 400)
+    map:Show(947)
+    -- The continent is the world's bottom right quarter but one: (0.5 to 0.75) across and down
+    Client.cursor = { 0.6 * 600, map.frame:GetTop() - 0.6 * 400 }
+    map.frame:Fire("OnMouseUp", "LeftButton")
+    equal(nil, clicked, "no place pinned on the world")
+    for _ = 1, 120 do
+      map.frame:Fire("OnUpdate", 1 / 60)
+    end
+    equal(continent, map.mapID, "gone into the continent clicked on")
+    map.frame:Fire("OnMouseUp", "LeftButton")
+    assert(clicked, "and a click there pins a place")
+    equal(0, clicked.continent)
+  end
+
   function tests.WhereViewPlaysAPlaceThroughToItsReveal()
     local Client = dofile("Tests/FakeClient.lua")
     local continent = fakeMaps(Client)
@@ -447,6 +476,31 @@ return function(tests, loadEngine)
     view:guess()
     equal("s", submitted[2])
     equal(continent ~= nil, true)
+  end
+
+  function tests.WhereSummarySaysWhatARivalWhoFinishedLaterCameTo()
+    local Client = dofile("Tests/FakeClient.lua")
+    fakeMaps(Client)
+    local private = loadEngine()
+    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Effects.lua", "GUI/Viewport.lua", "GUI/Strips.lua", "GUI/PanoView.lua",
+      "GUI/MapView.lua", "Games/Where/View.lua" }) do
+      assert(loadfile(file))(ADDON_NAME, private)
+    end
+    local game = private.Games.Get("where")
+    local state = game.newState(1, private.Random.New(3), private.Games.Rules(game.options))
+    for _ = 1, #state.places do
+      game.apply(state, 1, "s")
+    end
+    local shown = { match = { id = "m1" }, state = state, canMove = false, live = true, submit = function() end,
+      race = { rival = "Adone Pxt" } }
+    local view = game.createView(CreateFrame("Frame"))
+    view:Layout(900, 560)
+    view:Update(shown)
+    assert(view.over, "the game is shown over")
+    assert(not view.list:GetText():find("where_rival_scored", 1, true), "nothing to say of the rival yet")
+    shown.race = { rival = "Adone Pxt", theirs = 21879 }
+    view:Update(shown)
+    assert(view.list:GetText():find("where_rival_scored", 1, true), "what the rival came to, once they say")
   end
 
   --- A map 600 by 400 in a window that size, the cursor at a point of the window

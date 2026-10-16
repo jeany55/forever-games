@@ -610,6 +610,8 @@ local HEADING = 26
 local ROW_MIN, ROW_MAX, SECTION_GAP = 16, 30, 0.5
 local OPEN, NOTHING = { 0.45, 0.9, 0.45 }, { 0.55, 0.55, 0.55 }
 local HOVER, FLASH = 0.12, 0.45
+-- What a box the dice would score in breathes with
+local GLOW = { 0.3, 0.9, 0.3, 0.22 }
 local FLASH_SECONDS = 0.7
 -- How big the words that cheer a Yacht-Z are against a die
 local CHEER_SIZE = 0.8
@@ -634,6 +636,7 @@ ROWS[#ROWS + 1] = { sum = "total" }
 --- @class YachtRow: Button
 --- @field spec { head: boolean?, box: string?, sum: string? }
 --- @field light Texture
+--- @field glow Glow Breathes while the dice would score something there
 --- @field font string What its words are written in
 --- @field name FontString
 --- @field values FontString[] By seat
@@ -740,6 +743,7 @@ function View:newRow(spec)
   row.light:SetAllPoints()
   row.light:SetColorTexture(1, 1, 1, 1)
   row.light:SetAlpha(0)
+  row.glow = Widgets.Glow(row, GLOW)
   row.font = spec.sum == "total" and "GameFontNormalLarge" or ((spec.sum or spec.head) and "GameFontNormal" or "GameFontHighlight")
   row.name = Widgets.Label(row, row.font, spec.head and "" or L["yacht_row_" .. (spec.box or spec.sum)])
   row.name:SetPoint("LEFT", 10, 0)
@@ -1035,6 +1039,7 @@ function View:fill()
   for _, row in ipairs(self.rows) do
     local spec = row.spec
     row.open = false
+    local scores = false
     for seat = 1, state.seats do
       local card = state.cards[seat]
       local out = state.out[seat]
@@ -1051,6 +1056,7 @@ function View:fill()
           text = scoreOf(state.dice, spec.box, card)
           color = text > 0 and OPEN or NOTHING
           row.open = true
+          scores = text > 0
         end
       elseif spec.sum == "upper" then
         local sum = upperOf(card)
@@ -1075,6 +1081,7 @@ function View:fill()
       row.name:SetTextColor(unpack(filled and NOTHING or { 1, 1, 1 }))
     end
     row:EnableMouse(spec.box ~= nil)
+    row.glow:SetShown(scores)
     self:light(row)
   end
   for seat, tint in ipairs(self.tints) do
@@ -1117,6 +1124,8 @@ function View:refresh()
     hint = L["yacht_hint_wait"]:format(view.names[state.turn] or "")
   end
   self.hint:SetText(hint)
+  -- Out of rolls a box has to be picked: that is worth seeing
+  self.hint:SetTextColor(unpack((settled and left == 0) and private.Widgets.GOLD or NOTHING))
 
   -- The best there ever was is for a game played alone
   local best, mine = nil, false

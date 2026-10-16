@@ -122,6 +122,8 @@ function ForeverGames:OnEnable()
       return self.db.profile.challenges ~= "known" or Transport.IsFriendOrGuildmate(sender)
     end,
     send = Transport.Send,
+    named = Transport.Named,
+    namedMe = Transport.NamedMe,
     now = time,
     random = math.random,
     clock = debugprofilestop,
@@ -169,6 +171,8 @@ function ForeverGames:OnEnable()
     send = Transport.Send,
     onChannel = Transport.OnChannel,
     reaches = Transport.Reaches,
+    named = Transport.Named,
+    namedMe = Transport.NamedMe,
     notify = function(event, subject)
       self:OnRoomEvent(event, subject)
     end,

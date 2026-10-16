@@ -1294,6 +1294,10 @@ function damage(run, target, inflictor, source, amount)
     return
   end
   if target == run.player then
+    -- Whoever has reached the exit is gone from the map, out of harm's way
+    if run.leaving then
+      return
+    end
     local inventory = run.inventory
     if run.halfDamage then
       amount = math.floor(amount / 2)

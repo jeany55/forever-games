@@ -371,6 +371,8 @@ local function createView(stage)
   self.border = Widgets.Panel(stage)
   self.box = CreateFrame("Frame", nil, stage)
   self.box:SetFrameLevel(self.border:GetFrameLevel() + 2)
+  -- Clicks in the view are shots: they must not get through to the window and drag it about
+  self.box:EnableMouse(true)
   self.screen = private.SectorView.New(self.box, { height = VIEW_HEIGHT })
   self.screen.frame:SetPoint("TOPLEFT")
   self.hud = private.Strips.New(self.box, { width = SCREEN_WIDTH, height = SCREEN_HEIGHT, filter = "NEAREST" })
@@ -415,7 +417,7 @@ local function createView(stage)
       return false
     end
     return true
-  end)
+  end, true)
   ticker:SetScript("OnKeyUp", function(_, key)
     self.down[key] = nil
   end)
@@ -713,6 +715,12 @@ end
 function View:tick(elapsed)
   local run, view = self.run, self.view
   if not run or not view then
+    return
+  end
+  -- A finished map stands still behind the screen that says how it went: nothing in it lives on
+  -- to hurt the player who has left it
+  if run.finished then
+    self:draw()
     return
   end
   local map, player = run.map, run.player

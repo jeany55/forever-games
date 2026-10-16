@@ -17,23 +17,35 @@
 --                                that are left
 --   D:k:pieces                   from whoever draws: message k of the picture, see below
 --   SEE                          from somebody who came in late: the picture so far, please
---   G:text                       a guess that wasn't it, for everyone to read
---   GOT                          the sender guessed it
+--   G:round:text                 a guess that wasn't it, for everyone to read
+--   GOT:round                    the sender guessed it
 --   END:round:word:awards        the round is over. From whoever drew, with what it was and
 --                                what everyone gets for it, "3=10+5=8" by member. From the host
---                                with neither if whoever was to draw never did, or is gone
+--                                with neither if whoever was to draw never did, or is gone, and
+--                                with the awards but not the word when everyone guessed it and
+--                                whoever drew didn't say so (see tick)
+--   WAS:round:word               from whoever drew: what it was, when the host ended the round
+--                                or the game
 --   STOP                         from the host: that was the game
 --
 -- Nobody but whoever draws ever needs to know more than that hash, and it is them who say how
 -- the round went. That takes their word for it, which between friends is what a game does.
+-- Guesses say which round they are for, so one that arrives late is not taken for one of the
+-- next round.
 --
--- The picture is lines. It is drawn on a sheet of 512 by 384, whatever size it is shown at, and
--- sent a second's worth at a time as pieces with a "." between them:
+-- The picture is lines and fills. It is drawn on a sheet of 512 by 384, whatever size it is
+-- shown at, and sent as it is drawn as pieces with a "." between them:
 --
---   n<colour><width><points>     a new line, each point three characters
---   c<colour><width><points>     more of the line that was being drawn
---   u                            the last line is taken back
---   x                            the sheet is wiped
+--   n<colour><width><point><steps>  a new line: where it starts, three characters, and every
+--                                point after it as two, how far it is from the one before
+--   c<colour><width><point><steps>  more of the line that was being drawn, from its last point
+--   f<colour><point>                the patch of one colour around the point takes this colour
+--   u                               the last line or fill is taken back
+--   x                               the sheet is wiped
+--
+-- What goes out is what the client lets through, a message a second or so, which is few points.
+-- So whoever draws keeps no more points than the line needs: one that lies on the way from the
+-- point before it to the one after it is left out (see addPoint). They see what the others see.
 --
 -- The messages are numbered so that one sent again is known for what it is, and so that the
 -- picture can be put together in the right order when they don't arrive in it.
@@ -70,11 +82,19 @@ Sketch.LISTS = { "b", "e", "w" }
 -- Seconds to pick what to draw, between two rounds, and that the host gives whoever draws on
 -- top of what they have before taking the round to be lost
 local PICK, PAUSE, GRACE = 15, 7, 8
+-- Seconds the host gives whoever draws to end a round that everyone has guessed
+local ALL_GOT_WAIT = 3
 local USUAL_LENGTH = 80
--- How often what is being drawn is sent, in seconds
-local FLUSH = 1
+-- How often what is being drawn is sent, in seconds, when nothing is waiting to go out
+local FLUSH = 0.4
 -- A piece has at most this many points, and a message this many characters of pieces
-local PIECE_POINTS, MESSAGE_ROOM = 60, 200
+local PIECE_POINTS, MESSAGE_ROOM = 100, Rooms.PAYLOAD - #"D:9999:"
+-- How far a point can be from the one before it, either way, to be said in two characters
+local MAX_STEP = 30
+-- How far from the line a point that is left out of it may be, in the sheet's measure
+local STRAIGHT = 1
+-- A fill finds its patch on a grid of cells this big, and comes out under lines by one cell
+local CELL = 4
 local FEED_LINES = 40
 local GUESS_LENGTH = 40
 -- What a guess is worth by how many had it before, and to whoever drew
@@ -101,27 +121,210 @@ local function encodePoint(x, y)
 end
 
 --- @param piece string
+--- @param at number Where the point starts in it
+--- @return number? x, number? y nil if it isn't a point on the sheet
+local function decodePoint(piece, at)
+  local high, middle, low = VALUES[piece:byte(at) or 0], VALUES[piece:byte(at + 1) or 0], VALUES[piece:byte(at + 2) or 0]
+  if not (high and middle and low) then
+    return nil
+  end
+  local value = high * 4096 + middle * 64 + low
+  local x, y = math.floor(value / 512), value % 512
+  if y >= Sketch.HEIGHT then
+    return nil
+  end
+  return x, y
+end
+
+--- @param dx number
+--- @param dy number
+--- @return string
+local function encodeStep(dx, dy)
+  return DIGITS:sub(dx + 33, dx + 33) .. DIGITS:sub(dy + 33, dy + 33)
+end
+
+--- @param piece string
 --- @return { color: number, width: number, points: number[] }? stroke nil if it isn't a line that can be drawn
 local function decodeStroke(piece)
   local color, width = tonumber(piece:sub(2, 2)), tonumber(piece:sub(3, 3))
-  if not Sketch.COLORS[color] or not Sketch.WIDTHS[width] or (#piece - 3) % 3 ~= 0 then
+  local x, y = decodePoint(piece, 4)
+  if not Sketch.COLORS[color] or not Sketch.WIDTHS[width] or not x or (#piece - 6) % 2 ~= 0 then
     return nil
   end
-  local points = {}
-  for index = 4, #piece, 3 do
-    local high, middle, low = VALUES[piece:byte(index)], VALUES[piece:byte(index + 1)], VALUES[piece:byte(index + 2)]
-    if not (high and middle and low) then
+  local points = { x, y }
+  for index = 7, #piece, 2 do
+    local dx, dy = VALUES[piece:byte(index)], VALUES[piece:byte(index + 1)]
+    if not (dx and dy) then
       return nil
     end
-    local value = high * 4096 + middle * 64 + low
-    local x, y = math.floor(value / 512), value % 512
-    if y >= Sketch.HEIGHT then
+    x, y = x + dx - 32, y + dy - 32
+    if x < 0 or x >= Sketch.WIDTH or y < 0 or y >= Sketch.HEIGHT then
       return nil
     end
     points[#points + 1] = x
     points[#points + 1] = y
   end
   return { color = color, width = width, points = points }
+end
+
+-- The grid a fill is worked out on
+local COLUMNS, ROWS = Sketch.WIDTH / CELL, Sketch.HEIGHT / CELL
+-- A line covers every cell it passes through, which is every cell whose middle is this much
+-- further from it than half its width, or less
+local CORNER = CELL * math.sqrt(2) / 2
+
+--- Colours the cells a line covers
+--- @param grid number[]
+--- @param stroke table
+local function paintLine(grid, stroke)
+  local points, reach = stroke.points, Sketch.WIDTHS[stroke.width] / 2 + CORNER
+  local count = #points / 2
+  for index = 1, count do
+    -- Each point with the stretch from the one before it, the first alone
+    local x2, y2 = points[index * 2 - 1], points[index * 2]
+    local x1, y1 = x2, y2
+    if index > 1 then
+      x1, y1 = points[index * 2 - 3], points[index * 2 - 2]
+    end
+    local dx, dy = x2 - x1, y2 - y1
+    local length = dx * dx + dy * dy
+    local left = math.max(0, math.floor((math.min(x1, x2) - reach) / CELL))
+    local right = math.min(COLUMNS - 1, math.floor((math.max(x1, x2) + reach) / CELL))
+    local top = math.max(0, math.floor((math.min(y1, y2) - reach) / CELL))
+    local bottom = math.min(ROWS - 1, math.floor((math.max(y1, y2) + reach) / CELL))
+    for row = top, bottom do
+      local cy = row * CELL + CELL / 2
+      for column = left, right do
+        local cx = column * CELL + CELL / 2
+        local along = length > 0 and math.max(0, math.min(1, ((cx - x1) * dx + (cy - y1) * dy) / length)) or 0
+        local ox, oy = cx - (x1 + along * dx), cy - (y1 + along * dy)
+        if ox * ox + oy * oy <= reach * reach then
+          grid[row * COLUMNS + column + 1] = stroke.color
+        end
+      end
+    end
+  end
+end
+
+--- Where a fill at a point goes: the cells around it of the colour it lands on, as the picture
+--- is so far. Worked out the same way on every client, from the same picture
+--- @param strokes table[] What was drawn before it
+--- @param color number
+--- @param x number
+--- @param y number
+--- @return number[]? rects Four numbers for each, the cells it covers: first column and row, last column and row. Nil if there is nothing to fill
+local function regionOf(strokes, color, x, y)
+  local grid = {}
+  for cell = 1, COLUMNS * ROWS do
+    grid[cell] = Sketch.PAPER
+  end
+  for _, stroke in ipairs(strokes) do
+    if stroke.rects then
+      local rects = stroke.rects
+      for index = 1, #rects, 4 do
+        for row = rects[index + 1], rects[index + 3] do
+          for column = rects[index], rects[index + 2] do
+            grid[row * COLUMNS + column + 1] = stroke.color
+          end
+        end
+      end
+    else
+      paintLine(grid, stroke)
+    end
+  end
+
+  local start = math.floor(y / CELL) * COLUMNS + math.floor(x / CELL) + 1
+  local under = grid[start]
+  if under == color then
+    return nil
+  end
+  -- Everything of that colour that can be got to from there without going diagonally
+  local inside, queue, head = { [start] = true }, { start }, 1
+  while head <= #queue do
+    local cell = queue[head]
+    head = head + 1
+    local column = (cell - 1) % COLUMNS
+    local around = {
+      column > 0 and cell - 1 or nil,
+      column < COLUMNS - 1 and cell + 1 or nil,
+      cell > COLUMNS and cell - COLUMNS or nil,
+      cell <= COLUMNS * (ROWS - 1) and cell + COLUMNS or nil,
+    }
+    for side = 1, 4 do
+      local other = around[side]
+      if other and not inside[other] and grid[other] == under then
+        inside[other] = true
+        queue[#queue + 1] = other
+      end
+    end
+  end
+
+  -- As rectangles: runs along each row, and the same run on the rows under it with it
+  local rects, open = {}, {}
+  for row = 0, ROWS do
+    local runs, column = {}, 0
+    while row < ROWS and column < COLUMNS do
+      if inside[row * COLUMNS + column + 1] then
+        local first = column
+        while column + 1 < COLUMNS and inside[row * COLUMNS + column + 2] do
+          column = column + 1
+        end
+        runs[first .. ":" .. column] = { first, column }
+      end
+      column = column + 1
+    end
+    for key, rect in pairs(open) do
+      if runs[key] then
+        rect[4] = row
+        runs[key] = nil
+      else
+        open[key] = nil
+      end
+    end
+    for key, run in pairs(runs) do
+      local rect = { run[1], row, run[2], row }
+      open[key] = rect
+      rects[#rects + 1] = rect
+    end
+  end
+  -- In an order that doesn't depend on the order pairs goes in
+  table.sort(rects, function(a, b)
+    if a[2] ~= b[2] then
+      return a[2] < b[2]
+    end
+    return a[1] < b[1]
+  end)
+  local flat = {}
+  for _, rect in ipairs(rects) do
+    for index = 1, 4 do
+      flat[#flat + 1] = rect[index]
+    end
+  end
+  return flat
+end
+
+--- A fill, as it is kept with the lines
+--- @param strokes table[]
+--- @param color number
+--- @param x number
+--- @param y number
+--- @return table? nil if there is nothing to fill
+local function fillOf(strokes, color, x, y)
+  local cells = regionOf(strokes, color, x, y)
+  if not cells then
+    return nil
+  end
+  -- What is shown reaches a cell further, under the lines around it, so that there is no gap
+  -- between the two
+  local area = {}
+  for index = 1, #cells, 4 do
+    local left, top = cells[index] * CELL - CELL, cells[index + 1] * CELL - CELL
+    area[#area + 1] = left
+    area[#area + 1] = top
+    area[#area + 1] = (cells[index + 2] + 1) * CELL + CELL - left
+    area[#area + 1] = (cells[index + 3] + 1) * CELL + CELL - top
+  end
+  return { color = color, points = { x, y }, rects = cells, area = area }
 end
 
 --- Does to the picture what one message of it says
@@ -137,12 +340,24 @@ local function apply(state, pieces)
     elseif what == "u" then
       strokes[#strokes] = nil
       state.open = false
+    elseif what == "f" then
+      local color, x, y = tonumber(piece:sub(2, 2)), decodePoint(piece, 3)
+      local fill = #piece == 5 and Sketch.COLORS[color] and x and fillOf(strokes, color, x, y)
+      if fill then
+        strokes[#strokes + 1] = fill
+      end
+      state.open = false
     elseif what == "n" or what == "c" then
       local stroke = decodeStroke(piece)
       local last = strokes[#strokes]
       if stroke and what == "c" and state.open and last then
-        for _, value in ipairs(stroke.points) do
-          last.points[#last.points + 1] = value
+        -- It goes on from where the line got to
+        local points, first = last.points, 1
+        if stroke.points[1] == points[#points - 1] and stroke.points[2] == points[#points] then
+          first = 3
+        end
+        for index = first, #stroke.points do
+          points[#points + 1] = stroke.points[index]
         end
       elseif stroke then
         strokes[#strokes + 1] = stroke
@@ -264,6 +479,7 @@ end
 --- @param state table
 --- @param entry { n: number?, text: string?, got: boolean?, note: string? }
 local function feed(state, entry)
+  state.feedRev = (state.feedRev or 0) + 1
   state.feed[#state.feed + 1] = entry
   if #state.feed > FEED_LINES then
     table.remove(state.feed, 1)
@@ -276,6 +492,7 @@ local function wipe(state)
   state.pieces, state.pending, state.resend = nil, nil, nil
   state.got, state.order, state.gained = {}, {}, {}
   state.word, state.hash, state.pattern, state.choices = nil, nil, nil, nil
+  state.allGot, state.told = nil, nil
   state.rev = state.rev + 1
 end
 
@@ -364,10 +581,10 @@ function Sketch.Guess(room, text)
     return false, "sketch_no_guess"
   end
   if hashOf(room, state.round, text) == state.hash then
-    room:Say("GOT")
+    room:Say("GOT", state.round)
     return true, true
   end
-  room:Say("G", text)
+  room:Say("G", state.round, text)
   return true, false
 end
 
@@ -424,17 +641,57 @@ local function cutPiece(state)
   if not pending then
     return
   end
-  if #pending.points > 0 then
-    local parts = { (pending.fresh and "n" or "c") .. pending.color .. pending.width }
-    for index = 1, #pending.points, 2 do
-      parts[#parts + 1] = encodePoint(pending.points[index], pending.points[index + 1])
+  local stroke = pending.stroke
+  local points, count = stroke.points, #stroke.points / 2
+  if pending.fresh or count > pending.sent then
+    -- A piece that goes on with the line starts from the last point that went before it
+    local first = math.max(1, pending.sent)
+    local parts = { (pending.fresh and "n" or "c") .. stroke.color .. stroke.width, encodePoint(points[first * 2 - 1], points[first * 2]) }
+    for index = first + 1, count do
+      parts[#parts + 1] = encodeStep(points[index * 2 - 1] - points[index * 2 - 3], points[index * 2] - points[index * 2 - 2])
     end
     state.pieces[#state.pieces + 1] = table.concat(parts)
-    pending.points, pending.fresh = {}, false
+    pending.sent, pending.fresh, pending.skipped = count, false, {}
   end
   if pending.done then
     state.pending = nil
   end
+end
+
+--- How far a point is from the stretch between two others
+--- @return number
+local function offLine(x, y, x1, y1, x2, y2)
+  local dx, dy = x2 - x1, y2 - y1
+  local length = dx * dx + dy * dy
+  local along = length > 0 and math.max(0, math.min(1, ((x - x1) * dx + (y - y1) * dy) / length)) or 0
+  local ox, oy = x - (x1 + along * dx), y - (y1 + along * dy)
+  return math.sqrt(ox * ox + oy * oy)
+end
+
+--- Adds a point to the line being drawn. Where the last point lies on the way to this one, and
+--- so does every point that was left out for it, this one takes its place instead
+--- @param pending table
+--- @param x number
+--- @param y number
+local function addPoint(pending, x, y)
+  local points, skipped = pending.stroke.points, pending.skipped
+  local count = #points / 2
+  -- The point the line starts from, and one that was sent, stay where they are
+  if count >= 2 and count > pending.sent then
+    local ax, ay = points[count * 2 - 3], points[count * 2 - 2]
+    local lastX, lastY = points[count * 2 - 1], points[count * 2]
+    local straight = math.abs(x - ax) <= MAX_STEP and math.abs(y - ay) <= MAX_STEP and offLine(lastX, lastY, ax, ay, x, y) <= STRAIGHT
+    for index = 1, #skipped, 2 do
+      straight = straight and offLine(skipped[index], skipped[index + 1], ax, ay, x, y) <= STRAIGHT
+    end
+    if straight then
+      skipped[#skipped + 1], skipped[#skipped + 2] = lastX, lastY
+      points[count * 2 - 1], points[count * 2] = x, y
+      return
+    end
+  end
+  points[#points + 1], points[#points + 2] = x, y
+  pending.skipped = {}
 end
 
 --- Sends the pieces that wait, as few messages as they fit in
@@ -485,8 +742,9 @@ function Sketch.Pen(room, color, width, x, y)
     cutPiece(state)
   end
   x, y = onSheet(x, Sketch.WIDTH - 1), onSheet(y, Sketch.HEIGHT - 1)
-  state.strokes[#state.strokes + 1] = { color = color, width = width, points = { x, y } }
-  state.pending = { fresh = true, color = color, width = width, points = { x, y } }
+  local stroke = { color = color, width = width, points = { x, y } }
+  state.strokes[#state.strokes + 1] = stroke
+  state.pending = { fresh = true, stroke = stroke, sent = 0, skipped = {} }
   state.rev = state.rev + 1
   return true
 end
@@ -497,18 +755,22 @@ end
 --- @param y number
 function Sketch.Draw(room, x, y)
   local state = room.state
-  local pending, stroke = state.pending, state.strokes[#state.strokes]
-  if not Sketch.Drawing(room) or not pending or pending.done or not stroke then
+  local pending = state.pending
+  if not Sketch.Drawing(room) or not pending or pending.done or pending.stroke ~= state.strokes[#state.strokes] then
     return
   end
   x, y = onSheet(x, Sketch.WIDTH - 1), onSheet(y, Sketch.HEIGHT - 1)
-  local points = stroke.points
-  if points[#points - 1] == x and points[#points] == y then
+  local points = pending.stroke.points
+  local fromX, fromY = points[#points - 1], points[#points]
+  if fromX == x and fromY == y then
     return
   end
-  points[#points + 1], points[#points + 2] = x, y
-  pending.points[#pending.points + 1], pending.points[#pending.points + 2] = x, y
-  if #pending.points >= PIECE_POINTS * 2 then
+  -- A long way at once goes in steps short enough to be said in two characters
+  local steps = math.ceil(math.max(math.abs(x - fromX), math.abs(y - fromY)) / MAX_STEP)
+  for step = 1, steps do
+    addPoint(pending, fromX + math.floor((x - fromX) * step / steps + 0.5), fromY + math.floor((y - fromY) * step / steps + 0.5))
+  end
+  if #points / 2 - math.max(1, pending.sent) >= PIECE_POINTS then
     cutPiece(state)
   end
   state.rev = state.rev + 1
@@ -553,23 +815,86 @@ function Sketch.Clear(room)
   edit(room, "x")
 end
 
+--- Or pours a colour on the patch of the picture around a point, the way a paint bucket does.
+--- The patch goes under the lines around it
+--- @param room Room
+--- @param color number
+--- @param x number
+--- @param y number
+--- @return boolean filled False if there was nothing to fill
+function Sketch.Fill(room, color, x, y)
+  local state = room.state
+  if not Sketch.Drawing(room) or not Sketch.COLORS[color] then
+    return false
+  end
+  Sketch.Lift(room)
+  x, y = onSheet(x, Sketch.WIDTH - 1), onSheet(y, Sketch.HEIGHT - 1)
+  local fill = fillOf(state.strokes, color, x, y)
+  if not fill then
+    return false
+  end
+  state.strokes[#state.strokes + 1] = fill
+  state.pieces[#state.pieces + 1] = "f" .. color .. encodePoint(x, y)
+  state.rev = state.rev + 1
+  return true
+end
+
 -----------------------------
 -- What is said in the room
 -----------------------------
 
 --- Whoever drew says how the round went
 --- @param room Room
-local function finish(room)
-  local state = room.state
-  sendPieces(room)
+--- What everyone gets for the round, by who guessed it first
+--- @param state table
+--- @return string "3=10+5=8" by member
+local function awardsOf(state)
   local awards = {}
   for place, n in ipairs(state.order) do
     awards[#awards + 1] = n .. "=" .. (AWARDS[place] or AWARD_LATE)
   end
   if #state.order > 0 then
-    awards[#awards + 1] = room.me .. "=" .. math.min(DRAWER_MOST, DRAWER_AWARD * #state.order)
+    awards[#awards + 1] = state.drawer .. "=" .. math.min(DRAWER_MOST, DRAWER_AWARD * #state.order)
   end
-  room:Say("END", state.round, state.word and (state.word:gsub(" ", "_")) or "-", table.concat(awards, "+"))
+  return table.concat(awards, "+")
+end
+
+--- @param word string
+--- @return string As it goes in a message
+local function wordField(word)
+  return (word:gsub(" ", "_"))
+end
+
+local function finish(room)
+  local state = room.state
+  sendPieces(room)
+  room:Say("END", state.round, state.word and wordField(state.word) or "-", awardsOf(state))
+end
+
+--- Says in the feed what it was, where it says the round is over, once that is known
+--- @param state table
+--- @param word string
+local function tellWord(state, word)
+  state.word = word
+  for index = #state.feed, 1, -1 do
+    local entry = state.feed[index]
+    if entry.note == "over" then
+      entry.text = entry.text or word
+      state.feedRev = (state.feedRev or 0) + 1
+      return
+    elseif entry.note == "round" then
+      break
+    end
+  end
+  -- The game was ended before the round was: it goes before the line that says so
+  local last = state.feed[#state.feed]
+  local entry = { note = "over", text = word }
+  if last and last.note == "stopped" then
+    table.insert(state.feed, #state.feed, entry)
+    state.feedRev = (state.feedRev or 0) + 1
+  else
+    feed(state, entry)
+  end
 end
 
 --- @param room Room
@@ -588,8 +913,9 @@ local function receive(room, member, kind, fields)
     end
     if round == 1 then
       room:ClearScores()
-      state.feed = {}
     end
+    -- Each round has a feed of its own, what was said in the one before is no help
+    state.feed = {}
     wipe(state)
     state.round, state.drawer, state.length, state.list = round, drawer, math.max(10, math.min(600, length)), fields[4] or "b"
     Phases.Begin(state, "pick", now, PICK)
@@ -609,30 +935,36 @@ local function receive(room, member, kind, fields)
       -- Told by the host on the way in: the picture is well under way
       room:Say("SEE")
     end
-  elseif kind == "D" and fromDrawer and state.phase == "draw" and state.drawer ~= room.me then
+  elseif kind == "D" and fromDrawer and (state.phase == "draw" or state.phase == "over") and state.drawer ~= room.me then
+    -- The last of the picture may come after the end of the round, it waits behind it
     local k = tonumber(fields[1])
     if k and k >= 1 and k < 10000 and fields[2] then
       takeMessage(state, k, fields[2])
     end
   elseif kind == "SEE" and Sketch.Drawing(room) and member.n ~= room.me then
     state.resend = true
-  elseif kind == "G" and state.phase == "draw" and not fromDrawer then
-    local text = tidy(fields[1])
+  elseif kind == "G" and state.phase == "draw" and not fromDrawer and tonumber(fields[1]) == state.round then
+    local text = tidy(fields[2])
     if text ~= "" then
       feed(state, { n = member.n, text = text })
     end
-  elseif kind == "GOT" and state.phase == "draw" and not fromDrawer and not state.got[member.n] then
+  elseif kind == "GOT" and state.phase == "draw" and not fromDrawer and tonumber(fields[1]) == state.round and not state.got[member.n] then
     state.got[member.n] = true
     state.order[#state.order + 1] = member.n
     feed(state, { n = member.n, got = true })
-    if state.drawer == room.me and #state.order >= room.count - 1 then
-      finish(room)
+    if #state.order >= room.count - 1 then
+      if state.drawer == room.me then
+        finish(room)
+      else
+        -- Whoever draws says so in a moment, see tick
+        state.allGot = now
+      end
     end
   elseif kind == "END" and (fromDrawer or fromHost) and state.phase ~= "idle" then
     if tonumber(fields[1]) ~= state.round then
       return
     end
-    if fromDrawer and fields[3] and fields[3] ~= "" and state.awarded ~= state.round then
+    if fields[3] and fields[3] ~= "" and state.awarded ~= state.round then
       state.awarded = state.round
       for n, points in fields[3]:gmatch("(%d+)=(%d+)") do
         local other = room.members[tonumber(n)]
@@ -643,17 +975,31 @@ local function receive(room, member, kind, fields)
         end
       end
     end
-    if fromDrawer and fields[2] and fields[2] ~= "-" then
-      state.word = tidy((fields[2]:gsub("_", " ")))
-    end
     if state.phase ~= "over" then
+      if not fromDrawer and state.drawer == room.me and state.phase == "draw" and state.word then
+        -- The host ended it: the others still want to know what it was
+        sendPieces(room)
+        room:Say("WAS", state.round, wordField(state.word))
+      end
       Phases.Begin(state, "over", now, PAUSE)
       state.pending, state.pieces, state.choices = nil, nil, nil
       feed(state, { note = "over", text = state.word })
     end
+    -- Whoever drew may say what it was after the host said the round was over
+    if fromDrawer and fields[2] and fields[2] ~= "-" then
+      tellWord(state, tidy((fields[2]:gsub("_", " "))))
+    end
+  elseif kind == "WAS" and fromDrawer and member.n ~= room.me and tonumber(fields[1]) == state.round and fields[2] then
+    tellWord(state, tidy((fields[2]:gsub("_", " "))))
   elseif kind == "STOP" and fromHost then
+    -- Whoever was drawing says what it was, the round won't
+    local word = state.drawer == room.me and state.phase == "draw" and state.word
     Phases.Begin(state, "idle", now)
     state.pending, state.pieces, state.choices = nil, nil, nil
+    if word then
+      feed(state, { note = "over", text = word })
+      room:Say("WAS", state.round, wordField(word))
+    end
     feed(state, { note = "stopped" })
   end
 end
@@ -668,7 +1014,8 @@ local function tick(room, now)
     elseif state.phase == "draw" and Phases.Due(state, now) then
       finish(room)
     elseif state.phase == "draw" then
-      local waiting = #state.pieces > 0 or (state.pending and #state.pending.points > 0)
+      local pending = state.pending
+      local waiting = #state.pieces > 0 or (pending and (pending.fresh or #pending.stroke.points / 2 > pending.sent))
       if waiting and room:Waiting("D") == 0 and now - (state.flushed or 0) >= FLUSH then
         sendPieces(room)
       end
@@ -690,6 +1037,10 @@ local function tick(room, now)
       room:Say("END", state.round, "-", "")
     elseif state.phase == "draw" and Phases.Due(state, now, GRACE) then
       room:Say("END", state.round, "-", "")
+    elseif state.phase == "draw" and state.allGot and now - state.allGot >= ALL_GOT_WAIT then
+      -- Everyone has it and whoever draws hasn't said so: their client may not have heard them
+      -- all. The host knows who got it as well as they do, if not what it was
+      room:Say("END", state.round, "-", awardsOf(state))
     elseif state.phase == "over" and Phases.Due(state, now) then
       Phases.Until(state, now, nil)
       if room.count >= 2 then
@@ -765,7 +1116,7 @@ Rooms.Register({
   name = L["game_sketch"],
   description = L["game_sketch_description"],
   icon = "Interface\\Icons\\INV_Inscription_Tradeskill01",
-  version = 1,
+  version = 2,
   -- The picture waits behind everything the game can't do without
   lanes = { D = 2 },
   options = {
@@ -857,7 +1208,7 @@ local SHEET = Sketch.WIDTH / Sketch.HEIGHT
 --- @return SketchView
 function SketchView.New(parent)
   local Widgets, Canvas = private.Widgets, private.Canvas
-  local self = setmetatable({ color = 1, pen = 2 }, SketchView)
+  local self = setmetatable({ color = 1, pen = 2, tool = "pen" }, SketchView)
   local frame = CreateFrame("Frame", nil, parent)
   self.frame = frame
 
@@ -876,6 +1227,11 @@ function SketchView.New(parent)
   })
   self.canvas = canvas
   canvas.onPen = function(x, y)
+    if self.tool == "fill" then
+      Sketch.Fill(self.room, self.color, x, y)
+      canvas:Render(self.room.state.strokes)
+      return false
+    end
     local drawing = Sketch.Pen(self.room, self.color, self.pen, x, y)
     canvas:Render(self.room.state.strokes)
     return drawing
@@ -900,7 +1256,7 @@ function SketchView.New(parent)
   -- What lies over the sheet while nothing is drawn on it
   local overlay = CreateFrame("Frame", nil, canvas.frame)
   overlay:SetAllPoints()
-  overlay:SetFrameLevel(canvas.frame:GetFrameLevel() + 5)
+  overlay:SetFrameLevel(canvas.frame:GetFrameLevel() + Canvas.LAYERS + 5)
   self.overlay = overlay
   self.notice = Widgets.Label(overlay, "GameFontNormalHuge")
   self.notice:SetPoint("LEFT", 16, 0)
@@ -973,13 +1329,33 @@ function SketchView.New(parent)
     local dot = Widgets.Icon(nib, "Interface\\AddOns\\ForeverGames\\Images\\Board\\dot", 3 + index * 4)
     dot:SetPoint("CENTER")
     nib:SetScript("OnClick", function()
-      self.pen = index
+      self.pen, self.tool = index, "pen"
       self:paintTools()
     end)
     self.nibs[index] = nib
   end
+  -- The paint bucket: the colour goes into the patch that is clicked
+  local bucket = CreateFrame("Button", nil, tools)
+  bucket:SetSize(40, 22)
+  bucket:SetPoint("LEFT", self.nibs[#self.nibs], "RIGHT", 6, 0)
+  bucket.edge = bucket:CreateTexture(nil, "BACKGROUND")
+  bucket.edge:SetAllPoints()
+  local bucketLabel = Widgets.Label(bucket, "GameFontHighlightSmall", L["sketch_fill"])
+  bucketLabel:SetPoint("CENTER")
+  bucket:SetScript("OnClick", function()
+    self.tool = self.tool == "fill" and "pen" or "fill"
+    self:paintTools()
+  end)
+  bucket:SetScript("OnEnter", function(button)
+    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+    GameTooltip:SetText(L["sketch_fill"])
+    GameTooltip:AddLine(L["sketch_fill_tip"], 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  bucket:SetScript("OnLeave", GameTooltip_Hide)
+  self.bucket = bucket
   local undo = Widgets.Button(tools, L["sketch_undo"], 64, 22)
-  undo:SetPoint("LEFT", self.nibs[#self.nibs], "RIGHT", 14, 0)
+  undo:SetPoint("LEFT", bucket, "RIGHT", 10, 0)
   undo:SetScript("OnClick", function()
     Sketch.Undo(self.room)
     self:Update(self.room)
@@ -1041,9 +1417,10 @@ function SketchView:paintTools()
     swatch.edge:SetColorTexture(1, on and 0.82 or 1, on and 0 or 1, on and 1 or 0.15)
   end
   for index, nib in ipairs(self.nibs) do
-    local on = index == self.pen
+    local on = index == self.pen and self.tool == "pen"
     nib.edge:SetColorTexture(1, 0.82, 0, on and 0.5 or 0.08)
   end
+  self.bucket.edge:SetColorTexture(1, 0.82, 0, self.tool == "fill" and 0.5 or 0.08)
 end
 
 --- @param width number
@@ -1216,11 +1593,16 @@ function SketchView:Update(room)
   if not self.compact then
     self.roster:Update(room)
   end
-  local last = state.feed[#state.feed]
-  if self.feedSeen ~= last or self.feedCount ~= room.count then
-    self.feedSeen, self.feedCount = last, room.count
+  local seen = state.feedRev or 0
+  if self.feedSeen ~= seen or self.feedCount ~= room.count then
+    self.feedSeen, self.feedCount = seen, room.count
     local text = feedText(room, self.feedLines or 1)
     self.feed:SetText(text ~= "" and text or (self.compact and "" or "|cff808080" .. L["sketch_no_guesses"] .. "|r"))
+  end
+  -- What was typed for one round is no guess for the next
+  if self.guessRound ~= state.round then
+    self.guessRound = state.round
+    self.guess:SetText("")
   end
   local guessing = phase == "draw" and not mine and not state.got[room.me]
   self.guess:SetEnabled(guessing)

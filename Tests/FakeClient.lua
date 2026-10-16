@@ -277,9 +277,10 @@ function Client.Install()
     return true, #Client.sounds
   end
 
-  -- One of the addon's own sounds: remembered by what it is, whichever take was played
+  -- One of the addon's own sounds: remembered by what it is, whichever take was played. One of
+  -- the client's own, by its file id, is remembered by that
   function PlaySoundFile(path)
-    Client.sounds[#Client.sounds + 1] = path:match("([%a]+)%d*%.ogg$")
+    Client.sounds[#Client.sounds + 1] = type(path) == "number" and path or path:match("([%a]+)%d*%.ogg$")
     return true, #Client.sounds
   end
 

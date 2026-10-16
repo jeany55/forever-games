@@ -323,6 +323,40 @@ function Widgets.Pulse(region)
   return group
 end
 
+--- @class Glow
+--- @field texture Texture
+--- @field on boolean
+--- @field pulse AnimationGroup
+
+--- A light behind a frame that breathes while it is on, to say something can be done there: a
+--- box that can be scored in, say. A colour alone is easy to miss. Turn it on and off with
+--- :SetShown(), which leaves a light that is already breathing alone so it doesn't skip a beat.
+--- @param parent Frame Lit all over
+--- @param color number[] r, g, b and how strong at its brightest
+--- @return Glow
+function Widgets.Glow(parent, color)
+  local texture = parent:CreateTexture(nil, "BACKGROUND", nil, 1)
+  texture:SetAllPoints()
+  texture:SetColorTexture(color[1], color[2], color[3], color[4] or 0.25)
+  texture:SetBlendMode("ADD")
+  texture:Hide()
+  local glow = { texture = texture, on = false, pulse = Widgets.Pulse(texture) }
+  function glow:SetShown(on)
+    on = on and true or false
+    if on == self.on then
+      return
+    end
+    self.on = on
+    self.texture:SetShown(on)
+    if on then
+      self.pulse:Play()
+    else
+      self.pulse:Stop()
+    end
+  end
+  return glow
+end
+
 --- How something gets from where it was to where it is going: each takes how far along in time
 --- it is, from 0 to 1, and says how far along the way. Give one to an Animator as `ease`.
 Widgets.Ease = {
@@ -453,15 +487,17 @@ end
 --- that has numbers written into it. Only while the cursor is over the frame, so that a window
 --- left open doesn't keep the player from steering their character, and never in combat, where
 --- the client doesn't let an addon decide key by key what it keeps: every key then does what it
---- always does.
+--- always does. A game the player steers through all the time it is shown takes its keys
+--- wherever the cursor is: the keys it doesn't use still go on to move the character.
 --- @param frame Frame Its OnKeyDown and OnEvent are taken
 --- @param onKey fun(key: string): boolean? What to do with a key, by the client's name for it ("LEFT", "A", "1", "BACKSPACE"). Returns true for a key it used, any other goes on to do what it usually does
-function Widgets.Keys(frame, onKey)
+--- @param anywhere boolean? Takes keys while the frame is shown, whether or not the cursor is over it
+function Widgets.Keys(frame, onKey, anywhere)
   frame:SetScript("OnKeyDown", function(self, key)
     if InCombatLockdown() then
       return
     end
-    local used = self:IsMouseOver() and onKey(key) == true
+    local used = (anywhere or self:IsMouseOver()) and onKey(key) == true
     self:SetPropagateKeyboardInput(not used)
   end)
   -- Going into combat is the last moment the frame may still be told to let every key through

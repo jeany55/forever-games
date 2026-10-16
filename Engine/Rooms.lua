@@ -52,6 +52,8 @@ local _, private = ...
 --- @field send fun(target: string, text: string): boolean
 --- @field onChannel fun(channel: RoomChannel): boolean Whether the local player has that channel: is in a guild, is in a group
 --- @field reaches fun(channel: RoomChannel, name: string): boolean Whether what is said on a channel gets to this player
+--- @field named (fun(name: string): string?)? The full name of a player named in what somebody sent, which may be written differently from how this client writes it. As it is if left out
+--- @field namedMe (fun(name: string))? Somebody sent the player's own name, the way they write it
 --- @field notify fun(event: string, subject: any) "open" with a RoomInfo, "refused" with a reason, "joined", "roster", "changed" and "closed" with the room
 
 --- @alias RoomChannel "GUILD"|"GROUP"
@@ -464,6 +466,15 @@ local function memberNamed(room, name)
       return member
     end
   end
+  -- Somebody written into the room differently from how they are heard, who goes by how they
+  -- are heard from then on
+  local named = room.rooms.env.named
+  for _, member in pairs(named and room.members or {}) do
+    if member.n ~= room.me and named(member.name) == name then
+      member.name = name
+      return member
+    end
+  end
   return nil
 end
 
@@ -659,6 +670,12 @@ function Rooms:deliver(room, member, kind, fields)
         -- player's name the way they would say it themselves ("Jeany" may be heard as "Jeany
         -- Beany"), and whoever is in the room is told apart by how they are heard
         name = room.host
+      elseif n == room.me then
+        if self.env.namedMe and name then
+          self.env.namedMe(name)
+        end
+      elseif name and self.env.named then
+        name = self.env.named(name) or name
       end
       if n and score and name ~= "" then
         self:addMember(room, n, name, score)
