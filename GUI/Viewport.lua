@@ -20,6 +20,7 @@ local _, private = ...
 
 --- @class ViewportOptions
 --- @field maxZoom number? How many times its fitted size the content can be shown at, 3 if left out
+--- @field step number? How much closer one notch of the wheel goes, 1.25 if left out
 --- @field onSettle fun(zoom: number)? The content has come to rest at another zoom, for drawing it sharper
 
 --- @class Viewport
@@ -53,7 +54,7 @@ function Viewport.New(parent, options)
   options = options or {}
   --- @type Viewport
   local self = setmetatable({ zoom = 1, x = 0, y = 0, dragged = false, width = 0, height = 0, contentWidth = 0, contentHeight = 0 }, Viewport)
-  self.maxZoom, self.onSettle = options.maxZoom or MAX_ZOOM, options.onSettle
+  self.maxZoom, self.step, self.onSettle = options.maxZoom or MAX_ZOOM, options.step or STEP, options.onSettle
   self.settled = 1
 
   local frame = CreateFrame("Frame", nil, parent)
@@ -166,8 +167,11 @@ end
 --- @param x number
 --- @param y number
 --- @param instant boolean?
-function Viewport:glide(zoom, x, y, instant)
-  x, y = self:clamp(zoom, x, y)
+--- @param loose boolean? Even where that shows past the content's edges, and past its closest
+function Viewport:glide(zoom, x, y, instant, loose)
+  if not loose then
+    x, y = self:clamp(zoom, x, y)
+  end
   self.move = { fromZoom = self.zoom, fromX = self.x, fromY = self.y, toZoom = zoom, toX = x, toY = y, elapsed = 0 }
   if instant then
     self:arrive()
@@ -263,7 +267,7 @@ end
 --- @param delta number Notches, forward is closer
 function Viewport:Wheel(delta)
   local goal = self:goal()
-  local zoom = math.max(1, math.min(self.maxZoom, goal * STEP ^ delta))
+  local zoom = math.max(1, math.min(self.maxZoom, goal * self.step ^ delta))
   if zoom < 1 + SNAP then
     zoom = 1
   end
@@ -285,6 +289,17 @@ end
 function Viewport:ZoomTo(zoom, x, y, instant)
   zoom = math.max(1, math.min(self.maxZoom, zoom))
   self:glide(zoom, self.width / 2 - x * zoom, self.height / 2 - y * zoom, instant)
+end
+
+--- Goes to a zoom and place as they are, for a view that knows what it is doing: past the
+--- closest it lets the wheel go, or showing past the content's edges, as on the way between one
+--- thing and another drawn to look like it close up
+--- @param zoom number
+--- @param x number Where the content's top left corner is to be, right of the window's
+--- @param y number And below it
+--- @param instant boolean?
+function Viewport:GlideTo(zoom, x, y, instant)
+  self:glide(zoom, x, y, instant, true)
 end
 
 --- Goes back to showing all of it

@@ -49,6 +49,7 @@ GUI\Canvas.lua
 GUI\Strips.lua
 GUI\SectorView.lua
 GUI\PanoView.lua
+GUI\MapOverlays.lua
 GUI\MapView.lua
 GUI\TerrainView.lua
 Lexicon\English.lua

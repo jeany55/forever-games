@@ -3,8 +3,9 @@
 --------------------------
 -- The place fills the window, looked round in (GUI/PanoView.lua), with the round, the score and
 -- the time left in a corner and a compass along the top. The map to guess on sits small in the
--- bottom right corner and grows while the cursor is over it (GUI/MapView.lua): a click pins where
--- the player thinks they are, Guess (or Space) says so. Arrows look round too.
+-- bottom right corner and grows while the cursor is over it (GUI/MapView.lua), or for good while
+-- it is kept open: a click pins where the player thinks they are, Guess (or Space) says so.
+-- Arrows look round too.
 --
 -- A guess is shown on the whole map: the pin, where the place really was, the line between, how
 -- far out it was and the points counting up, and in a race what the rival guessed (their ghost,
@@ -115,12 +116,21 @@ function WhereView.New(stage)
   corner:SetFrameLevel(self.pano.frame:GetFrameLevel() + 20)
   corner:SetPoint("BOTTOMRIGHT", -PAD, PAD)
   self.corner = corner
-  self.small = private.MapView.New(corner, { onClick = function(place)
+  self.small = private.MapView.New(corner, { trail = true, onClick = function(place)
     self:pinAt(place)
   end })
   self.small.frame:SetPoint("TOPLEFT", 4, -4)
+  -- Kept open, the map stays big wherever the cursor goes: the player's to choose, and kept
+  self.keepButton = Widgets.Button(corner, "", 96, 24)
+  self.keepButton:SetPoint("BOTTOMLEFT", 4, 4)
+  self.keepButton:SetScript("OnClick", function()
+    ForeverGames.db.profile.whereKeepMap = not ForeverGames.db.profile.whereKeepMap or nil
+    self:refreshKeep()
+  end)
+  self:refreshKeep()
   self.guessButton = Widgets.Button(corner, L["where_guess"], 120, 24)
-  self.guessButton:SetPoint("BOTTOM", 0, 4)
+  self.guessButton:SetPoint("BOTTOMLEFT", self.keepButton, "BOTTOMRIGHT", 4, 0)
+  self.guessButton:SetPoint("BOTTOMRIGHT", -4, 4)
   self.guessButton:SetScript("OnClick", function()
     self:guess()
   end)
@@ -277,6 +287,10 @@ function View:refreshGuess()
   button:SetText(self.pin and L["where_guess"] or L["where_place_pin"])
 end
 
+function View:refreshKeep()
+  self.keepButton:SetText(ForeverGames.db.profile.whereKeepMap and L["where_map_let_shrink"] or L["where_map_keep_open"])
+end
+
 function View:refreshHud()
   local state = self.view.state
   local count = #state.places
@@ -309,10 +323,13 @@ function View:tick(elapsed)
   if not self.view then
     return
   end
-  -- The map grows while the cursor is over it, and shrinks a moment after it has left
+  -- The map grows while the cursor is over it, and shrinks a moment after it has left: not while
+  -- it is being dragged or gone into a zone, which the cursor may wander off the map doing, nor
+  -- while it is kept open
   if self.corner:IsShown() then
-    local over = self.corner:IsMouseOver()
-    if over then
+    local small = self.small
+    local busy = small.viewport.grab or small.diving or ForeverGames.db.profile.whereKeepMap
+    if busy or self.corner:IsMouseOver() then
       self.mapGoal, self.leftAt = 1, nil
     elseif self.mapGoal == 1 then
       self.leftAt = self.leftAt or GetTime()

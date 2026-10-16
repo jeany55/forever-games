@@ -27,8 +27,8 @@ local function exists(path)
 end
 
 --- The fake client, with as much of the client's map as the views ask of it: one continent
---- 30000 by 20000 yards from (0, 0), drawn as a map of 1002 by 668 in twelve tiles, and a
---- zone that is its middle third
+--- 30000 by 20000 yards from (0, 0), drawn as a map of 1002 by 668 in twelve tiles, a zone
+--- that is its middle third, and a city in the zone that the client has in the continent
 local function fakeMaps(Client)
   Client.Install()
   ForeverGames = { db = { profile = { sound = false } } }
@@ -41,11 +41,12 @@ local function fakeMaps(Client)
     return setmetatable({ x = x, y = y }, Vector)
   end
   Enum = { UIMapType = { Continent = 2, Zone = 3 } }
-  local CONTINENT, ZONE, WORLD = 1415, 1429, 947
+  local CONTINENT, ZONE, WORLD, CITY = 1415, 1429, 947, 1453
   local maps = {
     [WORLD] = { name = "Azeroth", parent = 0, left = -60000, top = -40000, width = 120000, height = 80000 },
     [CONTINENT] = { name = "Eastern Kingdoms", parent = WORLD, left = 0, top = 0, width = 30000, height = 20000, type = 2 },
     [ZONE] = { name = "Elwynn Forest", parent = CONTINENT, left = 10000, top = 6666, width = 10000, height = 6666, type = 3 },
+    [CITY] = { name = "Stormwind City", parent = CONTINENT, left = 12000, top = 8000, width = 1500, height = 1000, type = 3 },
   }
   C_Map = {
     GetFallbackWorldMapID = function()
@@ -74,13 +75,18 @@ local function fakeMaps(Client)
       return id, CreateVector2D((world.x - map.left) / map.width, (world.y - map.top) / map.height)
     end,
     GetMapInfoAtPosition = function(id, x, y)
+      if id == CONTINENT and x > 0.4 and x < 0.45 and y > 0.4 and y < 0.45 then
+        return { mapID = CITY, name = maps[CITY].name }
+      end
       if id == CONTINENT and x > 1 / 3 and x < 2 / 3 and y > 1 / 3 and y < 2 / 3 then
         return { mapID = ZONE, name = maps[ZONE].name }
       end
       return { mapID = id, name = maps[id].name }
     end,
     GetMapRectOnMap = function(id, parent)
-      return 1 / 3, 2 / 3, 1 / 3, 2 / 3
+      local map, around = maps[id], maps[parent]
+      local left, top = (map.left - around.left) / around.width, (map.top - around.top) / around.height
+      return left, left + map.width / around.width, top, top + map.height / around.height
     end,
     GetMapChildrenInfo = function(id)
       return id == WORLD and { { mapID = CONTINENT, name = maps[CONTINENT].name } } or {}
@@ -88,9 +94,25 @@ local function fakeMaps(Client)
     GetMapHighlightInfoAtPosition = function()
       return 0
     end,
+    -- Only the zone has overlays: its art is 77
+    GetMapArtID = function(id)
+      return id == ZONE and 77 or id
+    end,
+    GetAreaInfo = function(area)
+      return ({ [87] = "Goldshire", [12] = "Elwynn Forest" })[area]
+    end,
   }
-  return CONTINENT, ZONE
+  return CONTINENT, ZONE, CITY
 end
+
+--- Two overlays of the zone's art: Goldshire, 300 by 200 at (400, 300), in two tiles across and
+--- one down, its naming rectangle inside it; and a bigger one round it naming the forest
+local OVERLAYS = {
+  [77] = {
+    { 300, 200, 400, 300, 450, 350, 650, 450, 87, 501, 502 },
+    { 256, 256, 300, 200, 300, 200, 800, 600, 12, 503 },
+  },
+}
 
 --- The widgets of the window, loaded on their own into a fresh `private`
 local function loadWidgets(files)
@@ -336,6 +358,7 @@ return function(tests, loadEngine)
     local Client = dofile("Tests/FakeClient.lua")
     local continent, zone = fakeMaps(Client)
     local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Viewport.lua", "GUI/MapView.lua" })
+    private.MapOverlays = OVERLAYS
     local clicked
     local map = private.MapView.New(CreateFrame("Frame"), { map = continent, onClick = function(place)
       clicked = place
@@ -386,6 +409,27 @@ return function(tests, loadEngine)
     view:Layout(900, 560)
     view:Update(shown)
     equal(1, view.round)
+    -- Kept open, the map grows with the cursor away from it, and it is remembered
+    local now = 0
+    GetTime = function()
+      return now
+    end
+    Client.over = false
+    view.keepButton:Fire("OnClick")
+    equal(true, ForeverGames.db.profile.whereKeepMap)
+    for _ = 1, 30 do
+      now = now + 0.1
+      view:tick(0.1)
+    end
+    near(1, view.mapGrow, 0.01, "grown")
+    view.keepButton:Fire("OnClick")
+    equal(nil, ForeverGames.db.profile.whereKeepMap)
+    for _ = 1, 30 do
+      now = now + 0.1
+      view:tick(0.1)
+    end
+    near(0, view.mapGrow, 0.01, "let shrink")
+    Client.over = true
     -- Pinned right on the place, and guessed
     local place = private.Where.placeOf(state)
     view:pinAt(place)
@@ -403,5 +447,134 @@ return function(tests, loadEngine)
     view:guess()
     equal("s", submitted[2])
     equal(continent ~= nil, true)
+  end
+
+  --- A map 600 by 400 in a window that size, the cursor at a point of the window
+  local function mapAt(Client, options)
+    local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Viewport.lua", "GUI/MapView.lua" })
+    private.MapOverlays = OVERLAYS
+    local map = private.MapView.New(CreateFrame("Frame"), options)
+    map:SetSize(600, 400)
+    local function point(x, y)
+      Client.cursor = { x, map.frame:GetTop() - y }
+    end
+    local function run(seconds)
+      for _ = 1, math.floor(seconds * 60 + 0.5) do
+        map.frame:Fire("OnUpdate", 1 / 60)
+      end
+    end
+    return map, point, run
+  end
+
+  function tests.MapViewShowsAllOfAMapExploredOrNot()
+    local Client = dofile("Tests/FakeClient.lua")
+    local continent, zone = fakeMaps(Client)
+    local map = mapAt(Client, {})
+    map:Show(continent)
+    local shown = 0
+    for _, patch in ipairs(map.art.patches) do
+      shown = shown + (patch:IsShown() and 1 or 0)
+    end
+    equal(0, shown, "the continent has no overlays")
+    map:Show(zone)
+    local patches = map.art.patches
+    equal(3, #patches, "every tile of every overlay")
+    -- The map is 1002 across in the art's pixels, 600 in the window
+    local scale = 600 / 1002
+    equal(501, patches[1].texture, "the first tile of the first")
+    near(256 * scale, patches[1]:GetWidth(), 1e-9, "a whole tile")
+    equal(502, patches[2].texture)
+    near(44 * scale, patches[2]:GetWidth(), 1e-9, "the last of the row, only what is left of it")
+    near(200 * scale, patches[2]:GetHeight(), 1e-9)
+    equal(503, patches[3].texture)
+    map:Show(continent)
+    for _, patch in ipairs(map.art.patches) do
+      assert(not patch:IsShown(), "back on the continent they are gone")
+    end
+  end
+
+  function tests.MapViewNamesTheAreaUnderTheCursor()
+    local Client = dofile("Tests/FakeClient.lua")
+    local continent, zone = fakeMaps(Client)
+    local map, point, run = mapAt(Client, {})
+    map:Show(zone)
+    -- Goldshire's naming rectangle is 450 to 650 across of 1002, 350 to 450 down of 668
+    point(550 / 1002 * 600, 400 / 668 * 400)
+    run(1 / 60)
+    equal("Goldshire", map.zoneName:GetText(), "the smallest rectangle it is in")
+    point(700 / 1002 * 600, 550 / 668 * 400)
+    run(1 / 60)
+    equal("Elwynn Forest", map.zoneName:GetText(), "only in the bigger one")
+    point(10, 10)
+    run(1 / 60)
+    equal("Elwynn Forest", map.zoneName:GetText(), "in none: the map's own name")
+    map:Show(continent)
+    point(300, 200)
+    run(1 / 60)
+    equal("Elwynn Forest", map.zoneName:GetText(), "on the continent, the zone under it")
+  end
+
+  function tests.MapViewGoesIntoAZoneAsOneMapCloser()
+    local Client = dofile("Tests/FakeClient.lua")
+    local continent, zone = fakeMaps(Client)
+    local map, point, run = mapAt(Client, { trail = true })
+    map:Show(continent)
+    point(300, 200)
+    -- The zone is the middle third: its own map shows it three times as close
+    map.frame:Fire("OnMouseWheel", 1)
+    map.frame:Fire("OnMouseWheel", 1)
+    run(0.5)
+    equal(continent, map.mapID, "two notches are not that close")
+    near(2.25, map.viewport.zoom, 1e-9)
+    map.frame:Fire("OnMouseWheel", 1)
+    equal(zone, map.diving, "the next would be: it closes in on the zone")
+    run(0.1)
+    equal(continent, map.mapID, "still the continent on the way")
+    assert(map.viewport.zoom > 2.25 and map.viewport.zoom < 3, "closing in: " .. map.viewport.zoom)
+    run(0.3)
+    equal(zone, map.mapID, "then the zone's own map")
+    equal(1, map.viewport.zoom, "all of it")
+    assert(map.fading, "the continent fading over it")
+    run(0.5)
+    equal(nil, map.fading, "and gone")
+    -- The trail: the world, the continent, the zone
+    equal("Eastern Kingdoms", map.crumbs[2].label:GetText())
+    equal("Elwynn Forest", map.crumbs[3].label:GetText())
+    assert(map.trail:IsShown())
+
+    -- Out again, a notch: the continent comes in with the zone where it was, three times as close,
+    -- and draws back a notch
+    map.frame:Fire("OnMouseWheel", -1)
+    equal(continent, map.mapID)
+    near(3, map.viewport.zoom, 1e-9, "the zone just where it was")
+    near(-600, map.viewport.x, 1e-9, "the continent's left edge two of its thirds out")
+    run(0.5)
+    near(2, map.viewport.zoom, 1e-9, "then a notch back")
+
+    -- Right out to the world by the trail, all of it
+    map:Show(zone)
+    map.crumbs[1]:Fire("OnClick")
+    equal(947, map.mapID)
+    run(0.5)
+    equal(1, map.viewport.zoom)
+    assert(not map.trail:IsShown(), "nothing out from the world")
+  end
+
+  function tests.MapViewGoesIntoACityFromTheZoneItIsDrawnOn()
+    local Client = dofile("Tests/FakeClient.lua")
+    local continent, zone, city = fakeMaps(Client)
+    local map, point, run = mapAt(Client, { trail = true })
+    map:Show(zone)
+    -- The city is 0.2 to 0.35 of the zone across and down
+    point(0.27 * 600, 0.27 * 400)
+    run(1 / 60)
+    equal("Stormwind City", map.zoneName:GetText(), "named on the zone's map")
+    for _ = 1, 3 do
+      map.frame:Fire("OnMouseWheel", 1)
+      run(0.5)
+    end
+    equal(city, map.mapID, "and gone into")
+    map.frame:Fire("OnMouseWheel", -1)
+    equal(continent, map.mapID, "out to the map the client has it in")
   end
 end
