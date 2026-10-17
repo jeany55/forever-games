@@ -40,6 +40,7 @@ GUI\Dice.lua
 GUI\SlideGrid.lua
 GUI\NumberGrid.lua
 GUI\Board.lua
+GUI\Heaps.lua
 GUI\Cards.lua
 GUI\CardTable.lua
 GUI\Viewport.lua
@@ -61,6 +62,7 @@ Games\TicTacToe.lua
 Games\Chess.lua
 Games\ConnectFour.lua
 Games\Reversi.lua
+Games\Mancala.lua
 Games\Checkers.lua
 Games\ChineseCheckers.lua
 Games\Backgammon.lua

@@ -217,7 +217,9 @@ taking moves back, how your games against it went, and seating it at a table of 
 `Games/TicTacToe.lua` is the smallest example, `Games/Chess.lua` uses all of it. For a game
 where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`, at
 `Games/Checkers.lua` for moves made in several steps, and at `Games/ChineseCheckers.lua` for more
-than two players and a board that isn't a grid. `Games/Backgammon.lua` rolls dice and stacks
+than two players and a board that isn't a grid. `Games/Mancala.lua` keeps counts of things
+that are all alike, seeds in pits, and draws them as heaps of their own that are carried and
+swept from place to place (`GUI/Heaps.lua`). `Games/Backgammon.lua` rolls dice and stacks
 its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
 hides what a player chose rather than what they were dealt, on two boards at once, with pieces
 several squares long. `Games/Solitaire.lua` is for one, on a card table (`GUI/CardTable.lua`)

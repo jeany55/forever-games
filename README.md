@@ -61,6 +61,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/chess.png" width="32"> | Chess | 2 | Take as long as you like between moves. |
 | <img src=".github/readme/icons/checkers.png" width="32"> | Checkers | 2 | Jump to capture, reach the far side to be crowned. |
 | <img src=".github/readme/icons/reversi.png" width="32"> | Reversi | 2 | Trap discs between yours to flip them. |
+| <img src=".github/readme/icons/mancala.png" width="32"> | Mancala | 2 | Sow seeds round the board, land in your store to go again. |
 | <img src=".github/readme/icons/connectfour.png" width="32"> | Connect Four | 2 | Four in a row: across, up or diagonal. |
 | <img src=".github/readme/icons/tictactoe.png" width="32"> | Tic Tac Toe | 2 | Over in a minute. |
 | <img src=".github/readme/icons/battleship.png" width="32"> | Battleship | 2 | Hide your fleet, then hunt for theirs. |
@@ -211,6 +212,16 @@ unless the game says otherwise.
 - Connect Four: click anywhere in a column to drop a disc.
 - Reversi: click one of the marked squares.
 - Tic Tac Toe: click a square.
+
+</details>
+
+<details>
+<summary><b>Mancala</b></summary>
+
+- Click one of your pits, the six along the bottom, or press 1 to 6 with the pointer over the
+  board. Your store is the long one at the right.
+- Point at a pit first to see where its seeds go: where the last one lands is lit, green when it
+  lands in your store and you go again, orange when it takes what is across.
 
 </details>
 

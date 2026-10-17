@@ -29,6 +29,7 @@ local ENGINE_FILES = {
   "Games/Chess.lua",
   "Games/ConnectFour.lua",
   "Games/Reversi.lua",
+  "Games/Mancala.lua",
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
   "Games/Backgammon.lua",
@@ -61,7 +62,7 @@ local ENGINE_FILES = {
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -960,6 +961,134 @@ function tests.ReversiPassBetweenTwoPlayers()
   equal(9, #black.matches[match.id].log)
 end
 
+-----------------------------
+-- Mancala
+-----------------------------
+
+do
+--- A game of Mancala to try the rules on
+--- @param chosen table? Options, the usual rules where left out
+--- @param holes number[]? A position to start from instead, seat 1 to move
+--- @return table state, table game, table private
+local function mancala(chosen, holes)
+  local private = loadEngine()
+  local game = private.Games.Get("mancala")
+  local state = game.newState(2, private.Random.New(1), private.Games.Rules(game.options, chosen))
+  if holes then
+    state.holes = holes
+  end
+  return state, game, private
+end
+
+function tests.MancalaSowsAnticlockwiseAndGoesAgainFromTheStore()
+  local state, game = mancala()
+  equal("4,4,4,4,4,4,0,4,4,4,4,4,4,0", table.concat(state.holes, ","))
+  local event = game.apply(state, 1, "3")
+  equal("4,4,0,5,5,5,1,4,4,4,4,4,4,0", table.concat(state.holes, ","))
+  equal("4,5,6,7", table.concat(event.stops, ","))
+  equal(true, event.again)
+  equal("3+", event.notation)
+  equal(1, game.turn(state), "the last seed went into the store, so it is the same player's turn")
+
+  event = game.apply(state, 1, "4")
+  equal("5,6,7,8,9", table.concat(event.stops, ","), "on into the other side")
+  equal(nil, event.again)
+  equal("4", event.notation)
+  equal(2, game.turn(state))
+
+  -- The second player's pits count from their own left, and sow into their own store
+  event = game.apply(state, 2, "1")
+  equal("9,10,11,12,13", table.concat(event.stops, ","))
+  equal(1, game.turn(state))
+end
+
+function tests.MancalaTakesTheSeedsAcrossFromAnEmptyPit()
+  local state, game = mancala(nil, { 1, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 5, 0, 0 })
+  local event = game.apply(state, 1, "1")
+  equal("0,0,0,0,0,3,6,2,0,0,0,0,0,0", table.concat(state.holes, ","))
+  equal(2, event.capture.at)
+  equal(12, event.capture.across)
+  equal(6, event.capture.seeds, "the last seed goes with them")
+  equal("1x6", event.notation)
+  equal(2, game.turn(state))
+  equal(nil, game.result(state))
+
+  -- Nothing across: nothing is taken, unless the rules say the last seed is taken on its own
+  state, game = mancala(nil, { 1, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 0, 0, 4 })
+  event = game.apply(state, 1, "1")
+  equal(nil, event.capture)
+  equal("0,1,0,0,0,3,0", table.concat({ unpack(state.holes, 1, 7) }, ","))
+  state, game = mancala({ lone = true }, { 1, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 0, 0, 4 })
+  event = game.apply(state, 1, "1")
+  equal(1, event.capture.seeds)
+  equal("0,0,0,0,0,3,1", table.concat({ unpack(state.holes, 1, 7) }, ","))
+
+  -- Nor is anything taken by a last seed that lands in a pit that wasn't empty, or on the other side
+  state, game = mancala(nil, { 1, 1, 0, 0, 0, 3, 0, 2, 0, 0, 0, 5, 0, 0 })
+  equal(nil, game.apply(state, 1, "1").capture)
+  state, game = mancala(nil, { 0, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 5, 0, 0 })
+  equal(nil, game.apply(state, 1, "6").capture)
+end
+
+function tests.MancalaSowsRoundPastTheOpponentsStore()
+  local state, game = mancala(nil, { 0, 0, 0, 0, 0, 13, 0, 1, 1, 1, 1, 1, 1, 0 })
+  local event = game.apply(state, 1, "6")
+  equal(13, #event.stops)
+  for _, stop in ipairs(event.stops) do
+    assert(stop ~= 14, "never into the other player's store")
+  end
+  -- Thirteen seeds come back round to the pit they left, which is empty by then, and take what
+  -- is across from it: the one that was there and the one sown into it on the way
+  equal(6, event.capture.at)
+  equal(8, event.capture.across)
+  equal(3, event.capture.seeds)
+  equal(0, state.holes[14])
+end
+
+function tests.MancalaEndsOnceASideIsEmpty()
+  local state, game = mancala(nil, { 0, 0, 0, 0, 0, 1, 20, 0, 3, 0, 0, 2, 0, 22 })
+  local event = game.apply(state, 1, "6")
+  equal(true, event.again)
+  local result = game.result(state)
+  equal(2, result.winner, "the seeds left on the second player's side are theirs")
+  equal("0,0,0,0,0,0,21,0,0,0,0,0,0,27", table.concat(state.holes, ","))
+  equal(2, #event.sweeps)
+  equal(9, event.sweeps[1].from)
+  equal(14, event.sweeps[1].to)
+  equal(3, event.sweeps[1].seeds)
+
+  state, game = mancala(nil, { 0, 0, 0, 0, 0, 1, 23, 0, 0, 0, 0, 0, 1, 23 })
+  game.apply(state, 1, "6")
+  equal(0, game.result(state).winner, "the same in each store is a draw")
+end
+
+function tests.MancalaRejectsBadMoves()
+  local state, game = mancala()
+  game.apply(state, 1, "1")
+  equal(false, (game.validate(state, 1, "2")), "not the first player's turn")
+  local ok, err = game.validate(state, 2, "2")
+  equal(true, ok, err)
+  state.holes[9] = 0
+  ok, err = game.validate(state, 2, "2")
+  equal(false, ok)
+  equal("pit_empty", err)
+  for _, move in ipairs({ "0", "7", "x", "1.5", "01", "" }) do
+    equal(false, (game.validate(state, 2, move)), move)
+  end
+end
+
+function tests.MancalaComputerGoesAgainAndTakes()
+  local state, game, private = mancala()
+  local Computer = private.Computer
+  equal("3", Computer.Think(game, Computer.Copy(state), 1, "hard", 1):Finish(), "the opening that goes again")
+  -- Taking the six across empties the other side, and wins
+  state = mancala(nil, { 0, 1, 0, 0, 0, 2, 15, 0, 0, 0, 6, 0, 0, 16 })
+  for _, level in ipairs({ "medium", "hard" }) do
+    equal("2", Computer.Think(game, Computer.Copy(state), 1, level, 1):Finish(), level)
+  end
+end
+end
+
 --- @param state table Checkers position
 --- @return string[]
 local function checkersMoves(state)
@@ -1798,6 +1927,65 @@ function tests.WindowShowsAReversiPlayerSittingOut()
   assert(moves[7].parent == moves[8].parent, "the line before has a move from each")
 end
 
+function tests.WindowPlaysMancalaByClickingPits()
+  local world, alice, bob, id = gameOnScreen("mancala")
+  local board = shownBoard()
+  -- The board is in units of a pit, 9.08 across and 3.2 down, its own side along the bottom
+  local unit = board.width / 9.08
+  assert(unit >= 60, "the board should make use of the window, got " .. unit)
+  local pointer = Client.Find(function(widget)
+    return widget.parent == board and widget.scripts.OnUpdate ~= nil
+  end)[1]
+  --- Points at one of the player's own pits, from the left
+  local function pointAtPit(pit)
+    Client.cursor = { (1.04 + pit) * unit, board.height - 2.2 * unit }
+    pointer:Fire("OnUpdate", 0.02)
+  end
+  local function clickPit(pit)
+    pointAtPit(pit)
+    board:Fire("OnMouseDown", "LeftButton")
+  end
+  local function settle()
+    for _ = 1, 200 do
+      board:Fire("OnUpdate", 0.02)
+    end
+  end
+  local function says(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+
+  -- Pointing at a pit says what it would do before it is played
+  pointAtPit(3)
+  assert(says("mancala_preview_again"), "the third pit's last seed lands in the store")
+  pointAtPit(2)
+  assert(not says("mancala_preview_again"))
+
+  clickPit(3)
+  equal("3", logOf(alice, id))
+  -- The seeds are still being sown: nothing more can be played until they are down
+  clickPit(6)
+  equal("3", logOf(alice, id))
+  settle()
+  equal("mancalaAgain", Client.sounds[#Client.sounds], "a cheer for going again")
+  assert(says("1"), "the store's count went up as the last seed landed")
+  clickPit(6)
+  equal("3,6", logOf(alice, id))
+  settle()
+
+  -- Not on the opponent's turn, by the mouse or the keys
+  clickPit(1)
+  board:Fire("OnKeyDown", "1")
+  equal("3,6", logOf(alice, id))
+  world:Deliver()
+  assert(bob.session:Move(id, "1"))
+  world:Deliver()
+  settle()
+  board:Fire("OnKeyDown", "2")
+  equal("3,6,1,2", logOf(alice, id))
+end
+
 --- Clicks the square checkers players know by a number, on a board with red at the bottom
 --- @param board table
 --- @param number number 1 to 32
@@ -1945,7 +2133,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,mancala,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
