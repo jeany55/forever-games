@@ -403,7 +403,7 @@ local function createView(stage)
 
   local felt = stage:CreateTexture(nil, "BACKGROUND")
   felt:SetAllPoints()
-  felt:SetColorTexture(unpack(FELT))
+  private.Felt.Paint(felt, FELT)
 
   self.felt = private.CardTable.New(stage)
   self.felt.canLift = function(pile, index)

@@ -81,6 +81,7 @@ differ, the challenge tells you.
 | | Game | Daily challenge | Race a friend | |
 |---|---|:---:|:---:|---|
 | <img src=".github/readme/icons/solitaire.png" width="32"> | Solitaire | Yes | | Klondike. |
+| <img src=".github/readme/icons/freecell.png" width="32"> | FreeCell | Yes | Yes | Every card face up, four free cells. Microsoft's numbered deals. |
 | <img src=".github/readme/icons/minesweeper.png" width="32"> | Minesweeper | Yes | Yes | Three field sizes, best time kept for each. |
 | <img src=".github/readme/icons/sudoku.png" width="32"> | Sudoku | Yes | Yes | A fresh puzzle every time, Easy to Expert. |
 | <img src=".github/readme/icons/2048.png" width="32"> | 2048 | Yes | | Slide and merge tiles. Boards of 3, 4 or 5. |
@@ -88,6 +89,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/warcraftstein.png" width="32"> | Warcraftstein 3D | Yes | Yes | Fight through the Scarlet Monastery in first person, as your own class. |
 | <img src=".github/readme/icons/freedoom.png" width="32"> | Freedoom | | Yes | The free version of Doom, drawn inside WoW. Race the ghost of your best run. |
 | <img src=".github/readme/icons/fourtiles.png" width="32"> | Fourtiles | Yes | | A word puzzle. A friend can join in and solve it with you, no turns. |
+| <img src=".github/readme/icons/wordle.png" width="32"> | Wordle | Yes | Yes | Find the hidden word in six guesses. 4 to 7 letters, everyday words or Azeroth's. |
 | <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | | | Fill the card alone. 200 points is a win. |
 | <img src=".github/readme/icons/where.png" width="32"> | Where in Azeroth | Yes | Yes | You're dropped somewhere in the world. Look around and pin where you think you are. |
 
@@ -340,6 +342,19 @@ unless the game says otherwise.
 </details>
 
 <details>
+<summary><b>Wordle</b></summary>
+
+- Type a word with the pointer over the game, or click the keyboard on screen, then press **Enter**.
+- Green is the right letter in the right place, gold is in the word somewhere else, grey isn't in it.
+- Choose 4 to 7 letters (one more guess than letters), everyday words or names from Azeroth, and
+  hard mode, where every letter you find has to be used.
+- Found in one guess is Legendary, two Epic, three Rare, and so on down to Poor.
+- The daily word is five letters and scored on guesses. In a race you both get the same word, and
+  once you've finished you see the colours of your rival's guesses.
+
+</details>
+
+<details>
 <summary><b>Solitaire</b></summary>
 
 - Drag a card, with any cards on top of it, to where it should go. Or click it: it goes to the
@@ -347,6 +362,20 @@ unless the game says otherwise.
 - Right-click only ever sends a card to the foundation.
 - Click the stock to turn a card, and click it again when empty to go through once more.
 - When every card is face up, **Finish** plays out the rest for you.
+
+</details>
+
+<details>
+<summary><b>FreeCell</b></summary>
+
+- All 52 cards are dealt face up into eight columns. The four places top left each hold one card.
+- Build columns down in alternating colours. Any card can go into an empty column.
+- Click a card and it goes home if it can, then to a column, then to a free cell. Or drag it.
+- A run can move in one go if there's room to have moved it a card at a time: one more than the
+  empty cells, doubled for each empty column.
+- Cards nothing else needs go home by themselves. The deal number is Microsoft's, so game #1 here
+  is game #1 anywhere. The one unwinnable deal (#11982) is never dealt.
+- With nothing left to move, the game is lost. Your best time is kept.
 
 </details>
 
@@ -515,6 +544,8 @@ In the options (also under AddOns in the game's settings) you can choose:
 - whether the games make their own sounds
 - whether anyone can challenge you, or only friends and guildies
 - whether the minimap button is shown, and how big the window is
+- the back of the cards, five designs in six colours, the felt every table is covered with, and
+  the colour of the dice (Backgammon keeps its white and red, which tell the players apart)
 
 ## Good to know
 
@@ -568,8 +599,8 @@ used under CC BY-SA 4.0. See `Images/Chess/README.md`.
 The playing cards, dice and sounds are from the Boardgame Pack by [Kenney](https://www.kenney.nl),
 released into the public domain (CC0).
 
-The Fourtiles word list was picked with the help of [SCOWL](http://wordlist.aspell.net) by Kevin
-Atkinson.
+The Fourtiles and Wordle word lists were picked with the help of [SCOWL](http://wordlist.aspell.net)
+by Kevin Atkinson.
 
 The letters on the Fourtiles and Words with Warcraft tiles are drawn in
 [Lexend](https://github.com/googlefonts/lexend) by The Lexend Project Authors, used under the SIL

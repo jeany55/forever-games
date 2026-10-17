@@ -144,6 +144,30 @@ function Lexicon.Span(list, prefix, length, low, high)
   return first, bottom - 1
 end
 
+--- How many words of a length a list packs, for a game that picks one of them by its place: the
+--- word to find in Games/Wordle.lua. Names aren't counted
+--- @param list string
+--- @param length number
+--- @return number
+function Lexicon.Size(list, length)
+  local from = lists[list]
+  local packed = from and from.packed[length]
+  return packed and #packed / length or 0
+end
+
+--- A word of a length a list packs, by its place in their order, see Lexicon.Size
+--- @param list string
+--- @param length number
+--- @param index number From 1
+--- @return string? nil where there is none
+function Lexicon.At(list, length, index)
+  if index < 1 or index > Lexicon.Size(list, length) or index ~= math.floor(index) then
+    return nil
+  end
+  local packed = lists[list].packed[length]
+  return packed:sub((index - 1) * length + 1, index * length)
+end
+
 --- Every word of a list that was added as a name, in order
 --- @param list string
 --- @return string[]

@@ -673,7 +673,7 @@ local function createView(stage)
   local self = setmetatable({ stage = stage, kept = {}, thrown = {}, rows = {}, slots = {}, tints = {}, columns = {}, seats = 1 }, View)
 
   self.felt = Widgets.Panel(stage)
-  self.felt:SetBackdropColor(unpack(FELT))
+  private.Felt.Paint(self.felt, FELT)
   self.felt:SetBackdropBorderColor(unpack(FELT_EDGE))
   self.tray = self.felt:CreateTexture(nil, "BACKGROUND", nil, 1)
   self.tray:SetColorTexture(unpack(TRAY))
@@ -944,7 +944,6 @@ function View:showDice()
   self.dice:Show({
     key = self:turnKey(),
     faces = state.dice,
-    color = "white",
     size = self.size,
     from = self.from,
     area = self.area,

@@ -16,6 +16,10 @@
 -- there. A game can have the dice clicked, and can pick some of them up off the table to be
 -- shaken and thrown again (Grab and Release), for one where dice are kept and the rest rolled.
 --
+-- Dice that stand for nobody in particular are the colour the player chose in the options
+-- (GUI/Options.lua), and change when they choose another. A game whose dice tell players apart
+-- says which colour each roll is.
+--
 -- Nothing here knows any game. See Games/Backgammon.lua and Games/Yacht.lua.
 
 --- @type nil, ForeverGamesPrivate
@@ -27,7 +31,7 @@ local L = private.L
 --- @class DiceRoll
 --- @field key any Which roll it is: the same key keeps the dice where they came to rest, another is a new roll
 --- @field faces number[] What each die rolled. Shown again with other faces under the same key, the dice thrown since show those
---- @field color string Which dice they are: "white" or "red"
+--- @field color string? Which dice they are, one of Dice.COLOURS, for dice that tell players apart. Left out, the colour the player chose
 --- @field size number Side of a die
 --- @field from { x: number, y: number } Where they are thrown from, and held until then
 --- @field x number? Where the middle of the row comes to rest, for dice the roll doesn't put anywhere else
@@ -80,6 +84,17 @@ Dice.__index = Dice
 private.Dice = Dice
 
 local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\"
+-- The colours dice come in (Tools/convert_kenney.py), in the order the options show them, and
+-- the one for a player who hasn't chosen
+Dice.COLOURS = { "white", "red", "blue", "green", "purple", "pink", "black" }
+Dice.COLOUR = "white"
+
+local colours = {}
+for _, colour in ipairs(Dice.COLOURS) do
+  colours[colour] = true
+end
+-- Every table there are dice on, to be told of a colour the player chose. Forgotten with the table
+local tables = setmetatable({}, { __mode = "k" })
 -- A die fills this much of its texture, which leaves it room to turn (Tools/convert_kenney.py)
 local DIE_FILL = 88 / 128
 -- Seconds a throw takes, give or take, and how much later each die leaves the hand than the one before
@@ -149,6 +164,7 @@ function Dice.New(parent)
   local Widgets = private.Widgets
   --- @type Dice
   local self = setmetatable({ dice = {} }, Dice)
+  tables[self] = true
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints()
   frame:SetFrameLevel(parent:GetFrameLevel() + 10)
@@ -189,6 +205,42 @@ function Dice.New(parent)
     self:still()
   end)
   return self
+end
+
+--- The colour the player chose for dice, the usual one if they never did or chose one that has gone
+--- @return string
+function Dice.Colour()
+  local chosen = ForeverGames.db.profile.diceColour
+  return colours[chosen] and chosen or Dice.COLOUR
+end
+
+--- A face of a die of a colour
+--- @param colour string
+--- @param face number
+--- @return string
+function Dice.Texture(colour, face)
+  return IMAGES .. "Dice\\" .. colour .. face
+end
+
+--- Makes a colour the one dice are, and turns every die on the table that is no colour in
+--- particular to it
+--- @param colour string
+function Dice.SetColour(colour)
+  ForeverGames.db.profile.diceColour = colour
+  for each in pairs(tables) do
+    if each.roll and not each.roll.color then
+      for index = 1, #each.roll.faces do
+        local die = each.dice[index]
+        die.face:SetTexture(each:texture(die.shown))
+      end
+    end
+  end
+end
+
+--- @param face number
+--- @return string
+function Dice:texture(face)
+  return Dice.Texture(self.roll.color or Dice.Colour(), face)
 end
 
 --- The widgets of a die, made the first time there are that many
@@ -330,7 +382,7 @@ function Dice:draw(die, x, y, angle, height, scale)
 
   local face = die.face
   local side = size / DIE_FILL * (1 + LIFT * height) * shrink
-  face:SetTexture(IMAGES .. "Dice\\" .. roll.color .. die.shown)
+  face:SetTexture(self:texture(die.shown))
   face:SetSize(side, side)
   face:ClearAllPoints()
   face:SetPoint("CENTER", self.frame, "TOPLEFT", x, -y)

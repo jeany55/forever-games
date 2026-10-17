@@ -14,6 +14,9 @@
 --
 -- The pictures are Kenney's (Tools/convert_kenney.py), one size of them: a card isn't drawn
 -- much bigger or smaller than it is.
+--
+-- The back is the player's to choose in the options (GUI/Options.lua), a design in a colour. A
+-- card shown with Cards.Paint changes to a new back the moment it is chosen.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -43,10 +46,68 @@ local DEAL_FLIGHT, DEAL_GAP, DEAL_TIME = 0.36, 0.1, 1.8
 -- The part of its flight a card spends turning over, and how narrow it gets edge on
 local TURN_FROM, TURN_TO, TURN_EDGE = 0.25, 0.8, 0.06
 
+-- The backs the player can choose between in the options (Tools/convert_kenney.py): every design
+-- comes in every colour, and goes by both, "suits_blue". In the order the options show them
+Cards.BACK_DESIGNS = { "suits", "pips", "frame", "lattice", "sunburst" }
+Cards.BACK_COLOURS = { "blue", "red", "green", "purple", "pink", "black" }
+-- The back the cards had before there was a choice, for a player who hasn't made one
+Cards.BACK = "suits_blue"
+
+local backs = {}
+for _, design in ipairs(Cards.BACK_DESIGNS) do
+  for _, colour in ipairs(Cards.BACK_COLOURS) do
+    backs[design .. "_" .. colour] = true
+  end
+end
+
+-- Every texture that shows the back of a card, so that a back chosen while they are on screen
+-- goes onto all of them at once. Forgotten with the texture
+local showingBacks = setmetatable({}, { __mode = "k" })
+
+--- @param back string A design and a colour, "suits_blue"
+--- @return boolean
+function Cards.IsBack(back)
+  return backs[back] == true
+end
+
+--- The back the player chose, the usual one if they never did or chose one that has gone
+--- @return string
+function Cards.Back()
+  local chosen = ForeverGames.db.profile.cardBack
+  return backs[chosen] and chosen or Cards.BACK
+end
+
+--- The picture of one of the backs, whichever is chosen
+--- @param back string
+--- @return string
+function Cards.BackTexture(back)
+  return IMAGES .. "Backs\\" .. back
+end
+
 --- @param card string
 --- @return string
 function Cards.Texture(card)
-  return IMAGES .. (card:match("^[A2-9TJQK][SHDC]$") or "back")
+  local face = card:match("^[A2-9TJQK][SHDC]$")
+  return face and IMAGES .. face or Cards.BackTexture(Cards.Back())
+end
+
+--- Shows a card on a texture. Better than setting the texture to Cards.Texture: a back shown
+--- this way changes when the player chooses another
+--- @param texture Texture
+--- @param card string
+function Cards.Paint(texture, card)
+  texture:SetTexture(Cards.Texture(card))
+  showingBacks[texture] = not card:match("^[A2-9TJQK][SHDC]$") or nil
+end
+
+--- Makes a back the one the cards have, and turns every card on screen that shows its back to it
+--- @param back string
+function Cards.SetBack(back)
+  ForeverGames.db.profile.cardBack = back
+  local texture = Cards.BackTexture(Cards.Back())
+  for showing in pairs(showingBacks) do
+    showing:SetTexture(texture)
+  end
 end
 
 -- White shapes to tint (Tools/make_cards.py): a card with nothing on it, the outline of a place
@@ -79,7 +140,7 @@ function Cards.Card(parent)
     self.card = card
     self.face:SetShown(card ~= nil)
     if card then
-      self.face:SetTexture(Cards.Texture(card))
+      Cards.Paint(self.face, card)
     end
   end
 
@@ -197,7 +258,7 @@ function Row:Set(cards, pickable)
     local button = cardAt(self, index)
     button.card = card
     button.pickable = pickable ~= nil and pickable[card] == true
-    button.face:SetTexture(Cards.Texture(card))
+    Cards.Paint(button.face, card)
     -- What can't be played steps back while there is a choice to make
     if choosing and not button.pickable then
       button.face:SetVertexColor(unpack(DIMMED))
@@ -286,7 +347,7 @@ function Flights:Fly(card, fromX, fromY, to, width, height, options)
   flight.seconds, flight.onStart = options.seconds or FLIGHT, options.onStart
   -- Not on its way yet for as long as this is below nothing
   flight.elapsed, flight.started, flight.to = -(options.delay or 0), false, to
-  flight.texture:SetTexture(Cards.Texture(card))
+  Cards.Paint(flight.texture, card)
   flight.texture:SetSize(width, height)
   flight.texture:Hide()
   to:SetAlpha(0)
@@ -372,7 +433,7 @@ function Flights:advance(elapsed)
           local turn = math.max(0, math.min(1, (progress - TURN_FROM) / (TURN_TO - TURN_FROM)))
           if turn >= 0.5 and not flight.turned then
             flight.turned = true
-            flight.texture:SetTexture(Cards.Texture(flight.face))
+            Cards.Paint(flight.texture, flight.face)
           end
           flight.texture:SetWidth(flight.width * math.max(TURN_EDGE, math.abs(math.cos(turn * math.pi))))
         end

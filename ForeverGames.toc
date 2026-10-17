@@ -34,6 +34,7 @@ Engine\Actors.lua
 Engine\Course.lua
 Engine\API.lua
 GUI\Widgets.lua
+GUI\Felt.lua
 GUI\LetteringGlyphs.lua
 GUI\Lettering.lua
 GUI\Effects.lua
@@ -57,6 +58,7 @@ GUI\TerrainView.lua
 Lexicon\English.lua
 Lexicon\Warcraft.lua
 Lexicon\Fourtiles.lua
+Lexicon\Wordle.lua
 Lexicon\Sketch.lua
 Lexicon\Trivia.lua
 Games\TicTacToe.lua
@@ -73,11 +75,13 @@ Games\CrazyEights.lua
 Games\Battleship.lua
 Games\Words.lua
 Games\Solitaire.lua
+Games\FreeCell.lua
 Games\Minesweeper.lua
 Games\2048.lua
 Games\Blockfall.lua
 Games\Sudoku.lua
 Games\Fourtiles.lua
+Games\Wordle.lua
 Games\Warcraftstein.lua
 Games\Wormcraft.lua
 Games\Sketch.lua
@@ -90,4 +94,5 @@ GUI\Wizard.lua
 GUI\MainFrame.lua
 GUI\Party.lua
 GUI\Options.lua
+GUI\Options.xml
 Core.lua

@@ -139,7 +139,7 @@ end
 local function face(sprite, up)
   if sprite.showing ~= up then
     sprite.showing = up
-    sprite.picture:SetTexture(private.Cards.Texture(up and sprite.id or ""))
+    private.Cards.Paint(sprite.picture, up and sprite.id or "")
   end
 end
 

@@ -1,0 +1,10 @@
+<Ui xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\FrameXML\UI.xsd">
+  <!-- The parts of the options page what things look like is chosen on, each as tall as the rows of
+       pictures in it, see addPicker in GUI/Options.lua -->
+  <Frame name="ForeverGamesCardBackTemplate" mixin="ForeverGamesPickerMixin" virtual="true">
+    <Size x="320" y="134"/>
+  </Frame>
+  <Frame name="ForeverGamesTableTemplate" mixin="ForeverGamesPickerMixin" virtual="true">
+    <Size x="320" y="106"/>
+  </Frame>
+</Ui>

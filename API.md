@@ -515,6 +515,7 @@ an addon written for the version before.
 | `Effects` | Glows, bursts and other short effects |
 | `Board`, `Heaps`, `SlideGrid`, `NumberGrid`, `Tiles` | Boards and pieces |
 | `Cards`, `CardTable` | Cards and a table to play them on |
+| `Felt` | The cloth a table is covered with, in the colour the player chose |
 | `Dice` | Dice that are thrown across the table |
 | `Viewport`, `Drag` | Zooming, panning and dragging |
 | `Canvas` | Drawing lines, for Sketch |
@@ -532,6 +533,14 @@ aren't in `ForeverGamesAPI`. A game shouldn't need them.
 - Keep your own things in the table the client passes your addon (`local ADDON, own = ...`), not
   in `ForeverGamesAPI` or in globals. Writing to `ForeverGamesAPI` is an error.
 - In the rules, use only `random` for chance, and never the clock.
+- The player chooses in the options what card backs, the felt of a table and dice look like, and
+  what is on screen changes as soon as they do. Let your game go along with it:
+  - Draw a card you put on a texture of your own with `Cards.Paint(texture, card)`, not by
+    setting `Cards.Texture(card)` on it.
+  - Cover a table with `Felt.Paint(texture, own)`, `own` being your colour for it (red, green,
+    blue and how opaque). It is used unless the player chose one colour for every table.
+  - Leave out `color` from a roll of `Dice` unless the colour tells players apart, as
+    Backgammon's do. Dice with no colour of their own are the one the player chose.
 - Raise `version` whenever the rules or the format of a move change.
 - Put every string the players read in the locale, under keys that start with your game's id.
 - Give the game an `id` no other game uses.

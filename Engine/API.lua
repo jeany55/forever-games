@@ -26,7 +26,7 @@ for _, name in ipairs({
   "Games", "Rooms", "Codec", "Random", "Tables", "Grid", "Deck", "Phases", "Computer", "Race", "Lexicon",
   "SectorMap", "Actors", "Course", "Places",
   -- The view side (GUI/): widgets, and what boards, cards and maps are drawn with
-  "Widgets", "Lettering", "Effects", "Dice", "SlideGrid", "NumberGrid", "Board", "Heaps", "Cards", "CardTable",
+  "Widgets", "Lettering", "Effects", "Dice", "SlideGrid", "NumberGrid", "Board", "Heaps", "Cards", "CardTable", "Felt",
   "Viewport", "Drag", "Tiles", "Canvas", "Strips", "SectorView", "PanoView", "MapOverlays", "MapView", "TerrainView",
   -- The locale, the log and the addon's icon
   "L", "Log", "ICON",

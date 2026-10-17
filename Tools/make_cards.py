@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws what a card table needs besides the cards themselves, and the icon of Solitaire.
+"""Draws what a card table needs besides the cards themselves, and the icons of Solitaire and FreeCell.
 
     python3 Tools/make_cards.py .
 
@@ -7,7 +7,8 @@ Writes Images/Cards/blank.tga, a card with nothing on it, Images/Cards/slot.tga,
 place a card can be put, and Images/Cards/again.tga, an arrow that goes round, for a deck that can
 be turned over and gone through again. All three are white for the table to tint: the blank card
 is the shadow under a card and the light on one. Images/Icons/solitaire.tga is three of the cards
-convert_kenney.py made, laid on each other in the order a column of them is built.
+convert_kenney.py made, laid on each other in the order a column of them is built, and
+Images/Icons/freecell.tga the four aces fanned out on a darker felt.
 
 The blank card and the outline are drawn at the shape of a card and stretched to the texture the
 way the cards are.
@@ -28,6 +29,8 @@ SAMPLES = 4
 WHITE = (255, 255, 255)
 ICON_CARDS = ("KS", "QH", "JS")
 ICON_BACKGROUND = (28, 34, 52, 255)
+FREECELL_CARDS = ("AS", "AH", "AC", "AD")
+FREECELL_BACKGROUND = (13, 51, 56, 255)
 
 
 def read_tga(path):
@@ -102,6 +105,19 @@ def icon(cards):
     return rows
 
 
+def fan(cards):
+    """Cards side by side, each covering most of the one before it, rising to the middle."""
+    width, height = 30, 41
+    rows = [[FREECELL_BACKGROUND] * SMALL[0] for _ in range(SMALL[1])]
+    for index, card in enumerate(cards):
+        left, top = 3 + index * 9, 14 - min(index, len(cards) - 1 - index) * 4
+        for y, row in enumerate(resize(resize(card, CARD), (width, height))):
+            for x, (r, g, b, a) in enumerate(row):
+                under = rows[top + y][left + x]
+                rows[top + y][left + x] = tuple((c * a + u * (255 - a)) // 255 for c, u in zip((r, g, b), under)) + (255,)
+    return rows
+
+
 def main(target, preview=None):
     images = Path(target) / "Images"
     preview = Path(preview) if preview else None
@@ -110,7 +126,9 @@ def main(target, preview=None):
     write(images / "Cards" / "again.tga", shape(SMALL, again), preview)
     cards = [read_tga(images / "Cards" / f"{card}.tga") for card in ICON_CARDS]
     write(images / "Icons" / "solitaire.tga", icon(cards), preview)
-    print("wrote a blank card, a slot, an arrow and an icon")
+    aces = [read_tga(images / "Cards" / f"{card}.tga") for card in FREECELL_CARDS]
+    write(images / "Icons" / "freecell.tga", fan(aces), preview)
+    print("wrote a blank card, a slot, an arrow and two icons")
 
 
 if __name__ == "__main__":

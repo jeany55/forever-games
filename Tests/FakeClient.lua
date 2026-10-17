@@ -201,6 +201,19 @@ function methods:SetEnabled(enabled)
   self.enabled = enabled
 end
 
+function methods:IsObjectType(kind)
+  return self.kind == kind
+end
+
+-- A texture filled with a colour, and a panel's backdrop, remember it
+function methods:SetColorTexture(red, green, blue, alpha)
+  self.texture, self.fill = nil, { red, green, blue, alpha or 1 }
+end
+
+function methods:SetBackdropColor(red, green, blue, alpha)
+  self.fill = { red, green, blue, alpha or 1 }
+end
+
 function methods:SetVertexColor(red, green, blue, alpha)
   self.color = { red, green, blue, alpha or 1 }
 end

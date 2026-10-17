@@ -421,7 +421,7 @@ local function createView(stage)
 
   local felt = stage:CreateTexture(nil, "BACKGROUND")
   felt:SetAllPoints()
-  felt:SetColorTexture(unpack(FELT))
+  private.Felt.Paint(felt, FELT)
 
   self.hand = Cards.Hand(stage)
   self.hand.frame:SetPoint("BOTTOM")

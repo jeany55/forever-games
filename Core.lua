@@ -57,6 +57,12 @@ local defaults = {
     -- Whether a wisp drifts around the logo on the window's front page, its letters shine and the
     -- light behind it drifts
     wisp = true,
+    -- The back the cards are seen from, a design and a colour of the ones in GUI/Cards.lua
+    cardBack = "suits_blue",
+    -- What every table is covered with, "own" for the felt each game has of its own, and the
+    -- colour of the dice that stand for nobody in particular (GUI/Felt.lua, GUI/Dice.lua)
+    feltColour = "own",
+    diceColour = "white",
     -- The scale is in hundredths of the window's usual size
     window = { width = 920, height = 680, scale = 100 },
     -- Ids of the games the player starred in the new game wizard

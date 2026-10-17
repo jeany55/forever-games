@@ -256,7 +256,11 @@ and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everythin
 (`GUI/NumberGrid.lua`). It makes its own puzzles, which takes a solver that has to be quick: a
 game is put together again from its moves every time it is loaded, so `newState` runs often.
 `Games/Fourtiles.lua` is played alone or by two together, with no turns (`together`), and has
-its puzzles made ahead of time by a tool.
+its puzzles made ahead of time by a tool. `Games/Wordle.lua` hides a word picked by its place in a
+list (`Lexicon.Size`, `Lexicon.At`), is raced on its guesses and then its time (`raceFor` as a
+function of the rules), and sends the colours of each guess along as a ghost of marks.
+`Games/FreeCell.lua` is a second game on the card table, dealt the way Microsoft's game dealt each
+of its numbered deals, with cards that go home by themselves in what a move returns (`auto`).
 `Games/Wormcraft.lua` has physics: a move is everything a player did in a turn, tick by tick,
 and every client plays it out again in whole numbers only, so that every grenade bounces the
 same everywhere. Its view plays out again whichever turn of somebody else's it is handed, to
@@ -282,7 +286,9 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
 Tetris's squares, its icon and its sounds are made by `Tools/make_blockfall.py`.
-The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`.
+The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`. The words
+Wordle hides and its icon are made by `Tools/make_wordle.py`, and it is played on the tiles of
+Fourtiles. FreeCell's icon is drawn by `Tools/make_cards.py` with Solitaire's.
 The letters on the tiles of Fourtiles and Words are drawn from Lexend by `Tools/make_lettering.py`:
 the client won't write in a font an addon brings, so they are pictures.
 The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and

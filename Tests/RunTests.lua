@@ -7,7 +7,7 @@
 local ADDON_NAME = "ForeverGames"
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Felt.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 -- A fresh copy of the engine, and the plugins loaded into it with the files their English may be
@@ -52,12 +52,15 @@ local ENGINE_FILES = {
   "Lexicon/Warcraft.lua",
   "Games/Words.lua",
   "Games/Solitaire.lua",
+  "Games/FreeCell.lua",
   "Games/Minesweeper.lua",
   "Games/2048.lua",
   "Games/Blockfall.lua",
   "Games/Sudoku.lua",
   "Lexicon/Fourtiles.lua",
   "Games/Fourtiles.lua",
+  "Lexicon/Wordle.lua",
+  "Games/Wordle.lua",
   "Games/Warcraftstein.lua",
   "Engine/SectorMap.lua",
   "Engine/Actors.lua",
@@ -2362,12 +2365,12 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("tictactoe,connectfour,nim", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
-  equal("crazyeights,solitaire", idsOf(Games.Search(nil, "cards")), "a game for one goes with the others like it")
+  equal("crazyeights,solitaire,freecell", idsOf(Games.Search(nil, "cards")), "a game for one goes with the others like it")
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
   -- The games of plugins come after Forever Games' own: Freedoom, Where in Azeroth, and Pig of Examples/
-  local alone = "yacht,solitaire,minesweeper,2048,blockfall,sudoku,fourtiles,warcraftstein,freedoom,where"
+  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -8051,7 +8054,7 @@ end
 
 --- A card table on its own, with cards of 40 by 60 and three piles: a column that fans out
 --- downwards, a pile next to it and one further along
---- @return table felt, table frame, string[] log What the player did, as the table told the game
+--- @return table felt, table frame, string[] log What the player did, as the table told the game, table private
 local function tableOnItsOwn()
   Client.Install()
   ForeverGames = { db = { profile = { sound = true } } }
@@ -8075,7 +8078,7 @@ local function tableOnItsOwn()
   felt.onRightClick = function(pile, index)
     log[#log + 1] = "right " .. pile .. " " .. tostring(index)
   end
-  return felt, felt.frame, log
+  return felt, felt.frame, log, private
 end
 
 --- Moves the cursor to a point of a card table, measured from its top left corner
@@ -8127,7 +8130,7 @@ function tests.CardTableLaysCardsOutInPiles()
   equal("30,55", two.x .. "," .. two.y)
   equal("30,85", three.x .. "," .. three.y)
   equal("130,40", king.x .. "," .. king.y)
-  assert(ace.picture.texture:find("back$"), "face down is seen from the back")
+  assert(ace.picture.texture:find("Backs\\suits_blue$"), "face down is seen from the back")
   assert(two.picture.texture:find("2H$"))
   equal(40, two.width)
   equal(60, two.height)
@@ -8143,6 +8146,221 @@ function tests.CardTableLaysCardsOutInPiles()
   equal(false, king:IsShown())
   felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 1 }, pile = { cards = { "KD" } } })
   equal(true, felt.sprites.KD:IsShown())
+end
+
+function tests.CardsHaveTheBackThePlayerChose()
+  local felt, frame, _, private = tableOnItsOwn()
+  felt:Set({ column = { cards = { "AS", "2H" }, down = 1 } })
+  local ace, two = felt.sprites.AS, felt.sprites["2H"]
+
+  -- Chosen while the cards are on the table, it goes onto every one face down there and then
+  private.Cards.SetBack("lattice_pink")
+  equal("lattice_pink", ForeverGames.db.profile.cardBack)
+  assert(ace.picture.texture:find("Backs\\lattice_pink$"), "face down shows the new back")
+  assert(two.picture.texture:find("2H$"), "face up is left alone")
+
+  -- A hand, and a card in flight, show it too
+  local hand = private.Cards.Hand(frame)
+  hand:Set({ "?", "QH" })
+  assert(hand.cards[1].face.texture:find("lattice_pink$"))
+  private.Cards.SetBack("sunburst_black")
+  assert(hand.cards[1].face.texture:find("sunburst_black$"))
+  assert(hand.cards[2].face.texture:find("QH$"))
+
+  -- A back that isn't one any more is the usual one, and so is none at all
+  ForeverGames.db.profile.cardBack = "tartan_gold"
+  equal("suits_blue", private.Cards.Back())
+  ForeverGames.db.profile.cardBack = nil
+  equal("suits_blue", private.Cards.Back())
+  equal(false, private.Cards.IsBack("tartan_gold"))
+end
+
+function tests.EveryCardBackHasAPicture()
+  local private = {}
+  ForeverGames = { db = { profile = {} } }
+  assert(loadfile("GUI/Cards.lua"))(ADDON_NAME, private)
+  local Cards = private.Cards
+  local count = 0
+  for _, design in ipairs(Cards.BACK_DESIGNS) do
+    for _, colour in ipairs(Cards.BACK_COLOURS) do
+      local back = design .. "_" .. colour
+      equal(true, Cards.IsBack(back))
+      local file = io.open("Images/Cards/Backs/" .. back .. ".tga", "rb")
+      assert(file, back .. " has no picture")
+      file:close()
+      count = count + 1
+    end
+  end
+  equal(true, Cards.IsBack(Cards.BACK), "the usual back is one of them")
+  equal(count, #Cards.BACK_DESIGNS * #Cards.BACK_COLOURS)
+end
+
+function tests.OptionsPickHowCardsFeltAndDiceLook()
+  --- The game's settings window, as much of it as the options page uses: what is put on the page
+  --- is kept in order, and a setting is the two functions it was given
+  --- @return table[] initializers
+  local function fakeSettings()
+    local initializers = {}
+    local function initializer(kind, data)
+      return {
+        kind = kind,
+        data = data,
+        GetData = function(self)
+          return self.data
+        end,
+      }
+    end
+    Settings = {
+      RegisterVerticalLayoutCategory = function()
+        return { GetID = function() end }, {
+          AddInitializer = function(_, added)
+            initializers[#initializers + 1] = added
+          end,
+        }
+      end,
+      RegisterProxySetting = function(_, _, _, _, default, get, set)
+        return {
+          default = default,
+          GetValue = function()
+            return get()
+          end,
+          SetValue = function(_, value)
+            set(value)
+          end,
+        }
+      end,
+      CreateCheckbox = function() end,
+      CreateDropdown = function() end,
+      CreateSliderOptions = function()
+        return { SetLabelFormatter = function() end }
+      end,
+      CreateSlider = function() end,
+      CreateElementInitializer = initializer,
+      RegisterAddOnCategory = function() end,
+    }
+    MinimalSliderWithSteppersMixin = { Label = {} }
+    CreateSettingsListSectionHeaderInitializer = function(title)
+      return initializer("section", { name = title })
+    end
+    CreateSettingsButtonInitializer = function()
+      return initializer("button")
+    end
+    return initializers
+  end
+
+  local felt, frame, _, private = tableOnItsOwn()
+  private.L = setmetatable({}, {
+    __index = function(_, key)
+      return key
+    end,
+  })
+  private.MainFrame, private.Toast = {}, {}
+  for _, file in ipairs({ "GUI/Felt.lua", "GUI/Dice.lua" }) do
+    assert(loadfile(file))(ADDON_NAME, private)
+  end
+  ForeverGames.db.defaults = { profile = {
+    toasts = true, alert = true, combat = false, quiet = false, sound = true, challenges = "anyone", wisp = true,
+    window = { scale = 100 }, cardBack = "suits_blue", feltColour = "own", diceColour = "white",
+  } }
+  ForeverGames.db.profile.window = { scale = 100 }
+  local initializers = fakeSettings()
+  assert(loadfile("GUI/Options.lua"))(ADDON_NAME, private)
+  private.Options.Init()
+
+  -- The backs, and the felt and dice, each have a section of the page to themselves with a
+  -- picker of the addon's own in it
+  local pickers = {}
+  for index, each in ipairs(initializers) do
+    if each.kind:find("^ForeverGames") then
+      pickers[each.kind] = each
+      pickers[#pickers + 1] = initializers[index - 1].data.name
+    end
+  end
+  equal("options_cards,options_table", table.concat(pickers, ","))
+  local backs, looks = pickers.ForeverGamesCardBackTemplate, pickers.ForeverGamesTableTemplate
+  equal(134, backs:GetExtent(), "as tall as GUI/Options.xml has it")
+  equal(106, looks:GetExtent(), "as tall as GUI/Options.xml has it")
+  -- No row reaches past the width GUI/Options.xml gives it, into the window's scroll bar
+  for _, each in ipairs({ backs, looks }) do
+    for _, row in ipairs(each:GetData().rows) do
+      assert(#row.choices * (row.width + 6) - 6 <= 320, row.label .. " is too wide for the page")
+    end
+  end
+
+  --- A picker as the settings window makes it from its template and has it show itself
+  local function made(initializer)
+    local row = CreateFrame("Frame", nil, UIParent)
+    for name, method in pairs(ForeverGamesPickerMixin) do
+      row[name] = method
+    end
+    row:Init(initializer)
+    return row
+  end
+  local picker, tableLooks = made(backs), made(looks)
+  local designs, colours = picker.buttons[1], picker.buttons[2]
+  equal(5, #designs)
+  equal(6, #colours)
+  assert(designs[4].picture.texture:find("lattice_blue$"), "each design in the colour chosen")
+  assert(colours[5].picture.texture:find("suits_pink$"), "the design chosen in each colour")
+  equal(true, designs[1].chosen:IsShown())
+  equal(false, designs[2].chosen:IsShown())
+  equal("options_cardBack_lattice", designs[4].name)
+  equal("options_colour_pink", colours[5].name)
+
+  -- A face down card on the table turns pink as pink is clicked, and the row shows it chosen
+  felt:Set({ column = { cards = { "AS", "2H" }, down = 1 } })
+  colours[5]:Fire("OnClick")
+  equal("suits_pink", ForeverGames.db.profile.cardBack)
+  assert(felt.sprites.AS.picture.texture:find("suits_pink$"))
+  assert(designs[4].picture.texture:find("lattice_pink$"))
+  equal(true, colours[5].chosen:IsShown())
+  equal(false, colours[1].chosen:IsShown())
+
+  -- A design keeps the colour, and the card lying on the felt swatches is the new back
+  designs[5]:Fire("OnClick")
+  equal("sunburst_pink", ForeverGames.db.profile.cardBack)
+  assert(felt.sprites.AS.picture.texture:find("sunburst_pink$"))
+  equal(true, designs[5].chosen:IsShown())
+  local felts, dice = tableLooks.buttons[1], tableLooks.buttons[2]
+  assert(felts[3].card.texture:find("sunburst_pink$"), "the other picker is shown it too")
+
+  -- Felt: each game's own to begin with, half the one colour and half the other
+  equal(7, #felts)
+  equal(true, felts[1].chosen:IsShown())
+  equal(true, felts[1].half:IsShown())
+  equal(false, felts[2].half:IsShown())
+  equal("options_feltColour_own", felts[1].name)
+  local cloth = frame:CreateTexture()
+  private.Felt.Paint(cloth, { 0.06, 0.24, 0.15, 0.85 })
+  equal("0.06,0.24,0.15,0.85", table.concat(cloth.fill, ","))
+  felts[6]:Fire("OnClick")
+  equal("purple", ForeverGames.db.profile.feltColour)
+  equal("0.17,0.08,0.26,0.85", table.concat(cloth.fill, ","), "the colour chosen, as see-through as the game has it")
+  equal(true, felts[6].chosen:IsShown())
+  equal(false, felts[1].chosen:IsShown())
+
+  -- Dice: white to begin with
+  equal(7, #dice)
+  assert(dice[3].picture.texture:find("Dice\\blue5$"))
+  equal(true, dice[1].chosen:IsShown())
+  dice[6]:Fire("OnClick")
+  equal("pink", ForeverGames.db.profile.diceColour)
+  equal("pink", private.Dice.Colour())
+  equal(true, dice[6].chosen:IsShown())
+
+  -- The window's Defaults button puts the usual looks on everything again
+  for _, each in ipairs({ backs, looks }) do
+    for _, row in ipairs(each:GetData().rows) do
+      row.setting:SetValue(row.setting.default)
+    end
+  end
+  assert(felt.sprites.AS.picture.texture:find("suits_blue$"))
+  equal(true, designs[1].chosen:IsShown())
+  equal(true, colours[1].chosen:IsShown())
+  equal("0.06,0.24,0.15,0.85", table.concat(cloth.fill, ","))
+  equal(true, felts[1].chosen:IsShown())
+  equal(true, dice[1].chosen:IsShown())
+  Settings = nil
 end
 
 function tests.CardTableKeepsALongPileWithinItsRoom()
@@ -8182,7 +8400,7 @@ function tests.CardTableShowsWhatChanged()
   equal(true, felt:Busy())
   equal(sounds + 1, #Client.sounds)
   equal("cardPlace", Client.sounds[#Client.sounds])
-  assert(two.picture.texture:find("back$"), "not turned over yet")
+  assert(two.picture.texture:find("suits_blue$"), "not turned over yet")
 
   frame:Fire("OnUpdate", 0.06)
   assert(three.x > 30 and three.x < 130, "the three is on its way, at " .. three.x)
@@ -8203,14 +8421,14 @@ function tests.CardTableShowsWhatChanged()
   assert(narrowest < 10, "the two was seen edge on as it turned, got as narrow as " .. narrowest)
   equal(40, two.width)
   assert(two.picture.texture:find("2H$"))
-  assert(ace.picture.texture:find("back$"))
+  assert(ace.picture.texture:find("suits_blue$"))
 
   -- A move taken back is the same thing the other way round
   felt:Set({ column = { cards = { "AS", "2H", "3C" }, down = 2 } })
   equal(true, felt:Busy())
   passTime(frame, 1)
   equal("30,70", three.x .. "," .. three.y)
-  assert(two.picture.texture:find("back$"))
+  assert(two.picture.texture:find("suits_blue$"))
 
   -- All at once when that is what is wanted
   felt:Set(position, { instant = true })
@@ -8244,7 +8462,7 @@ function tests.CardTableSendsCardsOffOneAfterTheOther()
   passTime(frame, 1)
   equal(false, felt:Busy())
   assert(felt.sprites["2S"].picture.texture:find("2S$"), "the last one turned over on the way")
-  assert(felt.sprites["3S"].picture.texture:find("back$"))
+  assert(felt.sprites["3S"].picture.texture:find("suits_blue$"))
 
   -- Stopped, everything is where it belongs
   felt:Set({ pile = { cards = { "AS", "2S", "3S", "4S" }, down = 4 } }, { sequence = { "2S", "3S", "4S" } })
@@ -10624,6 +10842,56 @@ local function playOnScreen(state, move)
   end
 end
 
+function tests.WindowPlaysFreeCell()
+  local world = World.New()
+  world.seed = 1
+  local player = world:AddPlayer("Alice-Realm")
+  local MainFrame = openWindow(player)
+  local match = assert(player.session:Invite({}, "freecell"))
+  MainFrame.Open(match.id)
+  local id, Match = match.id, player.private.Match
+  local felt, frame = shownTable()
+  equal(true, says("freecell_tally"))
+  equal(true, says("freecell_progress"))
+  equal(true, felt:Busy(), "dealt out a card at a time")
+  passTime(frame, 4)
+  equal(false, felt:Busy())
+
+  -- Eight columns, every card face up
+  local state = Match.State(match)
+  for column = 1, 8 do
+    for index, card in ipairs(state.columns[column]) do
+      local sprite = felt.sprites[card]
+      equal(felt.piles[tostring(column)].spots[index].x, sprite.x)
+      equal(felt.piles[tostring(column)].spots[index].y, sprite.y)
+      assert(sprite.picture.texture:find(card .. "$"), card .. " lies face down")
+      assert(sprite.y + sprite.height / 2 <= frame.height, "on the table")
+    end
+  end
+  equal(false, Client.Button("undo").enabled, "nothing to take back yet")
+
+  -- Dragged into a free cell
+  local top = state.columns[2][#state.columns[2]]
+  dragCard(top, "b")
+  equal("2b", logOf(player, id))
+  passTime(frame, 1)
+  equal(felt.piles.b.spots[1].x, felt.sprites[top].x)
+  equal(top, Match.State(match).cells[2])
+
+  -- Clicked, a card goes somewhere: home, onto a column, or into the first free cell
+  clickPile("1")
+  equal(2, #match.log)
+  equal("1", match.log[2]:sub(1, 1))
+  equal(2, Match.State(match).moves)
+
+  -- And Undo takes it back
+  equal(true, Client.Button("undo").enabled)
+  Client.Button("undo"):Fire("OnClick")
+  equal("2b", logOf(player, id))
+  passTime(frame, 1)
+  MainFrame.Refresh()
+end
+
 function tests.WindowDealsSolitaireOut()
   local player, id = solitaireOnScreen()
   local state = player.private.Match.State(player.matches[id])
@@ -10667,14 +10935,14 @@ function tests.WindowDealsSolitaireOut()
       local sprite = felt.sprites[card]
       equal(felt.piles[tostring(column)].spots[index].x, sprite.x)
       assert(sprite.x + sprite.width / 2 <= frame.width and sprite.y + sprite.height / 2 <= frame.height, "on the table")
-      assert(sprite.picture.texture:find((index == #cards and card or "back") .. "$"), card .. " lies the wrong way up")
+      assert(sprite.picture.texture:find((index == #cards and card or "suits_blue") .. "$"), card .. " lies the wrong way up")
     end
     if column > 1 then
       assert(felt.sprites[cards[1]].x >= felt.sprites[state.columns[column - 1].cards[1]].x + felt.cardWidth, "columns don't overlap")
     end
   end
   for _, card in ipairs(state.stock) do
-    assert(felt.sprites[card].picture.texture:find("back$"))
+    assert(felt.sprites[card].picture.texture:find("suits_blue$"))
   end
 
   -- Once is enough: looking at the game again doesn't deal it again
@@ -10705,7 +10973,7 @@ function tests.WindowPlaysSolitaire()
   equal("", logOf(player, id))
   passTime(frame, 1)
   equal(felt.piles.s.spots[24].x, felt.sprites[top].x)
-  assert(felt.sprites[top].picture.texture:find("back$"))
+  assert(felt.sprites[top].picture.texture:find("suits_blue$"))
   equal(false, Client.Button("undo").enabled)
 
   -- A card that has nowhere to go isn't moved by clicking it, and neither is one face down
@@ -12834,6 +13102,40 @@ function tests.DiceAreThrownAndComeToRest()
   dice:Hide()
   equal(false, dice:Holding())
   equal("0,0,0,0", shown())
+end
+
+function tests.DiceAreTheColourThePlayerChose()
+  local private = loadWidgets({ "GUI/Widgets.lua", "GUI/Dice.lua" })
+  local Dice = private.Dice
+  local function rolledOn(color)
+    local surface = CreateFrame("Frame", nil, UIParent)
+    surface:SetSize(400, 300)
+    local dice = Dice.New(surface)
+    dice:Show({ key = 1, faces = { 3, 5 }, color = color, x = 200, y = 150, from = { x = 350, y = 150 }, size = 40 })
+    return dice
+  end
+  -- Dice that stand for nobody are the player's colour, the usual one until they choose
+  local plain, red = rolledOn(nil), rolledOn("red")
+  assert(plain.dice[2].face.texture:find("Dice\\white5$"))
+  assert(red.dice[2].face.texture:find("Dice\\red5$"))
+
+  -- Chosen with dice on the table, they turn to it there and then. A player's own dice don't
+  Dice.SetColour("purple")
+  equal("purple", ForeverGames.db.profile.diceColour)
+  assert(plain.dice[1].face.texture:find("Dice\\purple3$"))
+  assert(plain.dice[2].face.texture:find("Dice\\purple5$"))
+  assert(red.dice[2].face.texture:find("Dice\\red5$"))
+
+  -- A colour there are no dice of is the usual one
+  ForeverGames.db.profile.diceColour = "tartan"
+  equal("white", Dice.Colour())
+  for _, colour in ipairs(Dice.COLOURS) do
+    for face = 1, 6 do
+      local file = io.open("Images/Dice/" .. colour .. face .. ".tga", "rb")
+      assert(file, colour .. face .. " has no picture")
+      file:close()
+    end
+  end
 end
 
 function tests.BoardTellsARightClickOnASquareAndColoursWhatItWrites()
@@ -23185,6 +23487,10 @@ end
 dofile("Tests/EveryGame.lua")(tests, loadEngine, PLUGINS.english)
 -- Where in Azeroth, and the places, races and views it is built on
 dofile("Tests/Where.lua")(tests, loadEngine)
+-- FreeCell and Microsoft's deals
+dofile("Tests/FreeCell.lua")(tests, loadEngine)
+-- Wordle, its words, and the game in the window
+dofile("Tests/Wordle.lua")(tests, loadEngine, { World = World, Client = Client, openWindow = openWindow })
 -- A plugin's own tests, in Tests.lua in its folder: a function that is handed the tests to add
 -- to, the engine to load (with every plugin in it), and what the tests here are written with
 for _, plugin in ipairs(PLUGINS) do
