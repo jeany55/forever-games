@@ -1,545 +1,531 @@
-# Forever Games
+<p align="center">
+  <img src=".github/readme/logo.png" alt="Forever Games" width="480">
+</p>
 
-A World of Warcraft Forever addon for playing classic games against your friends and guildies, at
-your own pace. Make a move, go pull a boss, come back later. Or against the computer, whenever
-nobody is around.
+<p align="center">
+  <a href="https://github.com/jeany55/forever-games/releases/latest"><img src="https://img.shields.io/github/v/release/jeany55/forever-games?label=download&color=c8a24a" alt="Latest release"></a>
+  <a href="https://github.com/jeany55/forever-games/releases"><img src="https://img.shields.io/github/downloads/jeany55/forever-games/total?color=c8a24a" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-1f6feb" alt="For World of Warcraft Forever">
+  <a href="https://github.com/jeany55/forever-games/actions/workflows/tests.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/jeany55/forever-games/actions/workflows/release.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/jeany55/forever-games" alt="MIT licence"></a>
+</p>
 
-Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
-Chinese Checkers, which is for up to six, and Crazy Eights, which is too. Wormcraft, artillery for
-up to four the way Worms played it. And Solitaire, Minesweeper
-Sudoku, 2048, Tetris, Warcraftstein 3D and Freedoom, for when nobody is around. And Fourtiles, a word puzzle to
-solve on your own or the two of you together, both at once.
+<p align="center">
+  <b>Chess, cards, dice, puzzles and more, inside World of Warcraft.</b><br>
+  Play your guildies and friends one move at a time, or play on your own.
+</p>
 
-## Usage
+---
 
-- `/fg` (or the minimap button) opens the window. The top shows how many guildies and friends are
-  online with the addon, checked at login, when the window opens and when you press Refresh
-- **New Game** walks you through picking a game and an opponent. Type in the search box, or pick
-  a kind of game or how many are playing, to narrow the list down. Click the star on a game to
-  keep it at the top, the rest are listed by name. The list scrolls with the mouse wheel and
-  fits as many games next to each other as the window has room for
-- The second step is who to play, and how. Whoever you played last is at the top, online or not,
-  then your guildies and friends who are online with the addon. Type to narrow the list down, or
-  type the name of anyone else. Next to it is what the game lets you change about its rules: what
-  the bonuses in Words with Warcraft are worth, whether taking is compulsory in Checkers, which
-  side you play. Whoever you challenge sees what you changed before they accept, and the next
-  game of that kind starts out set the same way
-- Who plays is a table across the top: a card for your seat, one for each player picked, and the
-  seats still open. Click players in the list, or type a name and press Enter, and they sit in
-  the next open seat; a full table grows for them as far as the game goes. **Seats** sets how
-  many there are, among the numbers the game is for, and × on a seat leaves it open again. A
-  game for more than two begins once everyone has accepted, and it is off if one of them
-  declines. Whoever resigns leaves the others to play on
-- Every game for two or more can be played against the computer, which the game's card shows
-  with a cog: **+ Computer** on an open seat sits it there. Click how well it plays on the seat
-  for another difficulty: **Easy** doesn't look far ahead and makes mistakes, **Medium** thinks
-  a few moves ahead and seldom slips, **Hard** looks as far ahead as it can and never slips, and
-  each seat has its own. Pointing at it shows how your games against it went. A table of you and
-  the computer begins at once,
-  nothing about it is sent anywhere, and it waits for you: the computer only thinks while the
-  game is on screen, and takes a moment over its move so you see it made. **Take Back** takes
-  back your last move and the computer's answer to it, in the games where that gives nothing
-  away (not where cards or a hidden fleet were turned up, nor where the dice were rolled for
-  it). **Offer Draw** works too: it takes the draw when it is no better off playing on.
-  **Play Again** sets the same game up again, the other way round. The next game of that kind
-  starts out against the computer again, set the same way, and so does `/fg play <game>`
-- In a game for more than two the computer can sit at the table with the people you pick, in
-  the seats they leave open. A player picked when the table is as big as it goes takes a seat
-  of the computer's. It is a challenge like any other, and the others are told which seats are the computer's. Your client
-  plays them, whether or not the window is open (not in the middle of a fight), and sends its
-  moves to the others like your own, so they wait on you being online. If you resign, the next
-  person still in the game takes the computer over. Once every person has left, the game is
-  over. Players on an earlier version are told the challenge is from another version
-- The games you play alone have a challenge every day, which their card shows with a pocket
-  watch: click it for **Today's Challenge**. Everyone in your guild who plays it that day gets
-  the same game: the same deal of Solitaire, the same field of mines (a middling one), the same
-  Sudoku, the same tiles turning up in 2048, the same pieces in two minutes of Tetris, the same Fourtiles and the same monastery to find
-  the way out of. You get one go a day, played to the end with nothing taken back, and the
-  **Guild Board** beside it shows how everyone did: the best score, or the quickest time, first.
-  What you made of it goes round the guild when you finish, and opening a challenge asks the
-  guild how they did. A new one is dealt at midnight UTC. `/fg daily <game>` goes straight to it
-- The games you play alone against the clock (Minesweeper, Sudoku, Tetris, Warcraftstein 3D and
-  Freedoom) can be raced: pick somebody on the second step, as you would for any game, and
-  **Challenge to a Race**. You each get the same deal, set up the way you chose: the same field
-  of mines, the same puzzle, the same monastery or map. You start at once and they start when
-  they take it up, each playing on your own whenever you like, online together or not. Nothing
-  is taken back, and **Give Up** counts as not finishing. When a run is over its time goes to
-  the other, and the quicker one wins: a run that didn't finish (a mine, a death, a Sudoku with
-  a hint in it) loses to any that did. The race shows both times beside the game, the one to
-  beat while you play, and who won once both are in. **Race Again** deals another. Pick nobody
-  and the game is yours alone, as ever. In Freedoom, where every map is the same for everyone,
-  you can send your best instead of playing again: **Send My Best** beside the challenge sends
-  the run that set your best time on that map and skill, its time and its ghost, for them to race
-- A game that can be played alone or together, like Fourtiles, is played alone if you pick
-  nobody: **Play Alone**. Played together it has no turns. Both of you play whenever you like,
-  online together or not, and what each of you did is put together when you next meet
-- A game for two doesn't need anyone picked: **Link in Chat** puts `[Forever Games: Chess]` where
-  you type, to send to your party, your guild or anyone else. Everyone with the addon sees it
-  as a link, and the first to click it plays you, by the rules you set. The game stays open for
-  an hour
-- The games that are played in a room by whoever turns up are in the list with the rest, under
-  **Party**. Picking one asks who the room is for, the way any game asks who you play: your
-  guild, the group you are in, or nobody but the players you invite. How the game is played is
-  set next to that, and under it are the rooms others have open, to join instead. Everyone on
-  the room's channel with the addon is told, and can come and go while it lasts
-- In a room, its host can invite a player by name, or put a link to the room in chat: whoever
-  clicks it comes in, in the guild or not. A few players from outside the guild or group can be
-  in a room at once. **Make Small** puts the game in a small window of its own for a corner of
-  the screen while you do something else, and it comes back whole when it is your turn. The
-  room is gone when its host leaves, and nothing of it is kept
-- **Sketch** is the first of them: one of you is given three things to pick from and draws one,
-  everyone else types what they think it is. The sooner you get it the more it is worth, and
-  whoever drew gets something for everyone who did
-- **Trivia** is a quiz the way Kahoot plays one, for a raid while it waits. The host asks and
-  everyone gets the same question at once, with two to four answers marked by raid icons. Click
-  one, or press 1 to 4 with the cursor over the game. A right answer is worth up to 1000, less
-  the longer you took, and a little more for every right answer in a row before it. Once the time
-  is up, or everyone answered, the right one lights up with how many picked each. Which questions
-  (General, Warcraft from the Third War to the Lich King, or both), how many and how long you
-  have for each are set when the room is opened. The quiz stops whenever the host goes into
-  combat, and the question that was up counts for nothing; it goes on by itself a few seconds
-  after the fight, and the host can **Pause** and **Go On** by hand too. Made small, its window
-  hides while you fight. The host doesn't ask what it asked lately, from one night to the next
-- A game for one has nobody to pick and begins as soon as you choose it, or with `/fg play`
-  (which plays a game for more against the computer).
-  One with something to set up, like how hard Minesweeper is, asks for that first, and
-  `/fg play` goes by what you said last.
-  It waits for as long as you like, **Undo** takes back a move, and as many more as you press
-  it for, **Start Another** swaps it for a new one and **Give Up** takes it off your list
-- Come back to a game the others moved on in while you were away, and you see what they did
-  before the game as it stands: each of their moves made on the board in turn, the dice thrown
-  and the turns played out, wherever you left off, after a /reload too. **Skip** or Space goes
-  straight to the game as it stands, and looking back through the game is up to you from then
-- Drag the corner of the window to make it any size, the board grows with it. **Focus** hides
-  everything but the game you are looking at
-- In chess, drag a piece or click it and then where it goes. Click a move in the list, use the
-  buttons under it or scroll the mouse wheel over the board to look back through the game.
-  **Offer Draw** goes out with your next move, and your opponent turns it down by playing on
-- In Connect Four, click anywhere in a column to drop a disc into it. In Reversi, click one of
-  the marked squares to place a disc
-- Checkers moves like chess: drag a piece or click it and then where it goes. When a piece can
-  take, the ones that have to are pointed out. A piece that can go on jumping stays in your hand
-  until it has: click each square in turn, or right click to take it back and choose again
-- In Chinese Checkers, click a marble and then one of the marked holes: every hole it can hop
-  its way to is marked, however many hops that takes. Your own corner of the star is at the
-  bottom, and the list next to the board says who plays which colour and whose turn it is
-- In Fourtiles, click one to four of the twenty tiles to spell a word and press **Enter**. A
-  word is worth 1, 2, 4 or 8 points by how many tiles it takes, and the five words the tiles
-  were cut from, the Fourtiles, are worth 40 more once you have them all. **Shuffle** lays the
-  tiles out another way. With the five found and the rank of Master reached, at 100 points,
-  **Call It Done** ends the game, and until then there are more words to find. The keys work
-  while the cursor is over the game: Enter, Backspace, and Space to shuffle
-- In Backgammon the dice are rolled for you. Click a checker and then where it goes, or drag it:
-  the points it can reach are marked, by one die or by both. Put your turn together a checker at
-  a time, **Undo** or a right click takes the last one back, and nothing is sent until you
-  press **Play**. A roll you can't play at all is skipped by itself
-- In Crazy Eights a new game is dealt out in front of you. The cards you can play stand out of
-  your hand, click one to play it. An eight
-  asks which suit comes next. Click the deck to draw instead, and if what you drew can be played
-  the choice is yours: play, or **Pass**. Everyone else's cards are turned over when the game ends
-- Battleship begins with your fleet laid out at random on your own sea. Click a ship to pick it
-  up and click the water to put it down again, a right click or **Rotate** turns it, **Random**
-  lays out another fleet, and nothing is sent until you press **Deploy**. You can arrange yours
-  while you wait for the other fleet. After that click a square of the other sea to fire at it:
-  you are told what the shot did right away, whether your opponent is around or not. The sea
-  you aren't playing on is shown small, click it for a closer look
-- Wormcraft is for up to four, each with a squad on an island. Against the computer you play one
-  to three squads of its own, Easy, Medium or Hard: Easy throws things more or less your way,
-  Hard hardly ever misses and walks to where it can hit you from. Once your squad is gone the
-  game is lost, whoever of the computer's is left. Everybody picks a class first,
-  and every class has one thing of its own: a warrior's Charge, a mage's Blink, a priest's
-  Prayer of Healing. Then you take turns: walk one of your squad about with the arrow keys or A
-  and D, aim with up and down or W and S, and hold space to wind up a shot, longer for more
-  power. Enter jumps and Backspace flips backwards. Pick what to fire under the island, or with
-  Q and E: fireballs blow with the wind, grenades bounce until their fuse (1 to 5) burns down,
-  and a blizzard or a kodo comes down wherever you click. After firing you have three seconds to
-  run. Your turn is ready as soon as it is yours, and the clock only starts once you move:
-  Tab picks somebody else of your squad before that. Everybody is a level higher every round
-  and learns more to fire, crates fall from a zeppelin between turns with something rarer in
-  them, and from a round you pick when you set the game up the sea rises. The turns the others
-  had since you last looked are played out again for you when you open the game, space skips
-  them. The mouse wheel zooms in, and dragging moves the island about. A turn that isn't over
-  when you leave the game is begun again when you come back
-- Solitaire is Klondike, dealt out in front of you. Drag a card where it should go, with
-  whatever lies on it, or just click it: it goes home if it can and to the first column that
-  will have it if not, and a right click only ever sends it home. Click the stock to turn a
-  card, and again when it is empty to go through it once more. When nothing is left face down,
-  **Finish** plays the rest out for you
-- Minesweeper asks how hard you want it before it begins: a small field with ten mines, a
-  bigger one with forty, or a wide one with ninety-nine. Left click a square to open it, the
-  first one is always safe. Right click to plant a flag on a square you think is mined, and
-  again to take it away. Once a number has its flags, a left or a middle click on it opens the
-  rest around it. Point at a number to see which squares it is still about. The clock starts
-  with your first click, and your best time at each difficulty is kept
-- In 2048, push the tiles with the arrow keys or W, A, S and D while the cursor is over the
-  game, drag across the board, or click the arrows next to it. Two tiles worth the same that
-  meet become one worth both. Making 2048 wins the game but doesn't end it: it goes on until
-  nothing moves, and your best score and biggest tile are kept for every size of board. The
-  board is four by four unless you pick three or five when you set the game up, and on three
-  the tile to make is 256
-- Tetris is played three ways: a **Marathon** of 150 lines, faster every ten (from the level
-  you pick), a **Sprint** of 40 lines against the clock, or **Ultra**, as many points as you can
-  make in two minutes. Left and Right (or A and D) move the piece, held they slide it to the wall;
-  Up (or X, or W) turns it and Z (or Q) turns it back; Down (or S) pushes it down and Space drops
-  it all the way; C (or Shift) puts it aside for later. The keys are the game's wherever the cursor
-  is while it is on, and go back to your character when it is paused or over. P or Escape pauses
-  and covers the well, and so do closing the window and going into a fight; it counts you back
-  in. It plays the way modern Tetris does: the pieces come in bags of all seven, the next five
-  are shown, where the piece would land is outlined, a piece that lands can still be moved for
-  half a second, and pieces turned against a wall or the stack kick aside. Four lines at once and
-  T-spins are worth the most, more back to back, and so are combos and a well cleared to the
-  bottom. A race at a Sprint is on time, at the others on points, with how far your rival had got
-  at the same moment beside the well
-- Sudoku asks how hard a puzzle you want before it begins, from Easy to Expert, and whether
-  wrong digits should be pointed out as you write them. Click a square, or move to it with the
-  arrow keys, and write with the digits on your keyboard or the keys next to the grid: each key
-  says how many of its digit are still missing. The same digit again takes it back out, and so
-  does Backspace. **Notes** (or N, or the space bar) switches to pencilling small digits into a
-  square, which are tidied away as the digits they are about get written. **Hint** fills in
-  the square you are on, though a game with a hint in it doesn't count for your best time.
-  The keys are only the game's while the cursor is over it, and never in combat
-- Warcraftstein 3D is the Scarlet Monastery, seen from inside it: fight your way through the
-  graveyard, the library and the cathedral to the armory, where Herod guards the portal out.
-  It stays shut until he falls. You start in a chapel the Crusade won't follow you into, where
-  you get your health back but can't fight: go back to it whenever you need to. You go in as the class of the character you are on (press
-  space), or as any other you pick: each strikes its own way, from a warrior's sword to a
-  mage's fireballs, and can do one thing more, from a rogue's stealth to a shaman's totem.
-  Every kill is worth experience, every level a talent point, and every class has three trees
-  of talents to spend them in (press N). Soldiers, monks, adepts who cast from afar, defenders
-  behind their shields and the phantasms of the graveyard are in the way. Hold W and S or the
-  up and down arrows to walk, A and D or the left and right arrows to turn, Q and E to step
-  sideways, space to strike and F for what your class can do, with the cursor over the game.
-  Or hold the right mouse button and turn with the mouse, with A and D to step sideways. With
-  the cursor anywhere else, or the talents open, the monastery stands still. Potions on the
-  floor are drunk by walking over them, red for health and blue for mana, rage or energy. Pick
-  how many rooms there are when you set the game up, your best time for every size is kept.
-  Where you are isn't, and nor are your talents: a game you come back to after logging out
-  begins at the start again
-- Freedoom is the first episode of [Freedoom](https://freedoom.github.io), the free Doom, drawn
-  the way Doom drew it, and Run, a map of the addon's own: one long way from start to exit with
-  no wrong turns, through a base, a canyon under a red sky, a nukage plant, a warehouse of crates
-  and a gate over lava. Pick Run or one of the episode's nine maps when you set the game up, and
-  one of Doom's four skills (the easier, the fewer monsters; on the easiest you take half damage
-  and get twice the ammo), and fight your way to the exit against the clock; your best time on
-  every map at every skill is kept. Every map is finished with
-  Doom's screen for it, what you killed, picked up and found counting up, your time to the
-  hundredth and how it stands. Play a map again and the ghost of your best run on it runs beside
-  you, a glowing marine; race a friend on it and theirs does, with their name over its head,
-  going where they went when they did. It sounds as Doom does too: guns, doors, lifts and
-  monsters, heard from where they are and only as far as Doom heard them. Ghosts make no sound. Teleports, lifts, stairs that
-  build themselves, doors that open on a switch or a shot, and floors of slime that hurt. Its
-  zombies, shotgun guys, imps, demons, spectres, lost souls and barons hear your shots from the
-  rooms around and come for you, and barrels go up when they are shot. Fight back with your fists, the pistol, and
-  the chainsaw, shotgun, chaingun, rocket launcher, plasma gun and BFG when you find them, the
-  rockets, plasma and the BFG's ball flying as Doom's did (a rocket up close hurts you too);
-  Ctrl, F or the left mouse button fires, 1 to 7 changes weapon. Walk over health, armour, ammunition, weapons and keys to pick them up,
-  by Doom's rules, under Doom's status bar; a door that needs a key says which. Space opens doors
-  and presses switches, Shift runs, and the rest of the keys are Warcraftstein's. Tab shows what
-  drawing a frame costs, F5 switches to Doom's low detail, which draws half as many columns
-- `/fg challenge <player> [game]` challenges someone, or use the box at the bottom of the window. Leave
-  the name empty to challenge your target
+Forever Games is an addon with 23 games in it. You challenge someone, make your move, and go back
+to whatever you were doing. They answer whenever they're next online, even if that's tomorrow.
+When it's your turn again, the addon lets you know.
 
-- `/fg options` (or a right click on the minimap button) opens the options, which are also in the
-  game's own settings under AddOns: whether your turn coming up is shown, heard or both, whether
-  that happens in combat, and whether it waits until you are out of an instance; the games' own sounds; whether anyone can challenge
-  you or only friends and guildies; the minimap button, and how big the window is drawn
-- `/fg log` shows recent activity (messages sent and received, with results). The full log is saved
-  per character in the `ForeverGames.lua` saved variables file on logout or `/reload`
+Nobody around? Nearly every game for two or more can be played against the computer, and there are
+puzzles and solo games with a new challenge for your guild every day.
 
-Everyone playing needs the addon. There is no server: moves travel directly between the players as
-addon whispers, so they are delivered when sender and receiver are online and outside instances that
-block addon communication. Anything that can't be delivered right away is kept and sent later, and
-in a game of more than two whoever is around passes on what a player missed.
+- [Install](#install)
+- [The games](#the-games)
+- [Getting started](#getting-started)
+- [Playing with other people](#playing-with-other-people)
+- [How to play each game](#how-to-play-each-game)
+- [Commands and options](#commands-and-options)
+- [Good to know](#good-to-know)
 
-Having no server also means there is nobody to roll the dice or hold the deck. Every player's
-copy of the addon works them out the same way from the moves made so far, and shows you only
-what you are meant to see. It keeps a game among friends fair, the way a game at a table is: it
-would not stop someone determined to look at cards that aren't theirs.
+## Install
 
-## Development
+1. Download `ForeverGames-<version>.zip` from the
+   [latest release](https://github.com/jeany55/forever-games/releases/latest).
+2. Unzip it into `Interface\AddOns`, inside the folder for the version of the game you play in your
+   World of Warcraft folder. Create the `AddOns` folder if it isn't there.
+3. You should now have three folders there: `ForeverGames`, `ForeverGames_Freedoom` and
+   `ForeverGames_Places`. Keep all three. The last two hold the maps for Freedoom and the pictures
+   for Where in Azeroth, which is why the download is large. They are only loaded when you play
+   those games.
+4. Restart the game if it was running, and check Forever Games is ticked in the AddOns list on the
+   character screen.
 
-The folder has to be called `ForeverGames` inside `Interface/AddOns`.
+To update, unzip the new version over the old one. Your games in progress and your best times are
+kept.
 
-```
-./Tests/RunTests.sh
-```
+Everyone you play needs the addon too. Try to stay on the same version as your friends: if yours
+differ, the challenge tells you.
 
-runs the tests with a stock `lua` (5.1), no game client needed. The engine is tested for real. The
-window is clicked through against a stand-in for the client (`Tests/FakeClient.lua`) that draws
-nothing: that catches mistakes in what the window does, not in how it looks.
+## The games
 
-Every game is also put through the same checks, a test of its own each (`EveryGame_<id>`, see
-`Tests/EveryGame.lua`): the same seed deals the same game, the rules never ask the client for the
-time or a random number, and what the game shows by name is in the locale. A game that lists its
-moves (`moves`, see `Engine/Games.lua`) is played out at random from a few seeds as well: every
-move it lists has to be legal and fit in a message, and the log has to replay to the same
-position on another client. A new game is checked the moment it is registered.
+### With friends, or against the computer
 
-A game the computer plays has it decide on a move at some of those positions, at every level:
-it has to be a move the game takes, the same one every time from the same position, and deciding
-mustn't change what it was shown. What the game tells the computer is held to that too: a guess
-at a hidden position has to look from the seat exactly like what the seat sees, a quick copy has
-to be a copy, and how good a position is has to stay well short of a win. Then the computer plays
-a whole game against itself, and a game for more than two is played at a table of two people and
-the computer, on two clients that talk to each other: their logs have to come out the same.
+| | Game | Players | |
+|---|---|---|---|
+| <img src=".github/readme/icons/chess.png" width="32"> | Chess | 2 | Take as long as you like between moves. |
+| <img src=".github/readme/icons/checkers.png" width="32"> | Checkers | 2 | Jump to capture, reach the far side to be crowned. |
+| <img src=".github/readme/icons/reversi.png" width="32"> | Reversi | 2 | Trap discs between yours to flip them. |
+| <img src=".github/readme/icons/connectfour.png" width="32"> | Connect Four | 2 | Four in a row: across, up or diagonal. |
+| <img src=".github/readme/icons/tictactoe.png" width="32"> | Tic Tac Toe | 2 | Over in a minute. |
+| <img src=".github/readme/icons/battleship.png" width="32"> | Battleship | 2 | Hide your fleet, then hunt for theirs. |
+| <img src=".github/readme/icons/backgammon.png" width="32"> | Backgammon | 2 | Race your checkers home by the roll of the dice. |
+| <img src=".github/readme/icons/chinesecheckers.png" width="32"> | Chinese Checkers | 2, 3, 4 or 6 | Hop your marbles across the star. |
+| <img src=".github/readme/icons/crazyeights.png" width="32"> | Crazy Eights | 2 to 6 | Match the suit or the rank. Eights are wild. |
+| <img src=".github/readme/icons/words.png" width="32"> | Words with Warcraft | 2 to 4 | A Scrabble-style word game where Azeroth's names count, and score extra. |
+| <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | 1 to 4 | Five dice, three rolls, thirteen boxes to fill. |
+| <img src=".github/readme/icons/wormcraft.png" width="32"> | Wormcraft | 2 to 4 | Artillery the way Worms played it, with fireballs, grenades and sheep. |
 
-Words after it run only the tests whose names have one of them in:
-`./Tests/RunTests.sh EveryGame_chess Codec`.
+### On your own
 
-### Layout
+| | Game | Daily challenge | Race a friend | |
+|---|---|:---:|:---:|---|
+| <img src=".github/readme/icons/solitaire.png" width="32"> | Solitaire | Yes | | Klondike. |
+| <img src=".github/readme/icons/minesweeper.png" width="32"> | Minesweeper | Yes | Yes | Three field sizes, best time kept for each. |
+| <img src=".github/readme/icons/sudoku.png" width="32"> | Sudoku | Yes | Yes | A fresh puzzle every time, Easy to Expert. |
+| <img src=".github/readme/icons/2048.png" width="32"> | 2048 | Yes | | Slide and merge tiles. Boards of 3, 4 or 5. |
+| <img src=".github/readme/icons/blockfall.png" width="32"> | Tetris | Yes | Yes | Marathon, 40-line Sprint, or two minutes for points. |
+| <img src=".github/readme/icons/warcraftstein.png" width="32"> | Warcraftstein 3D | Yes | Yes | Fight through the Scarlet Monastery in first person, as your own class. |
+| <img src=".github/readme/icons/freedoom.png" width="32"> | Freedoom | | Yes | The free version of Doom, drawn inside WoW. Race the ghost of your best run. |
+| <img src=".github/readme/icons/fourtiles.png" width="32"> | Fourtiles | Yes | | A word puzzle. A friend can join in and solve it with you, no turns. |
+| | Where in Azeroth | Yes | Yes | You're dropped somewhere in the world. Look around and pin where you think you are. |
 
-- `Engine/` rules of play and the sync protocol. No WoW API in here, which is what makes it testable
-  - `Codec.lua` wire format
-  - `Random.lua` dice and shuffles that come out the same for every player
-  - `Tables.lua` the one copy of a position everything uses, the computer included
-  - `Grid.lua` boards of squares for the rules: squares and what they are called ("e4"), steps
-    that stay on the board, the lines a rook or a bishop runs along, what is around a square or
-    a knight's jump away, every four in a row, the longest line through a square, and spreading
-    out from a square nearest first (Minesweeper opening a field, a marble's hops)
-  - `Deck.lua` playing cards for the rules: a deck dealt the same for everyone, hands, the cards
-    a player hasn't seen, and for trick-taking games which cards may be played to a trick and
-    which one takes it, trumps and cards that count as another suit (Euchre's bowers) included
-  - `Games.lua` game registry
-  - `Daily.lua` the day's challenge: a game for one dealt from the date, the same for the whole
-    guild, and the board of how everyone did, which goes round the guild channel
-  - `Race.lua` races: a game for one played by two on the same deal, each on their own, the
-    quicker time winning. What a run came to, and the ghost a game can send along with it
-  - `Computer.lua` the computer: looks ahead through the moves a game lists with its own rules,
-    as far as its level lets it, and picks the best. Counts what it looks at rather than
-    seconds, so it plays the same on any computer, and thinks a little at a time so the client
-    never stalls. Only ever sees what its seat may see, and guesses at the rest
-  - `Match.lua` a match is its players and a log of moves, state is derived by replaying it
-  - `Session.lua` challenges, moves, retries and resync, between two players or among several
-  - `Presence.lua` who is online with the addon
-  - `Rooms.lua` rooms for the games played by whoever turns up: who is in one, what is said in
-    it on a guild or group channel, guests the host passes everything on to and from, and a
-    queue that keeps it all under what the client lets an addon send. Nothing like a match:
-    no log, nothing sent again, nothing kept. `Games/Sketch.lua` is the game to copy from. A
-    game can stop for a fight (`fight`) and have its small window keep out of one (`calm`), see
-    `Games/Trivia.lua`, whose questions are in `Lexicon/Trivia.lua`
-  - `Phases.lua` the clock a game for a room is played to: which step it is at, since when and
-    until when, the same on every client and for whoever comes in late, what being quick is
-    worth, and who is ahead
-  - `SectorMap.lua` worlds of rooms of different heights, the way Doom built its own: which
-    sector a point is in, room to stand and steps to take, lines walked over or in reach, floors
-    and ceilings that move, pictures that are animated, and things standing about that are in
-    the way or can be walked over, or walk about by Doom's rules. What can be seen from where, what
-    a shot hits and how far a sound carries. Maps are made in any Doom map editor and turned into
-    Lua by `Tools/import_wad.py`, the sprites of the things in them too
-  - `Actors.lua` things that go through states the way Doom's do: a frame of a sprite for so many
-    tics, something done on coming to it, and what comes next. Monsters, fireballs and smoke, a
-    weapon in the player's hands
-- `Games/` one file per game: its rules and its view. `Games/Maps/` the sector maps
-- `Transport.lua` addon messages, lockdown and online/offline detection
-- `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
-- `GUI/` main window, new game wizard and toast
-  - `Board.lua` a board of squares and pieces for games to draw on: any size and shape, pieces
-    that are moved by drag and drop or placed with a click, target marks, pieces that glide,
-    drop, turn over and settle, and a shared set of round pieces. Given a layout it is a board
-    of holes wherever the game wants them instead of a grid, that can be turned to face each
-    player, with piles of pieces counted where they get too high to draw. A grid can lie on a
-    picture that shimmers, carry things that lie across several squares, and say which square
-    the cursor is over
-  - `Cards.lua` playing cards: a hand that fans out to fit and lets the player pick a card, a
-    card for a deck or a pile, and cards that fly from one to the other, dealt round the table
-    and turned over in the air
-  - `CardTable.lua` a table that cards lie on in piles and are moved about on: it is told which
-    cards are in which pile and shows whatever that changed by itself, cards flying to where
-    they are now and turning over on the way, one after the other when they are dealt. The
-    player drags cards from pile to pile, alone or with what lies on them, or clicks them, and
-    what can't stay where it was let go goes back
-  - `SlideGrid.lua` tiles that slide about on a grid, for games where what lies on the squares
-    travels: it is told which tiles went where, where those that met became one and what turned
-    up, and shows it, getting there at once when the next move comes before the last has
-    finished. Tiles are tinted and written on, so they are sharp at any size. Played on by
-    dragging across it
-  - `NumberGrid.lua` a grid to write figures into, for puzzles solved with a pencil: thin lines
-    between squares and heavy ones between boxes, a figure in a square or small ones pencilled
-    into it, squares washed in a colour, a frame around the one the player is on, figures that
-    pop in, squares that shake their head or light up one after the other. With it a pad of
-    keys to write with, which say something small about themselves and can be dimmed or on
-  - `Canvas.lua` a sheet to draw on with the mouse and to show a drawing on, at any size: lines
-    in a handful of colours and widths, drawn over each other in the order they were made
-  - `Party.lua` the pages a room is set up and played on, and the small window it can be put
-    in for a corner
-  - `Strips.lua` a screen to draw on a frame at a time, for a game that works out its own
-    picture: columns, spans mapped onto a picture and blocks of colour, kept from one frame to
-    the next so that only what changed costs anything
-  - `SectorView.lua` what somebody standing in a sector map sees, drawn onto Strips the way Doom
-    drew it: walls a column at a time nearest first, floors and ceilings a row at a time, the
-    sky, things as sprites cut off by the walls in front of them, walls that are seen through,
-    Doom's light and detail
-- `Core.lua` wires it all together
-- `Sounds/` cards, chips and dice
-- `Tools/` scripts that made the textures in `Images/`
-- `ForeverGames_Freedoom/` an addon of its own, loaded when a game of Freedoom is first shown:
-  its maps, Run among them, the pictures they are drawn with and its status bar, too much to load
-  at every login. Made by `Tools/import_freedoom.sh` from `freedoom1.wad`; `install.sh` and `build.sh` take it along
+Yacht-Z can be played alone too.
 
-### Adding a game
+### Party games
 
-Add a file to `Games/`, list it in `ForeverGames.toc` and call `private.Games.Register` with the
-functions described at the top of `Engine/Games.lua`. A game has two halves:
+Sketch and Trivia are played in a room that your guild, your group, or people you invite can join.
+Anyone can come and go while it's open.
 
-- **Rules**: `newState`, `turn`, `validate`, `apply` and `result`, pure functions over a state
-  table. A move is a short string the game defines (letters, digits and `-+.=_`). `apply` can
-  return a table saying what the move did, which the view gets back to animate from. `turn`
-  decides who is next and needn't alternate: Reversi hands the turn straight back when a player
-  has nowhere to go. A game on a board of squares has `Engine/Grid.lua` for them, one with
-  playing cards `Engine/Deck.lua`, and `Engine/Tables.lua` copies a position
-- **Chance**: `newState` and `apply` are handed a `random` to roll and shuffle with
-  (`random:Roll(6)`, `random:Shuffle(deck)`). It is the only place chance may come from: it is
-  worked out from the match and the moves made in it, which is what makes every player's copy
-  come out with the same dice. Roll for the next turn while applying a move, so the roll is
-  there when the move arrives and a turn stays one message
-- **Secrets**: a game where players don't all know the same has `visible(state, seat)`, which
-  returns a copy of the position with what that seat may not see blanked out. Views are only
-  ever shown that, until the game is over and everything is turned face up. What `apply`
-  returns is seen by everyone, so it mustn't name a card nobody was shown
-- **Players**: `seats` says how many play, a number or a list where there is a choice
-  (`{ 2, 3, 4, 6 }`). `newState` is told how many there are this time. A game for more than two
-  also has `drop`, which takes a player who resigned out of the game for the others to play on
-- **Alone**: a game with `seats = 1` is played by the player on their own. It is the same two
-  halves and nothing else: there is no challenge, it is always seat 1's turn and no move is
-  ever sent. With `undo = true` the window lets moves be taken back, and `progress(state)` is
-  a few words on how it is going for where other games say whose turn it is
-- **Daily**: a game that can be played alone can be the day's challenge (`daily`): the rules
-  everyone plays it by (`rules`) and what a game of it came to once it is over (`score`), points
-  or with `lower` and `time` the seconds it took. The engine deals it from the date, keeps it to
-  one go a day with nothing taken back, and puts it on the guild's board. Every such game is
-  checked to deal the same for everyone, and another way the next day
-- **Race**: a game for one that is timed (`clock`) and keeps a best time (`record`) can be raced
-  with nothing more from it. Both players' matches go by the same id, which deals them the same,
-  and the time a run is raced for is the `lower` record the game keeps for it: a run it keeps
-  none for didn't finish. The challenge, delivery, the result and the window are the engine's,
-  see `Engine/Race.lua`. A game can send a ghost of the run along with the time (`ghost`, with
-  `every` the seconds between samples): its view is handed `view.race`, whose `sample(text)`
-  keeps where the player is now and whose `ghost` is the rival's samples, one every `every`
-  seconds of their run, to show while the player races them. A game whose every run by the same
-  rules is the same course, whatever its deal, can also say how such a run gets to the end
-  (`ghost.course(options)`, its log): the run that set the player's best can then be sent as the
-  challenge itself (`Session:BestToRace`, `best` in the setup), their side of the race over
-  already. Every game that can be raced is checked to deal a race the same on the rival's client
-- **Together**: a game with `together = true` has no turns and no `turn`. Everyone moves whenever
-  they like, also while the others are offline, and `view.canMove` is true for as long as the
-  game lasts. What the players did at the same moment, or apart, ends up one after the other in
-  some order, so `validate` and `apply` must come out right whichever it is, and a move that is
-  no longer legal by the time its turn comes (somebody else got there first) is dropped
-- **Computer**: `computer = {}` lets the game be played against the computer, which needs
-  nothing more than `moves`: it looks ahead through them with the game's own rules, and judges
-  where it gets to by playing on from there at random. It plays far better told how good a
-  position is (`evaluate`), which moves to look at first (`priority`, captures in chess) and
-  which ones it can't stop looking after (`noisy`), what a position is called so it can tell it
-  has been there before (`key`), and a quicker way to copy one (`copy`). A game with secrets
-  says what could be behind what a seat sees (`guess`): the computer plays against a few such
-  guesses at once. A game that needs another way of thinking altogether does its own (`think`),
-  with the engine's search to hand: Backgammon weighs every roll the other side could throw,
-  Battleship counts the ways a ship could lie, Words builds its words a letter at a time. Each
-  level (`levels`) can look further or less far and slip more or less often, and is given a
-  budget of positions to look at, so that a move takes about as long in every game. See
-  `Engine/Computer.lua`, and `Games/ConnectFour.lua` for a game that tells it everything. A game
-  for more than two where a player can be put out by the others (`beaten`) is over for the
-  player then, the computer doesn't play on among itself. A game for more than two the computer
-  plays can have it at a table of people too, with nothing more from the game
-- **View**: `createView(stage)` builds the game's widgets in the frame it is given and returns an
-  object with `Layout(width, height)` and `Update(view)`. It can draw however it likes, games
-  played on a grid get most of it from `GUI/Board.lua`. `view.played` is the move to animate,
-  when there is one worth showing
+In Sketch, one person draws and everyone else guesses. The sooner you guess, the more it's worth.
 
-A game can let whoever sets it up change some of its rules with `options`: each has an `id`, a
-`name`, a `default` and the `choices` it can be set to (leave those out for something that is on
-or off). `newState` is handed what they are all set to as its third argument, and keeps what the
-rules need of it in the state. The wizard, the challenge and the rematch are the engine's: the
-wizard shows a few choices as buttons side by side, and an option of many (more than five that
-don't fit in two rows, as Freedoom's maps) as a dropdown (`Widgets.Dropdown`). See
-`Games/Words.lua`. An option marked `alone` is only offered for a game played alone, of one that
-can be played with others too, and never sent with a challenge.
+Trivia is a quiz in the style of Kahoot, good for a raid waiting on someone. The questions are
+general knowledge, Warcraft lore from the Third War to the Lich King, or both.
 
-Give the game a `genre` so it can be found in the new game wizard: one that is there already
-(`strategy`, `casual`, `dice`, `cards`, `words`, `solo`) or a new one, with its name in the locale file as `genre_<name>`.
+## Getting started
 
-Everything else is the engine's and the same for every game: challenges, gathering the players
-of a game for more than two, turn notifications, saving, delivery, resigning, and for games of two
-that ask for them draw offers (`draws = true`) and the move list with stepping back through the
-game (`history = true`), as quick at the end of a long game as at its start: the engine keeps a
-position every few moves on the way. Showing the player the moves they missed one after the
-other is the engine's too: the view is handed each with `played` and `catching`, and a view that
-takes its time over a move says so with `Busy`, which is waited for. And the games against the computer: setting them up, letting it think,
-taking moves back, how your games against it went, and seating it at a table of people.
+1. Type `/fg` or click the minimap button to open the window.
+2. Press **New Game** and pick a game. You can search, filter by type or number of players, and
+   star your favourites so they stay at the top.
+3. Pick who to play. The last person you played is at the top, then guildies and friends who are
+   online with the addon. You can also type any name. Next to the list are the game's rule
+   options, like whether captures are forced in Checkers.
+4. Send the challenge. The game starts once they accept.
 
-`Games/TicTacToe.lua` is the smallest example, `Games/Chess.lua` uses all of it. For a game
-where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`, at
-`Games/Checkers.lua` for moves made in several steps, and at `Games/ChineseCheckers.lua` for more
-than two players and a board that isn't a grid. `Games/Backgammon.lua` rolls dice and stacks
-its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
-hides what a player chose rather than what they were dealt, on two boards at once, with pieces
-several squares long. `Games/Solitaire.lua` is for one, on a card table (`GUI/CardTable.lua`)
-that does all of its moving and animating. `Games/Minesweeper.lua` is for one as well, with a
-difficulty to pick before it begins (`options`), a clock and a best time that the engine keeps
-(`clock`, `record`), a way to lose (`winner = 0`), and moves that are shown spreading across
-the board with `Widgets.Animator` and `GUI/Effects.lua`. `Games/2048.lua` has a board the
-player picks the size of, a best score that is kept, and tiles that slide
-and become one on a `GUI/SlideGrid.lua`: what its `apply` returns says everything that moved.
-`Games/Sudoku.lua` is played on a grid of numbers
-(`GUI/NumberGrid.lua`). It makes its own puzzles, which takes a solver that has to be quick: a
-game is put together again from its moves every time it is loaded, so `newState` runs often.
-`Games/Fourtiles.lua` is played alone or by two together, with no turns (`together`), and has
-its puzzles made ahead of time by a tool.
-`Games/Wormcraft.lua` has physics: a move is everything a player did in a turn, tick by tick,
-and every client plays it out again in whole numbers only, so that every grenade bounces the
-same everywhere. Its view plays out again whichever turn of somebody else's it is handed, to
-show the others what happened.
-`Games/Warcraftstein.lua` isn't played in moves at all: its view walks the player through the
-monastery many times a second and draws what they see, walls a column at a time and floor and
-ceiling a row at a time, and the engine only ever hears who went in, and that the way out was
-found or that they died looking. What a class is in there, what its talents do and what the
-Crusade is like are tables of numbers in the file (`CLASSES`, `TALENTS`, `FOES`).
-`Games/Freedoom.lua` is played the same way, on a sector map: the map and its view are the
-engine's, and the game is what the lines of a Doom map do (`SPECIALS`), what picking things up
-gives (`PICKUPS`), which doors need which key (`LOCKS`), the monsters and barrels and how they
-live (`MONSTERS`), the player's weapons (`GUNS`), how the player walks and the status bar.
-Another game on a sector map needs only its own of those, and a map. Its maps are an addon of their
-own, loaded on demand, which the game names (`addon`): a game that does is only offered, and a
-challenge to it only taken up, while that addon is installed and switched on.
+For a game against the computer, press **+ Computer** on an empty seat. For a game you play alone,
+it starts as soon as you pick it.
 
-The round pieces, the star Chinese Checkers is played on and the icons of the games played with
-them are drawn by `Tools/make_discs.py`, the backgammon table and the noughts and crosses by
-`Tools/make_tables.py`, the sea, ships and pegs of Battleship by `Tools/make_fleet.py`. The cards,
-dice and sounds are converted by `Tools/convert_kenney.py`, and what a card table needs besides
-(a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
-`Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
-`Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
-Tetris's squares, its icon and its sounds are made by `Tools/make_blockfall.py`.
-The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`.
-The letters on the tiles of Fourtiles and Words are drawn from Lexend by `Tools/make_lettering.py`:
-the client won't write in a font an addon brings, so they are pictures.
-The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
-ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
-`Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
-are drawn by `Tools/make_wormcraft.py`. Freedoom's maps, the pictures they are drawn with, the
-sprites of what lies about in them, the status bar and the icon are taken from `freedoom1.wad` by
-`Tools/import_freedoom.sh`, with `Tools/import_wad.py`, which takes any map of a Doom WAD. Run is
-written rather than drawn, by `Tools/make_run.py` with `Tools/mapkit.py`, which builds a Doom map
-from sectors given as outlines, lines, pictures and nodes and all, into a WAD of its own.
-`Tools/render_view.lua` draws the view from any spot of a sector map outside the game, as a
-picture to look at (`Tools/ppm_to_png.py` makes PNGs of them).
+The top of the window shows how many of your guildies and friends are online with the addon.
+
+## Playing with other people
+
+### Taking turns
+
+You don't need to be online at the same time. Moves are delivered when you're both online. If the
+others moved while you were away, the game plays their moves out in order before you take your
+turn. Press **Skip** or Space to jump to the current position.
+
+### Bigger tables
+
+Games for three or more show a row of seats. Click players in the list, or type a name and press
+Enter, to fill them. **Seats** changes how many there are. The game starts when everyone has
+accepted, and is called off if anyone declines. If someone resigns, the rest play on.
+
+### The computer
+
+Each computer seat has its own level. Easy makes mistakes, Medium thinks a few moves ahead and
+rarely slips, and Hard looks as far ahead as it can. Against the computer you can use
+**Take Back** (except where it would reveal something, like cards or dice), **Offer Draw**, and
+**Play Again** to swap sides and go again. It only thinks while the game is on screen. Hover over a
+computer seat's level to see your record against it.
+
+### Mixing people and the computer
+
+In a game for three or more, you can fill some seats with people and the rest with the computer.
+Your client plays the computer's moves (never during combat), so the others wait on you being
+online. If you resign, the next person in the game takes over the computer.
+
+### Link in Chat
+
+For a two-player game, **Link in Chat** puts a link like `[Forever Games: Chess]` in your chat box.
+Post it in party, guild or anywhere else, and the first person with the addon to click it plays
+you. The link lasts an hour.
+
+### Today's Challenge
+
+Games with a pocket watch on their card have a daily challenge. Everyone in your guild gets the
+same deal that day: the same Solitaire shuffle, the same minefield, the same Sudoku. You get one
+try, with no undo. The **Guild Board** shows how everyone did. A new challenge starts at midnight
+UTC.
+
+### Races
+
+The solo games marked in the table above can be raced. Pick a friend in the second step and choose
+**Challenge to a Race**. You both get exactly the same game and play it whenever you like. The
+better result wins: the quicker time, or the higher score in Where in Azeroth and in Tetris's
+Marathon and Ultra. Any finish beats not finishing (hitting a mine, dying, or using a Sudoku hint).
+While you play, you can see the result to beat. In Freedoom you also see your rival's ghost
+running the map, and **Send My Best** lets you challenge someone with a run you've already made.
+
+### Party rooms
+
+Pick Sketch or Trivia from the list and choose who the room is for: your guild, your group, or
+only the people you invite. Rooms other people have open are listed there too. The host can invite
+anyone by name or post a link in chat, including a few people from outside the guild or group.
+**Make Small** shrinks the game into a corner of your screen, and it comes back when it's your
+turn. The room closes when the host leaves.
+
+## How to play each game
+
+Click a game to see its controls. Keyboard controls only work while the mouse is over the game,
+unless the game says otherwise.
+
+<details>
+<summary><b>Chess</b></summary>
+
+- Drag a piece, or click it and then click where it goes.
+- To look back through the game, click a move in the list, use the buttons under it, or scroll
+  the mouse wheel over the board.
+- **Offer Draw** is sent with your next move. Your opponent declines by playing on.
+
+</details>
+
+<details>
+<summary><b>Checkers</b></summary>
+
+- Moves work like chess: drag, or click then click.
+- When you can capture, the pieces that have to are pointed out (captures are forced unless the
+  game was set up otherwise).
+- For a multi-jump, click each square in turn. Right-click to take it back and choose again.
+
+</details>
+
+<details>
+<summary><b>Connect Four, Reversi and Tic Tac Toe</b></summary>
+
+- Connect Four: click anywhere in a column to drop a disc.
+- Reversi: click one of the marked squares.
+- Tic Tac Toe: click a square.
+
+</details>
+
+<details>
+<summary><b>Chinese Checkers</b></summary>
+
+- Click a marble, then one of the marked holes. Every hole it can reach is marked, however many
+  hops it takes.
+- Your corner is always at the bottom. The list beside the board shows who is which colour and
+  whose turn it is.
+
+</details>
+
+<details>
+<summary><b>Backgammon</b></summary>
+
+- The dice are rolled for you.
+- Click a checker and then where it goes, or drag it. The points it can reach are marked.
+- Build your turn one checker at a time. **Undo** or right-click takes the last one back.
+- Nothing is sent until you press **Play**. A roll you can't use at all is skipped for you.
+
+</details>
+
+<details>
+<summary><b>Crazy Eights</b></summary>
+
+- Cards you can play stick up out of your hand. Click one to play it.
+- Playing an eight asks which suit comes next.
+- Click the deck to draw instead. If the card you drew can be played, you can play it or
+  **Pass**.
+- Everyone's cards are shown when the game ends.
+
+</details>
+
+<details>
+<summary><b>Battleship</b></summary>
+
+- Your fleet starts in a random layout. Click a ship to pick it up and click the water to put it
+  down. Right-click or **Rotate** turns it, **Random** shuffles the whole fleet.
+- Press **Deploy** when you're happy. You can do this while you wait for the other player.
+- Then click a square on their sea to fire. You see the result straight away, even if they're
+  offline.
+- The sea you aren't playing on is shown small. Click it for a closer look.
+
+</details>
+
+<details>
+<summary><b>Words with Warcraft</b></summary>
+
+- Drag tiles from your rack onto the board, or click a square and type.
+- The **Play** button shows what the word would score. The mouse wheel zooms.
+- **Shuffle** rearranges your rack, **Recall** takes your tiles back, **Swap** trades tiles with
+  the bag, and **Pass** skips your turn.
+- You can lay tiles out while it's someone else's turn to see what they would make.
+- Words from Warcraft (names, places, slang) count and score a bonus, and the big names like Thrall
+  score more. Whoever sets up the game can change the bonuses, turn Warcraft words off, and choose
+  how many blanks are in the bag.
+
+</details>
+
+<details>
+<summary><b>Yacht-Z</b></summary>
+
+- Each turn, roll five dice up to three times. Click dice to keep them between rolls.
+- Then pick a box on your card. Every box gets used once, and a roll that doesn't fit a box scores
+  zero there.
+- Ones to sixes get a 35 point bonus if they add up to 63 or more.
+- Alone, 200 points is a win. At a table, the highest score wins.
+
+</details>
+
+<details>
+<summary><b>Wormcraft</b></summary>
+
+- Up to four squads on an island, people or computer. Easy throws roughly your way, Hard rarely
+  misses.
+- Everyone picks a class first. Each has a skill of its own, like a warrior's Charge or a mage's
+  Blink.
+- On your turn: walk with the arrow keys or A and D, aim with up and down or W and S, and hold
+  Space to charge a shot. Enter jumps, Backspace flips backwards, Tab switches squad member (before
+  you move).
+- Pick a weapon under the island, or with Q and E. Fireballs drift with the wind, grenades bounce
+  until their fuse runs out, and blizzards and kodos land where you click.
+- After firing you have three seconds to run.
+- Everyone levels up each round and unlocks more weapons. Crates drop from a zeppelin between
+  turns, and the sea starts rising from a round chosen at setup.
+- The mouse wheel zooms, and dragging moves the view. When you open the game, turns you missed are
+  replayed. Space skips them.
+
+</details>
+
+<details>
+<summary><b>Fourtiles</b></summary>
+
+- Twenty tiles, cut from five four-tile words. Click one to four tiles to spell a word, then press
+  **Enter**.
+- Words score 1, 2, 4 or 8 points depending on how many tiles they use. Finding all five original
+  words is worth 40 more.
+- **Shuffle** (or Space) rearranges the tiles. Backspace removes the last tile.
+- Once you've found all five and reached Master (100 points), **Call It Done** ends the game.
+- With a friend there are no turns: you both play whenever you like and your finds are combined.
+
+</details>
+
+<details>
+<summary><b>Solitaire</b></summary>
+
+- Drag a card, with any cards on top of it, to where it should go. Or click it: it goes to the
+  foundation if it can, otherwise to the first column that will take it.
+- Right-click only ever sends a card to the foundation.
+- Click the stock to turn a card, and click it again when empty to go through once more.
+- When every card is face up, **Finish** plays out the rest for you.
+
+</details>
+
+<details>
+<summary><b>Minesweeper</b></summary>
+
+- Choose a size: 10, 40 or 99 mines.
+- Left-click to open a square. Your first click is always safe.
+- Right-click to place or remove a flag.
+- Left or middle-click a number that has all its flags to open the squares around it.
+- Hover a number to see which squares it still refers to.
+- The clock starts on your first click. Your best time at each size is kept.
+
+</details>
+
+<details>
+<summary><b>Sudoku</b></summary>
+
+- Choose a difficulty from Easy to Expert, and whether mistakes are pointed out as you go.
+- Click a square or move with the arrow keys, then type a digit or click the keypad. Each key
+  shows how many of that digit are still missing.
+- Type the same digit again, or Backspace, to clear it.
+- **Notes** (or N, or Space) switches to pencil marks. They tidy themselves up as you fill digits
+  in.
+- **Hint** fills in the square you're on, but a game with a hint doesn't count for your best time.
+- Keys don't work in combat.
+
+</details>
+
+<details>
+<summary><b>2048</b></summary>
+
+- Slide tiles with the arrow keys or WASD, by dragging across the board, or with the arrow buttons
+  beside it.
+- Two tiles with the same number merge.
+- Reaching 2048 wins, but you can keep going until nothing can move. On a 3x3 board the target is
+  256.
+- Your best score and biggest tile are kept for each board size.
+
+</details>
+
+<details>
+<summary><b>Tetris</b></summary>
+
+- Three modes: **Marathon** (150 lines, speeding up every 10, start at any level), **Sprint**
+  (40 lines against the clock), and **Ultra** (as many points as you can in two minutes).
+- Left/Right or A/D to move (hold to slide to the wall). Up, X or W rotates, Z or Q rotates back.
+  Down or S soft drops, Space hard drops, C or Shift holds.
+- While a game is running, the keys belong to Tetris wherever your mouse is. They go back to your
+  character when it's paused or over.
+- P or Escape pauses. Closing the window or entering combat pauses too, and it counts you back in.
+- It plays like modern Tetris: 7-bag, five next pieces, ghost piece, wall kicks, and a short delay
+  before a piece locks. Tetrises, T-spins, back-to-backs, combos and clearing the whole board score
+  the most.
+- In a race, Sprint is won on time and the others on points. You see how far your rival had got at
+  the same moment.
+
+</details>
+
+<details>
+<summary><b>Warcraftstein 3D</b></summary>
+
+- Fight through the Scarlet Monastery's graveyard, library and cathedral to the armory, where
+  Herod guards the portal out. It stays shut until he dies.
+- You start in a chapel the Crusade won't enter. You heal there but can't attack. Go back whenever
+  you need to.
+- Play as your character's class (press Space) or pick another. Each class fights differently and
+  has an extra ability, like a rogue's stealth or a shaman's totem.
+- Kills give experience, levels give talent points. Press N for talents.
+- W/S or up/down to walk, A/D or left/right to turn, Q/E to strafe, Space to attack, F for your
+  class ability. Or hold the right mouse button to turn with the mouse, with A/D to strafe.
+- Walk over potions to drink them: red for health, blue for mana, rage or energy.
+- The monastery freezes when your mouse leaves the game or talents are open.
+- Choose how many rooms at setup. Your best time for each size is kept. Your position and talents
+  aren't: if you log out, you start again.
+
+</details>
+
+<details>
+<summary><b>Freedoom</b></summary>
+
+- The first episode of [Freedoom](https://freedoom.github.io), the free Doom, plus Run: one long
+  map made for the addon, with no wrong turns.
+- Choose a map and one of Doom's four skill levels. On the easiest you take half damage and get
+  double ammo.
+- Get to the exit as fast as you can. Your best time for every map and skill is kept, and Doom's
+  end-of-level screen shows your kills, items and secrets.
+- Replay a map and the ghost of your best run races beside you. Race a friend and you see theirs,
+  with their name over its head.
+- Ctrl, F or left-click fires. 1 to 7 switches weapons. Space opens doors and presses switches,
+  Shift runs. Movement uses the same keys as Warcraftstein.
+- F5 switches to low detail if it's running slowly. Tab shows how long each frame takes to draw.
+
+</details>
+
+<details>
+<summary><b>Where in Azeroth</b></summary>
+
+- You're shown a spot somewhere in the world. Drag to look around.
+- Pin where you think you are on the map. The closer you are, the more points, up to 5,000.
+  The wrong continent scores nothing.
+- Five places per game. Whoever sets it up can add a time limit for each place.
+- Races are won on points, and you see your rival's guesses on the map next to yours.
+
+</details>
+
+<details>
+<summary><b>Sketch</b></summary>
+
+- The person drawing picks one of three things and draws it. Everyone else types guesses.
+- Quicker guesses score more, and the artist scores for everyone who gets it.
+
+</details>
+
+<details>
+<summary><b>Trivia</b></summary>
+
+- Everyone gets the same question at once, with two to four answers marked by raid icons. Click
+  one, or press 1 to 4 with your mouse over the game.
+- A right answer is worth up to 1,000 points, less the longer you take, with a bonus for streaks.
+- When time is up, or everyone has answered, the right answer lights up along with how many people
+  picked each one.
+- The host chooses the topic, number of questions and time per question. The host won't repeat
+  questions it asked recently.
+- If the host enters combat, the quiz pauses and that question doesn't count. It carries on a few
+  seconds after the fight. The host can also **Pause** and **Go On** by hand.
+
+</details>
+
+<details>
+<summary><b>Any game you play alone</b></summary>
+
+- **Undo** takes back moves, as many as you like (not in a daily challenge or race).
+- **Start Another** swaps the game for a new one. **Give Up** removes it from your list.
+- Games wait for you as long as you like.
+
+</details>
+
+## Commands and options
+
+| Command | What it does |
+|---|---|
+| `/fg` | Open or close the window (same as the minimap button) |
+| `/fg new` | Start a new game |
+| `/fg play <game>` | Play a game alone, or against the computer, set up the way you last had it |
+| `/fg daily <game>` | Go straight to today's challenge |
+| `/fg challenge <player> [game]` | Challenge someone. Leave the name out to challenge your target |
+| `/fg party` | Open the party rooms |
+| `/fg options` | Open the options (or right-click the minimap button) |
+| `/fg log` | Show recent addon messages, for tracking down problems |
+
+`/forevergames` works the same as `/fg`.
+
+The window can be resized from its corner, and the board grows with it. **Focus** hides everything
+except the game you're looking at.
+
+In the options (also under AddOns in the game's settings) you can choose:
+
+- whether your turn is announced with a message, a sound, or both
+- whether that happens in combat, or waits until you leave an instance
+- whether the games make their own sounds
+- whether anyone can challenge you, or only friends and guildies
+- whether the minimap button is shown, and how big the window is
+
+## Good to know
+
+### There's no server
+
+Moves are sent straight between players as addon whispers. A move reaches the other player the
+next time you're both online at once, and outside any instance that blocks addon messages. Until
+then it's kept and sent later. In games for three or more, whoever is online passes on what
+someone missed.
+
+### It's fair the way a game at a table is fair
+
+With no server, there's nobody neutral to shuffle the deck or roll the dice. Every player's addon
+works them out the same way from the moves made so far, and only shows you what you're meant to
+see. That keeps a friendly game honest, but it won't stop someone determined to peek at cards that
+aren't theirs.
+
+### Something not working?
+
+`/fg log` shows what the addon sent and received recently. The full log is saved in
+`WTF\Account\<account>\SavedVariables\ForeverGames.lua` when you log out or `/reload`. Please
+[open an issue](https://github.com/jeany55/forever-games/issues) saying what happened, with the
+log if you can.
+
+## Contributing
+
+Want to fix something or add a game? [CONTRIBUTING.md](CONTRIBUTING.md) covers running the tests,
+how the code is laid out, and how a game is put together.
 
 ## Credits
 
-The map, walls, floors, sky, sprites, status bar and messages of Freedoom are from [Freedoom](https://freedoom.github.io) 0.13.0
-by the contributors to the Freedoom project, used under its BSD licence. See
-`ForeverGames_Freedoom/COPYING.txt` and `ForeverGames_Freedoom/CREDITS.txt`.
+Freedoom's maps, textures, sprites, status bar and messages are from
+[Freedoom](https://freedoom.github.io) 0.13.0 by the Freedoom contributors, used under its BSD
+licence. See `ForeverGames_Freedoom/COPYING.txt` and `ForeverGames_Freedoom/CREDITS.txt`.
 
-The chess pieces are from [ChessCraft Creative Commons](https://gitlab.com/zulban/chesscraft-creative-commons)
-by Zulban, used under CC BY-SA 4.0. See `Images/Chess/README.md`.
+The chess pieces are from
+[ChessCraft Creative Commons](https://gitlab.com/zulban/chesscraft-creative-commons) by Zulban,
+used under CC BY-SA 4.0. See `Images/Chess/README.md`.
 
-The playing cards, the dice and the sounds are from the
-Boardgame Pack by [Kenney](https://www.kenney.nl), released into the public
-domain (CC0).
+The playing cards, dice and sounds are from the Boardgame Pack by [Kenney](https://www.kenney.nl),
+released into the public domain (CC0).
 
-The words the puzzles of Fourtiles are cut from were picked with the help of
-[SCOWL](http://wordlist.aspell.net) by Kevin Atkinson, whose lists say how common a word is.
+The Fourtiles word list was picked with the help of [SCOWL](http://wordlist.aspell.net) by Kevin
+Atkinson.
 
-The tiles of Fourtiles and Words are written in [Lexend](https://github.com/googlefonts/lexend)
-by The Lexend Project Authors, used under the SIL Open Font License 1.1. See
-`Images/Lettering/Lexend-OFL.txt`.
+The letters on the Fourtiles and Words with Warcraft tiles are drawn in
+[Lexend](https://github.com/googlefonts/lexend) by The Lexend Project Authors, used under the SIL
+Open Font License 1.1. See `Images/Lettering/Lexend-OFL.txt`.
+
+## Licence
+
+[MIT](LICENSE). Freedoom's assets, the chess pieces and Lexend keep their own licences, listed
+above.
