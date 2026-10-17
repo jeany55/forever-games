@@ -2,7 +2,7 @@
 ## Title: Forever Games
 ## Notes: Play classic games against your friends and guildies, at your own pace
 ## Author: Jeany
-## Version: 0.1.16
+## Version: 0.1.17
 ## IconTexture: Interface\AddOns\ForeverGames\Images\icon
 ## X-Category: Social
 ## X-GameType: FOREVER
