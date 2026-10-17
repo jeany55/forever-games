@@ -1015,9 +1015,45 @@ local function createRow(content)
   end
 
   row:SetScript("OnClick", function(self)
-    MainFrame.Select(self.matchId)
+    if self.open then
+      -- A game open in chat has nothing to show but its link, which is handed over again
+      local game = Games.Get(self.open.game)
+      if game then
+        private.Links.Share(game, self.open.offer)
+      end
+    else
+      MainFrame.Select(self.matchId)
+    end
   end)
   return row
+end
+
+--- The buttons at the end of a row, the first thing to do nearest the name, and the texts ended
+--- where they begin
+--- @param row Button
+--- @param actions { text: string, onClick: fun(), disabled: boolean? }[]
+local function fillRowButtons(row, actions)
+  for index, button in ipairs(row.buttons) do
+    local action = actions[#actions + 1 - index]
+    button:SetShown(action ~= nil)
+    if action then
+      button:SetText(action.text)
+      button:SetEnabled(not action.disabled)
+      button:SetScript("OnClick", action.onClick)
+    end
+  end
+  local room = -10 - #actions * (ROW_BUTTON_WIDTH + 4)
+  row.name:SetPoint("RIGHT", room, 0)
+  row.status:SetPoint("RIGHT", room, 0)
+end
+
+--- A row whose pulse is still
+--- @param row Button
+local function still(row)
+  row.marker:Hide()
+  row.markerPulse:Stop()
+  row.statusPulse:Stop()
+  row.status:SetAlpha(1)
 end
 
 --- @param row Button
@@ -1025,7 +1061,7 @@ end
 local function fillRow(row, match)
   local waiting = waitingOnMe(match)
 
-  row.matchId = match.id
+  row.matchId, row.open = match.id, nil
   row.icon:SetTexture(iconFor(match))
   row.name:SetText(nameFor(match))
 
@@ -1040,38 +1076,67 @@ local function fillRow(row, match)
     row.status:SetTextColor(unpack(Widgets.GREY))
   end
 
-  row.marker:SetShown(waiting)
   if waiting then
+    row.marker:Show()
     row.markerPulse:Play()
     row.statusPulse:Play()
   else
-    row.markerPulse:Stop()
-    row.statusPulse:Stop()
-    row.status:SetAlpha(1)
+    still(row)
   end
 
-  -- The first thing to do is the one nearest the name
-  local actions = listActionsFor(match)
-  for index, button in ipairs(row.buttons) do
-    local action = actions[#actions + 1 - index]
-    button:SetShown(action ~= nil)
-    if action then
-      button:SetText(action.text)
-      button:SetEnabled(not action.disabled)
-      button:SetScript("OnClick", function()
+  local actions = {}
+  for index, action in ipairs(listActionsFor(match)) do
+    actions[index] = {
+      text = action.text,
+      disabled = action.disabled,
+      onClick = function()
         local challenge = match.status == "incoming"
         action.onClick()
         -- A challenge is taken up to play it
         if challenge and match.status == "active" then
           MainFrame.Select(match.id)
         end
-      end)
-    end
+      end,
+    }
   end
-  -- The texts end where the buttons begin
-  local room = -10 - #actions * (ROW_BUTTON_WIDTH + 4)
-  row.name:SetPoint("RIGHT", room, 0)
-  row.status:SetPoint("RIGHT", room, 0)
+  fillRowButtons(row, actions)
+end
+
+--- A game the player linked in chat that is still open, to more if it was taken up already. It
+--- can be linked again, or closed so that the link leads nowhere
+--- @param row Button
+--- @param open { game: string, offer: Offer, left: number, taken: number } See Session:Offers
+local function fillOpenRow(row, open)
+  local game = Games.Get(open.game)
+  local name = game and game.name or open.game
+  row.matchId, row.open = nil, open
+  row.icon:SetTexture(game and game.icon or private.ICON)
+  row.name:SetText(name .. "  |cff808080" .. L["list_open"] .. "|r")
+  local minutes = private.Links.Minutes(open.left)
+  if open.taken > 0 then
+    row.status:SetText(L["list_open_taken"]:format(open.taken, minutes))
+  else
+    row.status:SetText(L[Race.Has(game) and "list_open_race_status" or "list_open_status"]:format(minutes))
+  end
+  row.status:SetTextColor(unpack(Widgets.GREY))
+  still(row)
+  fillRowButtons(row, {
+    {
+      text = L["list_link_again"],
+      disabled = game == nil,
+      onClick = function()
+        private.Links.Share(game, open.offer)
+      end,
+    },
+    {
+      text = L["list_close_link"],
+      onClick = function()
+        private.session:CloseOffer(open.game)
+        ForeverGames:Print(L["link_closed_own"]:format(name))
+        MainFrame.Refresh()
+      end,
+    },
+  })
 end
 
 --- @param parent Frame
@@ -1108,13 +1173,27 @@ local function waitingIn(list, except)
 end
 
 --- @param list Match[]
+--- @param open { game: string, offer: Offer, left: number, taken: number }[] The games open in chat, which come first
 --- @param width number How wide the panel is
-local function refreshList(list, width)
+local function refreshList(list, open, width)
   local panel = frame.home.listPanel
   local waiting = #waitingIn(list)
 
+  local rows = {}
+  for _, entry in ipairs(open) do
+    rows[#rows + 1] = { open = entry }
+  end
+  for _, match in ipairs(list) do
+    rows[#rows + 1] = match
+  end
   panel.list:SetWidth(width - 8)
-  panel.list:Update(list, fillRow)
+  panel.list:Update(rows, function(row, item)
+    if item.open then
+      fillOpenRow(row, item.open)
+    else
+      fillRow(row, item)
+    end
+  end)
   if waiting > 0 then
     panel.waiting:SetText(L["list_waiting_count"]:format(waiting))
     panel.waitingPulse:Play()
@@ -2346,7 +2425,8 @@ end
 local function refreshHome(list)
   local home = frame.home
   local width, height = frame:GetWidth() - INSET * 2, frame:GetHeight() - HEADER_TOP - INSET
-  local any = #list > 0
+  local open = private.session:Offers()
+  local any = #list > 0 or #open > 0
   refreshPresence()
   -- The wisp is there, the letters shine and the cloud behind it drifts, unless the player would
   -- rather the logo kept still, see GUI/Options.lua
@@ -2398,7 +2478,7 @@ local function refreshHome(list)
   home.listPanel:SetShown(any)
   if any then
     home.listPanel:SetWidth(listWidth)
-    refreshList(list, listWidth)
+    refreshList(list, open, listWidth)
   end
 end
 
@@ -2574,6 +2654,13 @@ function MainFrame.Refresh()
   refreshing = false
   if not ok then
     error(err, 0)
+  end
+end
+
+--- Redraws the front page if that is what is on screen, for what it says that changes with time
+function MainFrame.RefreshHome()
+  if frame and frame.home:IsVisible() then
+    MainFrame.Refresh()
   end
 end
 

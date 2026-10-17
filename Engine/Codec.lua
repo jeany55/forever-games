@@ -27,7 +27,10 @@
 --   than counting them all: the sender has the same first n entries
 --   ASK:id:game:gameVersion               ask whoever linked a game in chat to play it. The id is
 --                                         the asker's, and what the challenge that answers it is
---                                         called. A DEC with that id says there is no such game
+--                                         called, a challenge (INV) to a game for two or a race
+--                                         (RAC) to a game for one. A DEC with that id says there
+--                                         is no game to be had: "closed", or "taken" by the asker
+--                                         already
 --   RAC:id:game:gameVersion[:rules]       challenge someone to race a game for one: each plays the
 --                                         same deal of it alone, the one the id deals, and the
 --                                         quicker wins (Engine/Race.lua). The rules are written as

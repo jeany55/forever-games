@@ -115,7 +115,7 @@ function ForeverGames:OnEnable()
     offers = self.db.char.offers,
     onRefused = function(host, gameId, reason)
       local game = Games.Get(gameId)
-      local text = L[reason == "offline" and "link_offline" or (reason == "version" and "link_version" or "link_closed")]
+      local text = L[reason == "offline" and "link_offline" or reason == "version" and "link_version" or reason == "taken" and "link_taken" or "link_closed"]
       self:Print(text:format(Transport.DisplayName(host), game and game.name or gameId))
     end,
     takes = function(sender)
@@ -230,9 +230,16 @@ function ForeverGames:OnEnable()
     private.presence:Announce()
     private.session:Hello()
   end)
+  -- What the front page says of the games open in chat counts down, and one that closed goes
+  local linked = false
   C_Timer.NewTicker(FLUSH_INTERVAL, function()
     private.presence:Tick()
     private.session:Flush()
+    local open = #private.session:Offers() > 0
+    if open or linked then
+      MainFrame.RefreshHome()
+    end
+    linked = open
   end)
   C_Timer.NewTicker(ROOM_BEAT, function()
     private.rooms:Tick()
@@ -507,6 +514,20 @@ function ForeverGames:HandleSlashCommand(input)
     if match then
       MainFrame.Open(match.id)
     else
+      self:Print(L["err_" .. err])
+    end
+  elseif command == "link" then
+    -- A game left open to whoever clicks the link to it first, set up the way it was last time
+    local game = argument ~= "" and Links.Find(argument)
+    if not game then
+      return self:Print(argument == "" and L["link_usage"] or L["link_no_game"]:format(argument))
+    end
+    local ok, err = Links.Share(game)
+    if not ok then
+      -- A game for a room is linked as the room, which is opened in its window
+      if err == "no_room" then
+        Party.Open(game.id)
+      end
       self:Print(L["err_" .. err])
     end
   elseif command == "daily" or command == "today" then

@@ -11,7 +11,10 @@
 -- A game for one has nobody to pick, and begins as soon as it is chosen. One that has rules to
 -- set goes on to the second step all the same, with only those on it.
 -- A game for two doesn't need anyone picked either: it can be linked in chat instead, and is
--- then played with whoever clicks the link first.
+-- then played with whoever clicks the link, each with a game of their own. A game for one that
+-- can be raced is linked the same way, for whoever clicks it to race. Shift-clicked on the first
+-- step, the way an item is linked, a game is linked there and then, set up the way it was last
+-- time.
 -- A game that can be played alone or with others has the players to pick like any other, and is
 -- played alone when nobody is.
 -- Who plays is shown as a table across the top of the second step, a card for each seat: the
@@ -403,14 +406,16 @@ end
 
 --- Leaves the game open to whoever clicks a link to it, and hands the player the link to send
 local function link()
-  local game, err = private.session:Offer(chosenGame.id, { options = Games.ForPlayers(chosenGame, chosenRules, 2), seat = chosenSeat })
-  if not game then
+  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, 2), seat = chosenSeat }
+  if raceable() then
+    setup = { options = Games.ForPlayers(chosenGame, chosenRules, 1), best = sendingBest() or nil }
+  end
+  local ok, err = private.Links.Share(chosenGame, setup)
+  if not ok then
     panel.error:SetText(L["err_" .. err])
     return
   end
-  remembered()[game.id] = Games.Chosen(game, chosenRules)
-  private.Links.Insert(game)
-  ForeverGames:Print(L["link_ready"]:format(game.name))
+  remembered()[chosenGame.id] = Games.Chosen(chosenGame, chosenRules)
   Wizard.Close()
 end
 
@@ -454,6 +459,23 @@ local function pick(game, rules)
   end
   panel.nameBox:SetText("")
   refresh()
+end
+
+--- A game shift-clicked: linked in chat the way it was set up last time, and the wizard left
+--- open. A game for a room has the room linked, and without one its window is where one is opened
+--- @param game GameDefinition|PartyGame
+local function share(game)
+  if Rooms.Game(game.id) ~= game and not Games.CanSeat(game, 2) and not Race.Has(game) then
+    ForeverGames:Print(L["link_alone"]:format(game.name))
+    return
+  end
+  local ok, err = private.Links.Share(game)
+  if not ok then
+    if err == "no_room" then
+      pick(game)
+    end
+    ForeverGames:Print(L["err_" .. err])
+  end
 end
 
 -----------------------------
@@ -579,7 +601,11 @@ local function createGameCard(parent)
   card.daily:SetScript("OnLeave", GameTooltip_Hide)
 
   card:SetScript("OnClick", function(self)
-    pick(self.game)
+    if IsShiftKeyDown() then
+      share(self.game)
+    else
+      pick(self.game)
+    end
   end)
   return card
 end
@@ -1624,9 +1650,9 @@ local function refreshPlayers()
   panel.whoTitle:SetText(L[(crowd and "wizard_who_more") or (raceable() and "wizard_who_race") or "wizard_who"])
   panel.whoHint:SetText(L[(crowd and "wizard_by_name_hint_more") or (raceable() and "wizard_race_hint") or "wizard_by_name_hint"])
   panel.nameHint:SetShown((panel.nameBox:GetText() or "") == "")
-  -- A link is to a game for two, whose other seat is open
+  -- A link is to a game for two whose other seat is open, or to a race nobody was picked for
   local seats, size = sitting()
-  panel.linkButton:SetShown(size == 2 and #seats == 0 and not raceable())
+  panel.linkButton:SetShown(#seats == 0 and (raceable() or size == 2))
 
   local x = 10
   for _, button in ipairs(panel.groupButtons) do
@@ -1661,6 +1687,7 @@ refresh = function()
   panel.error:SetText(problem and L[problem] or "")
   problem = nil
 
+  panel.linkHint:SetShown(not choosingOpponent)
   if not choosingOpponent then
     panel.step:SetText(L["wizard_step_game"])
     panel.summary:SetText("")
@@ -1784,6 +1811,11 @@ function Wizard.Init(parent, closed)
   panel.summary = Widgets.Label(panel, "GameFontHighlight")
   panel.summary:SetPoint("RIGHT", panel.sendButton, "LEFT", -12, 0)
   panel.summary:SetJustifyH("RIGHT")
+
+  -- Where the summary is on the second step: that a game can be linked without going there
+  panel.linkHint = Widgets.Label(panel, "GameFontDisableSmall", L["wizard_link_hint"])
+  panel.linkHint:SetPoint("BOTTOMRIGHT", -8, 12)
+  panel.linkHint:SetJustifyH("RIGHT")
 
   panel.error = Widgets.Label(panel, "GameFontRedSmall")
   panel.error:SetPoint("BOTTOMRIGHT", panel.sendButton, "TOPRIGHT", 0, 6)

@@ -297,6 +297,11 @@ function Client.Install()
     return Client.mouseDown
   end
 
+  -- Held down only where a test says so
+  function IsShiftKeyDown()
+    return false
+  end
+
   function GetScreenWidth()
     return 1920
   end

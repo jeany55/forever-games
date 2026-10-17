@@ -54,9 +54,12 @@
 -- like that is everybody's, and goes like any other game of people: nothing is taken back, and
 -- it isn't counted with the games against the computer.
 --
--- A game for two can also be left open to whoever wants it: the player links it in chat, and the
--- first one to click the link asks for it. Asking is as good as accepting, so the challenge that
--- comes back is on at once. Whoever asks too late, or for a game that was never open, is told so.
+-- A game for two can also be left open to whoever wants it: the player links it in chat, and
+-- whoever clicks the link asks for it. Asking is as good as accepting, so the challenge that
+-- comes back is on at once. The link stays open for everyone else who clicks it, each with a game
+-- of their own, until it runs out, is closed or has been taken up by as many as it is good for.
+-- Whoever asks too late, a second time, or for a game that was never open, is told so. A game for
+-- one that can be raced is linked the same way, and whoever clicks it is challenged to race it.
 --
 -- A game for one can be raced against somebody (Engine/Race.lua): a challenge to a game each of
 -- them plays alone, with nobody's turn but their own. Whoever sends it plays at once, and whoever
@@ -93,10 +96,12 @@ local _, private = ...
 --- @field drawn number
 --- @field lost number
 
---- A game that is open to whoever clicks its link first
+--- A game that is open to whoever clicks its link
 --- @class Offer
 --- @field options table<string, any>? How the rules are set, nil for the usual way
 --- @field seat number? The seat the player asked for, nil to leave it to chance
+--- @field best boolean? For a race: the run that set the player's best is what is raced (InviteSetup.best)
+--- @field taken table<string, boolean>? Who took it up already, by full name
 --- @field expires number
 
 --- @class Session
@@ -136,6 +141,8 @@ local KEEP_FINISHED = 30 * DAY
 local KEEP_DECLINED = 7 * DAY
 -- How long a game linked in chat stays open to whoever clicks the link
 local OFFER_LIFETIME = 60 * 60
+-- How many games one link is good for, each with somebody else
+local OFFER_MOST_TAKEN = 8
 -- How long a challenge that was asked for is accepted without asking the player again
 local ASK_WINDOW = 60
 
@@ -435,9 +442,10 @@ end
 --- @param options table<string, any>? How the rules are set, the usual way if left out
 --- @param daily string? The day whose challenge it is
 --- @param race MatchRace? The race it is a run in
+--- @param id string? What it goes by, a new id if left out
 --- @return Match
-function Session:startSolo(game, options, daily, race)
-  local match = self:newSolo(game, options)
+function Session:startSolo(game, options, daily, race, id)
+  local match = self:newSolo(game, options, id)
   match.daily, match.race = daily, race
   self.env.matches[match.id] = match
   self.env.notify("changed", match)
@@ -447,12 +455,13 @@ end
 --- A new game for one, not yet on the player's list
 --- @param game GameDefinition
 --- @param options table<string, any>? How the rules are set, the usual way if left out
+--- @param id string? What it goes by, a new id if left out
 --- @return Match
-function Session:newSolo(game, options)
+function Session:newSolo(game, options, id)
   local now = self.env.now()
   --- @type Match
   return {
-    id = string.format("%x%06x", now, self.env.random(0xFFFFFF)),
+    id = id or string.format("%x%06x", now, self.env.random(0xFFFFFF)),
     game = game.id,
     gameVersion = game.version,
     players = { self.env.me },
@@ -608,7 +617,7 @@ end
 --- @class InviteSetup
 --- @field options table<string, any>? How the rules are set, by option id. The usual way if left out
 --- @field seat number? For a game of two, the seat the local player takes. At random if left out
---- @field id string? The id of a match that was asked for, which it goes by
+--- @field id string? The id of a match that was asked for, which it goes by. A race too
 --- @field computer { levels: string[]?, level: string?, count: number? }? The computer plays too: how well it plays each seat it takes, or how well it plays (Computer.DEFAULT_LEVEL if left out) and in how many seats (one if left out). With nobody challenged the game is against it alone, and with people it sits at the table with them. Which seat is which is drawn like everyone's
 --- @field best boolean? A race is challenged with the run that set the player's best by these rules, its time and its ghost, rather than with one they play for it (Session:BestToRace)
 
@@ -731,10 +740,11 @@ end
 -- Games linked in chat
 -----------------------------
 
---- Leaves a game for two open to whoever asks for it first. Linking the same game again sets
---- it up anew.
+--- Leaves a game for two open to whoever asks for it, or a game for one to whoever wants to
+--- race it. Linking the same game again sets it up anew, and opens it for another while: whoever
+--- took it up already still can't take it up again
 --- @param gameId string
---- @param setup { options: table<string, any>?, seat: number? }? As for a challenge
+--- @param setup { options: table<string, any>?, seat: number?, best: boolean? }? As for a challenge
 --- @return GameDefinition?, string? error
 function Session:Offer(gameId, setup)
   setup = setup or {}
@@ -742,12 +752,19 @@ function Session:Offer(gameId, setup)
   if not game then
     return nil, "unknown_game"
   end
-  if not Games.CanSeat(game, 2) then
+  local race = not Games.CanSeat(game, 2) and Race.Has(game)
+  if not Games.CanSeat(game, 2) and not race then
     return nil, "player_count"
   end
+  if race and setup.best and not self:BestToRace(game.id, setup.options) then
+    return nil, "no_best"
+  end
+  local before = self:Offered(game.id)
   self.env.offers[game.id] = {
     options = Games.Chosen(game, setup.options),
-    seat = (setup.seat == 1 or setup.seat == 2) and setup.seat or nil,
+    seat = not race and (setup.seat == 1 or setup.seat == 2) and setup.seat or nil,
+    best = race and setup.best or nil,
+    taken = before and before.taken,
     expires = self.env.now() + OFFER_LIFETIME,
   }
   return game
@@ -762,6 +779,48 @@ function Session:Offered(gameId)
     return nil
   end
   return offer
+end
+
+--- @param gameId string
+--- @return number? Seconds before the game of that kind the player has open closes, nil if none is
+function Session:OfferLeft(gameId)
+  local offer = self:Offered(gameId)
+  return offer and offer.expires - self.env.now()
+end
+
+--- @param offer Offer
+--- @return number How many took it up so far
+local function takers(offer)
+  local count = 0
+  for _ in pairs(offer.taken or {}) do
+    count = count + 1
+  end
+  return count
+end
+
+--- The games the player has open in chat, the one that closes first first
+--- @return { game: string, offer: Offer, left: number, taken: number }[] left: seconds before it closes. taken: by how many so far
+function Session:Offers()
+  local open = {}
+  for gameId in pairs(self.env.offers) do
+    local offer = self:Offered(gameId)
+    if offer then
+      open[#open + 1] = { game = gameId, offer = offer, left = offer.expires - self.env.now(), taken = takers(offer) }
+    end
+  end
+  table.sort(open, function(a, b)
+    if a.offer.expires ~= b.offer.expires then
+      return a.offer.expires < b.offer.expires
+    end
+    return a.game < b.game
+  end)
+  return open
+end
+
+--- Takes a game linked in chat back: whoever clicks the link after is told it isn't open any more
+--- @param gameId string
+function Session:CloseOffer(gameId)
+  self.env.offers[gameId] = nil
 end
 
 --- Asks a player for the game they linked in chat
@@ -820,17 +879,26 @@ function Session:onAsk(sender, message)
   local game = Games.Get(message.game)
   local offer = game and self:Offered(game.id)
   if not game or not offer then
-    -- Taken by someone quicker, run out, or never there: anyone can type what a link says
+    -- Closed, run out, or never there: anyone can type what a link says
     return refuse("closed")
   end
   if game.version ~= message.gameVersion then
     return refuse("version")
   end
-  local match, err = self:Invite(sender, game.id, { options = offer.options, seat = offer.seat, id = message.id })
+  -- One game each. The one they took up is theirs already
+  if offer.taken and offer.taken[sender] then
+    return refuse("taken")
+  end
+  -- A game for one is a race with whoever asked for it (Session:startRace)
+  local match, err = self:Invite(sender, game.id, { options = offer.options, seat = offer.seat, best = offer.best, id = message.id })
   if not match then
     return refuse(err == "too_many_matches" and "busy" or "closed")
   end
-  self.env.offers[game.id] = nil
+  offer.taken = offer.taken or {}
+  offer.taken[sender] = true
+  if takers(offer) >= OFFER_MOST_TAKEN then
+    self.env.offers[game.id] = nil
+  end
 end
 
 --- @param id string
@@ -1478,10 +1546,11 @@ function Session:startRace(game, rival, setup)
     -- Over before it is sent: the rival has the run to hear as soon as they take the race up
     race.run = Race.Run(Race.Time(game, Match.State(match), match.played, Match.Result(match), match.options) or false, trail)
     match.race = race
+    match.id = setup.id or match.id
     self.env.matches[match.id] = match
     self.env.notify("changed", match)
   else
-    match = self:startSolo(game, setup.options, nil, race)
+    match = self:startSolo(game, setup.options, nil, race, setup.id)
   end
   self:sendRace(match)
   return match
@@ -1673,14 +1742,17 @@ function Session:onRace(sender, message)
   if not understood then
     return refuse("version")
   end
-  if self.env.takes and not self.env.takes(sender) then
+  local now = self.env.now()
+  -- A race the player asked for by clicking a link is one they want, whoever linked it
+  local asked = self.asked[message.id]
+  local wanted = asked and asked.host == sender and asked.game == game.id and asked.expires > now
+  if not wanted and self.env.takes and not self.env.takes(sender) then
     return refuse("strangers")
   end
   if self:openMatchesWith(sender) >= MAX_OPEN_PER_PEER then
     return refuse("busy")
   end
 
-  local now = self.env.now()
   --- @type Match
   local match = {
     id = message.id,
@@ -1697,6 +1769,14 @@ function Session:onRace(sender, message)
     race = { rival = sender, told = 0, heard = {} },
   }
   self.env.matches[match.id] = match
+  if wanted then
+    -- There is nothing left to answer: the player's run is on
+    self.asked[match.id] = nil
+    match.status = "active"
+    self:sendRival(match, "ACC")
+    self:touch(match, "joined")
+    return
+  end
   self:touch(match, "invite", true)
 end
 

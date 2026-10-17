@@ -141,9 +141,20 @@ online. If you resign, the next person in the game takes over the computer.
 
 ### Link in Chat
 
-For a two-player game, **Link in Chat** puts a link like `[Forever Games: Chess]` in your chat box.
-Post it in party, guild or anywhere else, and the first person with the addon to click it plays
-you. The link lasts an hour.
+To link a game, **shift-click** its card in New Game, the way you'd link an item. Or choose the
+game and press **Link in Chat** to set the rules first. Either way, a link like
+`[Forever Games: Chess]` goes into your chat box. Post it in party, guild or anywhere else.
+Everyone with the addon who clicks it gets a game with you, one each, up to eight. Hovering over
+the link shows what it is.
+
+A game you play on your own that can be raced is linked as a race: everyone who clicks it plays
+the same deal as you, and the better run wins. If the game can send your best run as it is
+(Freedoom can), the link races your best and shows its time:
+`[Forever Games: Freedoom - 1:23.45]`.
+
+The link stays open for an hour. While it is open it is listed on the front page with how many
+have taken it up, where you can **Link Again** (another hour) or **Close** it. A party room is
+linked from the room's own window.
 
 ### Today's Challenge
 
@@ -459,6 +470,7 @@ unless the game says otherwise.
 | `/fg play <game>` | Play a game alone, or against the computer, set up the way you last had it |
 | `/fg daily <game>` | Go straight to today's challenge |
 | `/fg challenge <player> [game]` | Challenge someone. Leave the name out to challenge your target |
+| `/fg link <game>` | Link a game (or a race) in chat for anyone to play, set up the way you last had it |
 | `/fg party` | Open the party rooms |
 | `/fg options` | Open the options (or right-click the minimap button) |
 | `/fg log` | Show recent addon messages, for tracking down problems |
