@@ -61,7 +61,7 @@ local ENGINE_FILES = {
 
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 --- Loads a fresh copy of the engine, the way the client would for one player
@@ -1995,7 +1995,7 @@ local function openWizard(player)
     return false
   end
 
-  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Wizard.lua" }) do
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/HowTo.lua", "GUI/Wizard.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   private.Wizard.Init(UIParent, function() end)
@@ -2251,8 +2251,25 @@ function tests.ListsDrawRowsPutInWhileOutOfSight()
   local before = list.frame.childRectUpdates or 0
   list.frame:Show()
   equal(before + 1, list.frame.childRectUpdates, "shown, the rows put in meanwhile are drawn")
+  list.frame:Fire("OnUpdate", 0.02)
+  equal(before + 2, list.frame.childRectUpdates, "and again on the first frame it is drawn in, when its size is known")
+  equal(nil, list.frame:GetScript("OnUpdate"), "only then")
   list.frame:Fire("OnSizeChanged")
-  equal(before + 2, list.frame.childRectUpdates, "and again once it has its room")
+  equal(before + 3, list.frame.childRectUpdates, "and again once it has its room")
+
+  -- What it scrolls has a place of its own, and is put there again if it is left with none
+  local content = list.frame.content
+  equal(1, #content.anchors)
+  equal("TOPLEFT", content.anchors[1][1])
+  content:SetPoint("BOTTOM")
+  list:Update({ 1, 2 }, function() end)
+  equal(2, #content.anchors, "not while it has its place")
+  function content.GetLeft()
+    return nil
+  end
+  list:Update({ 1, 2 }, function() end)
+  equal(1, #content.anchors)
+  equal("TOPLEFT", content.anchors[1][1])
 end
 
 -----------------------------
@@ -3230,6 +3247,23 @@ function tests.WindowShowsACrowdGathering()
   equal(true, says("status_you_left"))
   Client.Button("remove"):Fire("OnClick")
   equal(nil, guests[1].matches[id])
+end
+
+function tests.WizardSaysHowTheGamePickedIsPlayed()
+  local world = World.New()
+  openWizard(world:AddPlayer("Alice-Realm"))
+  for _, card in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget.game ~= nil and widget.game.id == "checkers" and widget:IsVisible()
+  end)) do
+    card:Fire("OnClick")
+  end
+  Client.Button("howto"):Fire("OnClick")
+  equal(true, says("howto_title"))
+  equal(true, says("checkers_howto_taking_forced"))
+
+  -- Going back to the games puts the rules away
+  Client.Button("Back"):Fire("OnClick")
+  equal(false, says("howto_title"))
 end
 
 function tests.WizardPicksSeveralPlayersForACrowd()
@@ -10055,6 +10089,46 @@ do
     fallingTime(1)
     equal(true, says("blockfall_time_up"))
   end
+
+  function tests.WindowStopsBlockfallWhileItsRulesAreRead()
+    local player, id = fallingOnScreen({ mode = "sprint" })
+    local match = player.matches[id]
+    fallingTime(1.5)
+
+    -- The rules go over the well, for the way it is being played
+    Client.Button("howto"):Fire("OnClick")
+    equal(true, says("howto_title"))
+    equal(true, says("blockfall_howto_goal_sprint"))
+    equal(true, says("blockfall_howto_controls"))
+    equal(false, says("howto_scoring"), "a sprint is for its time")
+    equal(0, #Client.Find(function(widget)
+      return widget.scripts.OnKeyUp ~= nil and widget:IsVisible()
+    end), "the well is out of sight")
+    local time = player.session:Elapsed(match)
+    fallingTime(3)
+    equal(time, player.session:Elapsed(match), "and off the clock")
+
+    -- The same button goes back to the game
+    Client.Button("howto_back"):Fire("OnClick")
+    equal(false, says("howto_title"))
+    equal(true, fallingKeys():IsVisible())
+
+    -- And so does Escape, without closing the window
+    Client.Button("howto"):Fire("OnClick")
+    local keys = Client.Find(function(widget)
+      return widget.scripts.OnKeyDown ~= nil and widget.scripts.OnKeyUp == nil and widget:IsVisible()
+    end)
+    equal(1, #keys)
+    keys[1]:Fire("OnKeyDown", "ESCAPE")
+    equal(false, keys[1].propagates)
+    equal(false, says("howto_title"))
+    equal(true, says("howto"))
+
+    -- They are of the game on screen only
+    Client.Button("howto"):Fire("OnClick")
+    Client.Button("home"):Fire("OnClick")
+    equal(false, says("howto_title"))
+  end
 end
 
 -----------------------------
@@ -10595,6 +10669,22 @@ function tests.OptionsAreWrittenDownOnlyWhereTheyDiffer()
   equal(1, #Games.DescribeOptions(words, { lore = 20 }))
   equal(1, #Games.DescribeOptions(words, { azeroth = false, lore = 20 }), "a bonus for words that aren't in the game isn't worth a line")
   equal(0, #Games.DescribeOptions(words, nil))
+end
+
+function tests.GamesSayHowTheyArePlayed()
+  local Games = loadEngine().Games
+  local checkers = Games.Get("checkers")
+  local usual = Games.HowTo(checkers, nil, 2)
+  equal("howto_goal", usual[1].heading)
+  equal("checkers_howto_goal", usual[1].text)
+  equal("checkers_howto_taking_forced", usual[3].text)
+  equal("checkers_howto_taking_free", Games.HowTo(checkers, { forced = false }, 2)[3].text, "the way it is played")
+
+  local blockfall = Games.Get("blockfall")
+  equal(4, #Games.HowTo(blockfall, nil, 1))
+  local sprint = Games.HowTo(blockfall, { mode = "sprint" }, 1)
+  equal(3, #sprint, "a sprint is for its time, whatever it scores")
+  equal("blockfall_howto_goal_sprint", sprint[1].text)
 end
 
 function tests.CodecCarriesTheRules()

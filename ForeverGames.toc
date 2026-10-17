@@ -87,6 +87,7 @@ Games\Where.lua
 Transport.lua
 Links.lua
 GUI\Toast.lua
+GUI\HowTo.lua
 GUI\Wizard.lua
 GUI\MainFrame.lua
 GUI\Party.lua

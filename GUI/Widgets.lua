@@ -574,20 +574,27 @@ function Widgets.Stat(parent, title, width, height)
   return stat
 end
 
---- A list that scrolls with the mouse wheel. Rows are built on demand and reused.
+--- A frame that scrolls what is in it with the mouse wheel, with a sliver down its right edge
+--- that says there is more, and where in it the view is
 --- @param parent Frame
---- @param width number
---- @param rowHeight number
---- @param createRow fun(content: Frame): Frame
---- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)), ScrollTo: fun(self: table, index: number), SetWidth: fun(self: table, width: number) }
-function Widgets.List(parent, width, rowHeight, createRow)
+--- @param step number How far a turn of the wheel scrolls
+--- @return ScrollFrame scroll With `content`, the frame to put things in, as tall as all of it is. Refresh() once that changes
+function Widgets.Scroll(parent, step)
   local scroll = CreateFrame("ScrollFrame", nil, parent)
   local content = CreateFrame("Frame", nil, scroll)
-  content:SetSize(width, 1)
+  content:SetSize(1, 1)
   scroll:SetScrollChild(content)
+  -- Put in a place of its own, or what it scrolls may be left with none: given to it while it was
+  -- out of sight, the client never works out where it is, and nothing in it is drawn however
+  -- often it is told. The first game on the front page stayed blank that way
+  local function place()
+    content:ClearAllPoints()
+    content:SetPoint("TOPLEFT")
+  end
+  place()
   scroll:EnableMouseWheel(true)
+  scroll.content = content
 
-  -- A sliver down the right edge that says there is more, and where in it the list is
   local thumb = scroll:CreateTexture(nil, "OVERLAY")
   thumb:SetColorTexture(1, 1, 1, 0.25)
   thumb:SetWidth(3)
@@ -606,20 +613,49 @@ function Widgets.List(parent, width, rowHeight, createRow)
 
   scroll:SetScript("OnMouseWheel", function(self, delta)
     local furthest = math.max(0, content:GetHeight() - self:GetHeight())
-    self:SetVerticalScroll(math.min(furthest, math.max(0, self:GetVerticalScroll() - delta * rowHeight)))
+    self:SetVerticalScroll(math.min(furthest, math.max(0, self:GetVerticalScroll() - delta * step)))
     placeThumb()
   end)
-  -- The client works out what of the rows is in view only now and then: rows put in while the
-  -- list was out of sight, or before it had any room, aren't drawn until it is told again. A list
-  -- the front page shows for the first game there is would stay empty until the window was
-  -- closed and opened again
-  local function placeRows()
-    scroll:UpdateScrollChildRect()
+
+  -- The client works out what of the content is in view only now and then: what was put in while
+  -- it was out of sight, or before it had any room, isn't drawn until it is told again. A list the
+  -- front page shows for the first game there is would stay empty until the window was closed and
+  -- opened again
+  function scroll:Refresh()
+    -- And should it be left with none all the same, it is put there again
+    if self:GetLeft() and not content:GetLeft() then
+      place()
+    end
+    local furthest = math.max(0, content:GetHeight() - self:GetHeight())
+    self:SetVerticalScroll(math.min(self:GetVerticalScroll(), furthest))
+    self:UpdateScrollChildRect()
     placeThumb()
   end
-  -- The room the list gets changes with the window
-  scroll:SetScript("OnSizeChanged", placeRows)
-  scroll:SetScript("OnShow", placeRows)
+  -- The room it gets changes with the window
+  scroll:SetScript("OnSizeChanged", scroll.Refresh)
+  -- Told the moment it is shown, it can't take it in yet: the client hasn't worked out how big it
+  -- is, nor will it say so when it has. So it is told again on the first frame it is drawn in
+  local function drawn(self)
+    self:SetScript("OnUpdate", nil)
+    self:Refresh()
+  end
+  scroll:SetScript("OnShow", function(self)
+    self:Refresh()
+    self:SetScript("OnUpdate", drawn)
+  end)
+  return scroll
+end
+
+--- A list that scrolls with the mouse wheel. Rows are built on demand and reused.
+--- @param parent Frame
+--- @param width number
+--- @param rowHeight number
+--- @param createRow fun(content: Frame): Frame
+--- @return { frame: ScrollFrame, Update: fun(self: table, items: any[], fill: fun(row: Frame, item: any)), ScrollTo: fun(self: table, index: number), SetWidth: fun(self: table, width: number) }
+function Widgets.List(parent, width, rowHeight, createRow)
+  local scroll = Widgets.Scroll(parent, rowHeight)
+  local content = scroll.content
+  content:SetWidth(width)
 
   local list = { frame = scroll, rows = {} }
 
@@ -639,8 +675,7 @@ function Widgets.List(parent, width, rowHeight, createRow)
       self.rows[index]:Hide()
     end
     content:SetHeight(math.max(1, #items * rowHeight))
-    scroll:SetVerticalScroll(math.min(scroll:GetVerticalScroll(), math.max(0, #items * rowHeight - scroll:GetHeight())))
-    placeRows()
+    scroll:Refresh()
   end
 
   --- Makes the rows this wide from now on, for a list that follows the window
@@ -665,7 +700,7 @@ function Widgets.List(parent, width, rowHeight, createRow)
     elseif rowBottom > top + visible then
       scroll:SetVerticalScroll(math.max(0, rowBottom - visible))
     end
-    placeThumb()
+    scroll:Refresh()
   end
 
   return list

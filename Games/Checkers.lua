@@ -595,6 +595,18 @@ private.Games.Register({
   options = {
     { id = "forced", name = L["checkers_option_forced"], description = L["checkers_option_forced_tip"], default = true },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["checkers_howto_goal"] },
+    { heading = L["howto_turn"], text = L["checkers_howto_turn"] },
+    {
+      heading = L["checkers_howto_taking"],
+      text = function(rules)
+        return L[rules.forced and "checkers_howto_taking_forced" or "checkers_howto_taking_free"]
+      end,
+    },
+    { heading = L["checkers_howto_kings"], text = L["checkers_howto_kings_text"] },
+    { heading = L["howto_end"], text = L["checkers_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

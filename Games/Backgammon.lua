@@ -1264,6 +1264,14 @@ private.Games.Register({
   icon = IMAGES .. "Icons\\backgammon",
   version = 1,
   seats = 2,
+  howto = {
+    { heading = L["howto_goal"], text = L["backgammon_howto_goal"] },
+    { heading = L["howto_turn"], text = L["backgammon_howto_turn"] },
+    { heading = L["backgammon_howto_roll"], text = L["backgammon_howto_roll_text"] },
+    { heading = L["backgammon_howto_hitting"], text = L["backgammon_howto_hitting_text"] },
+    { heading = L["backgammon_howto_off"], text = L["backgammon_howto_off_text"] },
+    { heading = L["howto_end"], text = L["backgammon_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

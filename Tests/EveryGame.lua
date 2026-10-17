@@ -7,7 +7,7 @@
 -- or a random number of its own. While the rules run here those are taken away, and so is the
 -- trigonometry for a game more than one plays, which isn't worked out the same on every computer.
 -- Whatever the game shows the players by name has to be in the locale, and so does whatever it
--- says about how a game is going.
+-- says about how a game is going and how it is played.
 --
 -- A game that lists its moves (GameDefinition.moves) is played out at random from a few seeds,
 -- for every number of players it takes and with its options set this way and that, now and
@@ -257,6 +257,23 @@ local function checkNames(private, game, keys)
     inLocale(keys, option.description, "option " .. option.id .. "'s description")
     for _, value in ipairs(Games.Choices(option)) do
       inLocale(keys, Games.OptionLabel(option, value), "option " .. option.id .. " set to " .. tostring(value))
+    end
+  end
+  -- How to play it, with the rules set the usual way and then every option set every other way
+  -- it can be, for every number of players it takes
+  local settings = { {} }
+  for _, option in ipairs(game.options or {}) do
+    for _, value in ipairs(Games.Choices(option)) do
+      settings[#settings + 1] = { [option.id] = value }
+    end
+  end
+  for _, chosen in ipairs(settings) do
+    for _, seats in ipairs(Games.SeatCounts(game)) do
+      for _, section in ipairs(Games.HowTo(game, chosen, seats)) do
+        inLocale(keys, section.heading, "a heading of how to play it")
+        assert(type(section.text) == "string", "how to play it says something that isn't text under " .. section.heading)
+        inLocale(keys, section.text, "how to play it under " .. section.heading)
+      end
     end
   end
   if game.seatLabel then
@@ -932,6 +949,14 @@ end
 -- What is wrong with it, and what has to be said about that
 local FAULTS = {
   Nothing = { {}, nil },
+  HowToOutOfLocale = {
+    {
+      howto = {
+        { heading = "howto_goal", text = "faulty_howto_goal" },
+      },
+    },
+    "how to play it under howto_goal",
+  },
   IllegalMove = {
     {
       moves = function()

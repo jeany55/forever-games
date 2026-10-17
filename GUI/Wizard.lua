@@ -37,6 +37,7 @@ local Race = private.Race
 local Rooms = private.Rooms
 local Transport = private.Transport
 local Widgets = private.Widgets
+local HowTo = private.HowTo
 
 --- @class Wizard
 local Wizard = {}
@@ -120,6 +121,9 @@ local problem
 local racingBest = true
 
 local refresh
+-- The game whose rules are being read over the second step, while they are (GUI/HowTo.lua)
+--- @type GameDefinition?
+local reading
 --- @type fun(): WizardPlayer[], string?
 local listing
 
@@ -1369,6 +1373,7 @@ local function refreshRules()
   rules.name:SetText(chosenGame.name)
   rules.players:SetText(playersText(chosenGame))
   rules.description:SetText(chosenGame.description or "")
+  rules.howto:SetShown(HowTo.Has(chosenGame))
 
   -- Seats are only for the asking between two, a crowd draws them
   -- and where there are no turns there is no going first either
@@ -1553,6 +1558,16 @@ local function createOpponentStep(parent)
   rules.players = Widgets.Label(rules, "GameFontHighlightSmall")
   rules.players:SetPoint("TOPLEFT", rules.name, "BOTTOMLEFT", 0, -5)
   rules.players:SetTextColor(unpack(Widgets.GREY))
+  -- The rules of the game for anyone who doesn't know it, as they are set here
+  rules.howto = Widgets.Button(rules, L["howto"], 110, 20)
+  rules.howto:SetPoint("TOPRIGHT", -RULES_INSET, -14)
+  rules.howto:SetScript("OnClick", function()
+    reading = chosenGame
+    local _, size = sitting()
+    HowTo.Open(chosenGame, chosenRules, raceable() and 1 or size, step, function()
+      reading = nil
+    end)
+  end)
   rules.description = Widgets.Label(rules, "GameFontHighlightSmall")
   rules.description:SetPoint("TOPLEFT", RULES_INSET, -62)
   rules.description:SetPoint("TOPRIGHT", -RULES_INSET, -62)
@@ -1679,6 +1694,10 @@ end
 -----------------------------
 
 refresh = function()
+  -- How to play is for the game that was picked, and only while it is
+  if reading and reading ~= chosenGame then
+    HowTo.Close()
+  end
   local choosingOpponent = chosenGame ~= nil
   panel.gameStep:SetShown(not choosingOpponent)
   panel.opponentStep:SetShown(choosingOpponent)
@@ -1851,6 +1870,9 @@ end
 
 --- @param matchId string? The match that was started, if any
 function Wizard.Close(matchId)
+  if reading then
+    HowTo.Close()
+  end
   panel:Hide()
   onClose(matchId)
 end
@@ -1858,6 +1880,9 @@ end
 --- Puts the wizard away without starting anything, for when the window itself closes
 function Wizard.Reset()
   if panel then
+    if reading then
+      HowTo.Close()
+    end
     panel:Hide()
   end
 end

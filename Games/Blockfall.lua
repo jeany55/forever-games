@@ -2123,6 +2123,23 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    {
+      heading = L["howto_goal"],
+      text = function(rules)
+        return L["blockfall_howto_goal_" .. rules.mode]
+      end,
+    },
+    { heading = L["howto_controls"], text = L["blockfall_howto_controls"] },
+    { heading = L["blockfall_howto_pieces"], text = L["blockfall_howto_pieces_text"] },
+    {
+      heading = L["howto_scoring"],
+      -- A sprint is for its time, whatever it scored
+      text = function(rules)
+        return rules.mode ~= "sprint" and L["blockfall_howto_scoring"] or nil
+      end,
+    },
+  },
   clock = "open",
   newState = newState,
   turn = function()

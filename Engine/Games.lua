@@ -93,6 +93,12 @@ local _, private = ...
 --- @field when (fun(rules: table<string, any>): boolean)? Whether it matters with the rest set the way it is. One that doesn't isn't offered
 --- @field alone boolean? Only matters in a game played alone, of one that can be played with others too: the computer players in it. It isn't offered for a game with others, nor sent with a challenge
 
+--- A part of how a game is played, for whoever doesn't know it: what it is for, what a turn is,
+--- how it ends, which keys do what. Shown a heading over its text by the window's How to play
+--- @class GameHowTo
+--- @field heading string
+--- @field text string|fun(rules: table<string, any>, players: number?): string? What it says, or what it says with the rules set the way they are (see Games.Rules) for so many players, if that is known. A section whose function says nothing isn't shown for those rules
+
 --- Something a game for one is played for: a score to beat, a time to get under
 --- @class GameRecord
 --- @field key string What it is the best of, e.g. "score" or the name of a difficulty. Letters, digits and underscores
@@ -108,6 +114,7 @@ local _, private = ...
 --- @field version number Bump when the rules or move format change, players on different versions can't play each other
 --- @field seats number|number[] How many play it. A list where there is a choice, e.g. { 2, 3, 4, 6 }. 1 for a game the player plays alone
 --- @field options GameOption[]? What whoever sets a game up may change about its rules, in the order they are offered
+--- @field howto GameHowTo[]? How the game is played, a section at a time, the way it is usually played unless a section says otherwise for the rules that were set
 --- @field newState fun(seats: number, random: Random, rules: table<string, any>): table Fresh game state for this many players. `rules` has what every option is set to for this match, by id: keep in the state whatever the rules need of it later. A game of chance deals and rolls from `random`, never from anywhere else: it is what makes every player's client come out with the same cards and dice (Engine/Random.lua)
 --- @field together boolean? There are no turns: every player moves whenever they like, see above. Whatever the game does with a move has to come out right with the moves of the others before or after it
 --- @field turn (fun(state: table): number)? Seat that moves next. Left out by a game played together. It needn't be the other player's: a game where a player can be left without a move just says it is the same seat's turn again
@@ -357,6 +364,26 @@ function Games.DescribeOptions(game, chosen, players)
   return lines
 end
 
+--- How a game is played, with its rules set this way: every section that has something to say
+--- for them
+--- @param game GameDefinition
+--- @param chosen table<string, any>?
+--- @param players number? How many are playing, if it is known
+--- @return { heading: string, text: string }[] Nothing for a game that doesn't say
+function Games.HowTo(game, chosen, players)
+  local rules, sections = Games.Rules(game.options, chosen), {}
+  for _, section in ipairs(game.howto or {}) do
+    local text = section.text
+    if type(text) == "function" then
+      text = text(rules, players)
+    end
+    if text then
+      sections[#sections + 1] = { heading = section.heading, text = text }
+    end
+  end
+  return sections
+end
+
 --- @param definition GameDefinition
 function Games.Register(definition)
   assert(private.Codec.IsSafeField(definition.id), "Game id must be alphanumeric")
@@ -390,6 +417,11 @@ function Games.Register(definition)
     assert(definition.ghost.marks or (type(every) == "number" and every > 0), "Game " .. definition.id .. " has a ghost without a time between its samples")
     local course = definition.ghost.course
     assert(course == nil or type(course) == "function", "Game " .. definition.id .. " has a ghost whose course isn't a function")
+  end
+  for _, section in ipairs(definition.howto or {}) do
+    local text = section.text
+    assert(type(section.heading) == "string" and (type(text) == "string" or type(text) == "function"),
+      "Game " .. definition.id .. " has a part of how to play it without a heading or anything to say")
   end
   local seen = {}
   for _, option in ipairs(definition.options or {}) do

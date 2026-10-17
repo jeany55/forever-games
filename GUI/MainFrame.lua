@@ -24,6 +24,7 @@ local _, private = ...
 local L = private.L
 local Computer = private.Computer
 local Games = private.Games
+local HowTo = private.HowTo
 local Match = private.Match
 local Race = private.Race
 local Transport = private.Transport
@@ -160,6 +161,10 @@ local review
 -- how many seconds the one on screen has been
 --- @type { id: string, from: number, ply: number, missed: number, waited: number }?
 local catching
+-- The match whose rules are being read over its board, while they are (GUI/HowTo.lua). The game
+-- is out of sight meanwhile and stands still: off the clock, the computer not thinking
+--- @type string?
+local reading
 -- What the move list last scrolled to, so it only follows the game when something changed
 local movesShown
 local refreshing = false
@@ -1576,6 +1581,30 @@ local function raceView(match, game)
   }
 end
 
+--- Lays the rules of the game on screen over its board, or takes them away again
+local function toggleHowTo()
+  if reading then
+    HowTo.Close()
+    return
+  end
+  local match = selectedId and private.session:Get(selectedId)
+  local game = match and Games.Get(match.game)
+  if not game then
+    return
+  end
+  local detail = frame.detail
+  reading = match.id
+  -- Hidden, a game that goes on by itself pauses (GameViewObject.Paused), and nothing is played
+  -- that can't be seen
+  detail.stageArea:Hide()
+  detail.howto:SetText(L["howto_back"])
+  HowTo.Open(game, match.options, #match.players, detail.reading, function()
+    reading = nil
+    detail.stageArea:Show()
+    detail.howto:SetText(L["howto"])
+  end)
+end
+
 --- @param body Frame
 --- @return Frame
 local function createDetailPanel(body)
@@ -1599,9 +1628,22 @@ local function createDetailPanel(body)
     MainFrame.Home()
   end)
 
+  -- The rules, for anyone who doesn't know the game
+  detail.howto = Widgets.Button(detail, L["howto"], 120, 22)
+  detail.howto:SetPoint("RIGHT", detail.home, "LEFT", -6, 0)
+  detail.howto:SetScript("OnClick", toggleHowTo)
+  detail.howto:SetScript("OnEnter", function(self)
+    if self.tip then
+      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+      GameTooltip:SetText(L["howto"])
+      GameTooltip:AddLine(self.tip, 1, 1, 1, true)
+      GameTooltip:Show()
+    end
+  end)
+  detail.howto:SetScript("OnLeave", GameTooltip_Hide)
+
   -- Straight on to another game that is waiting on the player, while there is one
   detail.next = Widgets.Button(detail, "", 150, 22)
-  detail.next:SetPoint("RIGHT", detail.home, "LEFT", -6, 0)
   detail.next:SetScript("OnClick", function()
     local waiting = waitingIn(private.session:List(), selectedId)
     if waiting[1] then
@@ -1629,6 +1671,11 @@ local function createDetailPanel(body)
     GameTooltip:Show()
   end)
   detail.rules:SetScript("OnLeave", GameTooltip_Hide)
+
+  -- Where the rules are read: over the board, and the moves or the day's board beside it
+  detail.reading = CreateFrame("Frame", nil, detail)
+  detail.reading:SetPoint("TOPLEFT", STAGE_SIDE, -STAGE_TOP)
+  detail.reading:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, STAGE_BOTTOM)
 
   -- The room a game's view gets. Sized explicitly, never from its anchors: views lay themselves
   -- out from the numbers before the frame has been drawn
@@ -1770,6 +1817,10 @@ local function refreshDetail(match, fresh)
     button:Hide()
   end
   detail:SetShown(match ~= nil)
+  -- The rules being read are of the game on screen, and only while it is
+  if reading and (not match or match.id ~= reading) then
+    HowTo.Close()
+  end
   if not match then
     return
   end
@@ -1789,6 +1840,12 @@ local function refreshDetail(match, fresh)
   end
   detail.status:SetText(MainFrame.Describe(match))
   local others = #waitingIn(private.session:List(), match.id)
+  -- Before it begins too: a challenge is easier to take up knowing what it is to
+  local explained = HowTo.Has(game)
+  detail.howto:SetShown(explained)
+  detail.howto.tip = game and L["howto_tip"]:format(game.name)
+  detail.next:ClearAllPoints()
+  detail.next:SetPoint("RIGHT", explained and detail.howto or detail.home, "LEFT", -6, 0)
   detail.next:SetShown(others > 0)
   detail.next:SetText(L["next_waiting"]:format(others))
   if waiting then
@@ -2578,7 +2635,9 @@ local function create()
   -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend, and
   -- the computer plays only while its game is
   frame.detail:SetScript("OnUpdate", function(_, elapsed)
-    if catching and not Wizard.IsOpen() then
+    if reading then
+      return
+    elseif catching and not Wizard.IsOpen() then
       catchingUp(elapsed)
     elseif selectedId and not review and not Wizard.IsOpen() then
       -- Not while the game itself is held still, see GameViewObject.Paused
@@ -2710,7 +2769,7 @@ end
 --- player is looking back through it
 --- @return string?
 function MainFrame.Pondering()
-  if frame and frame:IsShown() and frame.detail:IsVisible() and selectedId and not review and not Wizard.IsOpen() then
+  if frame and frame:IsShown() and frame.detail:IsVisible() and selectedId and not review and not reading and not Wizard.IsOpen() then
     return selectedId
   end
   return nil
