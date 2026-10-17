@@ -4,4 +4,6 @@
 ## Author: Jeany
 ## Version: 0.1.0
 ## Dependencies: ForeverGames
+## Group: ForeverGames
+## IconTexture: Interface\AddOns\ForeverGames\Images\Icons\where
 ## LoadOnDemand: 1

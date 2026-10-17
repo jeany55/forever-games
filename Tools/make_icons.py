@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Draws the icons of the games that have no pictures of their own to come with them: Where in
-Azeroth (Games/Where.lua), Sketch (Games/Sketch.lua) and Trivia (Games/Trivia.lua).
+Azeroth (Games/Where.lua), Sketch (Games/Sketch.lua) and Trivia (Games/Trivia.lua), and the
+addon's own.
 
     python3 Tools/make_icons.py Images
 
 Writes Images/Icons/where.tga, a map with a pin in it, sketch.tga, a pencil over a drawing, and
-trivia.tga, the four answers in the colours and marks Trivia gives them. Only the standard
-library is used. Pass a second folder to also get PNG copies there, which are easier to look at
+trivia.tga, the four answers in the colours and marks Trivia gives them. And Images/icon.tga, the
+gold infinity of the logo with its loops lit, which the addon list, the minimap button and
+private.ICON show. Only the standard library is used. Pass a second folder to also get PNG copies there, which are easier to look at
 than TGA.
 """
 import math
@@ -267,6 +269,67 @@ def trivia(x, y):
     return face, 1.0
 
 
+#############################
+# Forever Games
+#############################
+
+GOLD, GOLD_LIGHT, GOLD_DARK = (214, 160, 70), (255, 232, 160), (110, 66, 24)
+DEEP, NIGHT = (22, 62, 112), (6, 16, 38)
+CYAN, CYAN_DARK = (150, 250, 255), (20, 130, 170)
+# The infinity: a lemniscate this wide, as points along it
+REACH = 0.74
+LOOP = [
+    (REACH * math.cos(t) / (1 + math.sin(t) ** 2), REACH * math.sin(t) * math.cos(t) / (1 + math.sin(t) ** 2))
+    for t in (k * 2 * math.pi / 160 for k in range(161))
+]
+BAND = 0.11
+
+
+def gem(x, y, cx, cy, size):
+    """A cut gem, a diamond lit from the top left: colour, or None off it"""
+    dx, dy = (x - cx) / size, (y - cy) / (size * 1.4)
+    if abs(dx) + abs(dy) > 1:
+        return None
+    if abs(dx) + abs(dy) > 0.72:
+        return GOLD_DARK
+    return mix(CYAN, CYAN_DARK, clamp(0.5 + (dx + dy) * 0.6))
+
+
+def forevergames(x, y):
+    """The infinity of the logo in gold on deep blue, its loops glowing, in a gold frame"""
+    edge = rounded(x, y, 0.98, 0.22)
+    if edge > 0:
+        return (0, 0, 0), 0.0
+    # The frame, lit at the top and a dark groove inside it
+    if edge > -0.1:
+        return mix(GOLD_LIGHT, GOLD_DARK, clamp(0.3 + y * 0.4 + abs(edge + 0.05) * 6)), 1.0
+    if edge > -0.14:
+        return GOLD_DARK, 1.0
+    color = mix(DEEP, NIGHT, clamp(math.hypot(x, y * 1.2) / 1.1))
+    # The loops, filled with a light that is brightest in the middle of each
+    inside = (x * x + y * y) ** 2 - REACH**2 * (x * x - y * y)
+    if inside < 0:
+        heart = math.hypot((abs(x) - REACH * 0.62) / 0.3, y / 0.2)
+        color = mix(CYAN, CYAN_DARK, clamp(heart * 0.85))
+    else:
+        color = mix(color, CYAN_DARK, 0.5 * clamp(1 - math.hypot(x / 0.95, y / 0.5)))
+    for spot in ((0, -0.6, 0.13), (0, 0.6, 0.13)):
+        shine = gem(x, y, *spot)
+        if shine is not None:
+            return shine, 1.0
+    if abs(y) > 0.42 or abs(x) > REACH + BAND:
+        return color, 1.0
+    # The band, rounded: light along its middle, dark at its rim, and lit from above
+    along = to_line(x, y, LOOP)
+    if along < BAND:
+        if along > BAND - 0.03:
+            return GOLD_DARK, 1.0
+        round_ = 1 - (along / BAND) ** 2
+        face = mix(GOLD_DARK, GOLD, clamp(round_ * 2.2))
+        return mix(face, GOLD_LIGHT, clamp((round_ - 0.55) * 1.6 - y * 0.7)), 1.0
+    return color, 1.0
+
+
 def render(size, paint):
     """Rows of (r, g, b, a) from a function of a point in a square from -1 to 1"""
     rows = []
@@ -311,3 +374,4 @@ target = Path(sys.argv[1])
 preview = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 for name, paint in (("where", where), ("sketch", sketch), ("trivia", trivia)):
     write(target / "Icons" / (name + ".tga"), render(64, paint), preview)
+write(target / "icon.tga", render(64, forevergames), preview)
