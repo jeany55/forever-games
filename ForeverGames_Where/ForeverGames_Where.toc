@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: Forever Games: Where in Azeroth
+## Notes: Where in Azeroth for Forever Games: you're somewhere in the world, say where on the map
+## Author: Jeany
+## Version: 0.2.0
+## Dependencies: ForeverGames
+## Group: ForeverGames
+## IconTexture: Interface\AddOns\ForeverGames_Where\Images\icon
+
+Locales\enUS.lua
+View.lua
+Where.lua

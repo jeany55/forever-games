@@ -15,21 +15,26 @@
 -- got out, and "d", they died. Everything on the way is the view's business and happens many
 -- times a second, so a game left and loaded again begins at the start, the doors shut.
 --
--- It is in three parts: this one, the rules and the view; what the player carries
--- (Games/Freedoom/Carry.lua); and the world they play in, its doors and lifts, monsters and
--- weapons (Games/Freedoom/World.lua).
+-- It is in three parts: this one, the rules and the view; what the player carries (Carry.lua);
+-- and the world they play in, its doors and lifts, monsters and weapons (World.lua).
+--
+-- Freedoom is an addon of its own, not a part of Forever Games: it knows the engine only by what
+-- ForeverGamesAPI has (Engine/API.lua), as any other addon that brings a game would. Its strings
+-- are in Locales/enUS.lua, its pictures and sounds in Images/ and Sounds/.
 --
 -- The maps and their pictures are made from Freedoom's freedoom1.wad by Tools/import_freedoom.sh,
--- under Freedoom's licence (ForeverGames_Freedoom/COPYING.txt), into an addon of their own that is
--- loaded the first time a game of Freedoom is shown (MAPS_ADDON). What a game needs to be played
--- by the rules, which map it is, is here: the maps are only for the view.
+-- under Freedoom's licence (COPYING.txt). The maps are too much to load at every login, so they
+-- are another addon, ForeverGames_Freedoom_Maps (MAPS_ADDON), loaded the first time a game of
+-- Freedoom is shown. What a game needs to be played by the rules, which map it is, is here: the
+-- maps are only for the view.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
-local L = private.L
--- The other parts of the game: what the player carries (Games/Freedoom/Carry.lua) and the world
--- they play in (Games/Freedoom/World.lua)
-local Freedoom = private.Freedoom
+--- @type string, table
+local ADDON, own = ...
+local engine = ForeverGamesAPI
+local L = engine.L
+-- The other parts of the game: what the player carries (Carry.lua) and the world
+-- they play in (World.lua)
+local Freedoom = own.Freedoom
 local WEAPONS, newInventory, pickUp = Freedoom.WEAPONS, Freedoom.newInventory, Freedoom.pickUp
 local GUNS, MONSTERS, HEIGHT, RADIUS = Freedoom.GUNS, Freedoom.MONSTERS, Freedoom.HEIGHT, Freedoom.RADIUS
 local TWO_PI, EIGHTH, MOST_BOB, WEAPON_TOP = Freedoom.TWO_PI, Freedoom.EIGHTH, Freedoom.MOST_BOB, Freedoom.WEAPON_TOP
@@ -38,7 +43,7 @@ local liveTic, gunTic, gunAct = Freedoom.liveTic, Freedoom.gunTic, Freedoom.gunA
 
 -- The maps there are to pick from, Run first and then the first episode's, and the addon they are in
 local LEVELS = { "run", "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8", "e1m9" }
-local MAPS_ADDON = "ForeverGames_Freedoom"
+local MAPS_ADDON = "ForeverGames_Freedoom_Maps"
 local EXIT, DEAD = "x", "d"
 -- Doom's skills, the easiest first, and which of the things of a map are there on each (Doom's
 -- thing flags: the two easiest, the middle one, the hardest). On the easiest the player also takes
@@ -113,7 +118,7 @@ end
 -- above, 168 rows of it, and the status bar under it, with a line under that saying how to play.
 -- Tab shows what drawing it costs, F5 switches between Doom's detail and low detail, which draws
 -- half as many columns. While it is shown, what it says goes into the log every few seconds too
--- (private.Log, which is saved): the frames of that while on average and the worst of them, and
+-- (engine.Log, which is saved): the frames of that while on average and the worst of them, and
 -- where the player was standing for that one, to draw the same again outside the game.
 --
 -- The view is only drawn again when something in it changed: the player moved or turned, a door
@@ -168,7 +173,7 @@ local GOLD_ALPHA, RED_ALPHA, BONUS_TICS = 0.22, 0.6, 6
 local FONT_FIRST, FONT_LAST, SPACE_WIDTH = 33, 95, 4
 local HUD_PICTURES = "freedoom_hud"
 
--- Doom's sounds, in the maps' addon: each three times over, as loud as it is heard close by, a way
+-- Doom's sounds, in Sounds/: each three times over, as loud as it is heard close by, a way
 -- off and far off, and how far each of those reaches (the client can't make one quieter, so how far
 -- away something is heard is which of them is played). Beyond the last nothing is heard. What
 -- is picked up says so one of three ways: a weapon, a power, anything else
@@ -219,7 +224,7 @@ end
 --- @return string
 function preciseTime(seconds)
   local hundredths = math.floor(seconds * 100 + 0.5)
-  return private.Widgets.Time(math.floor(hundredths / 100)) .. (".%02d"):format(hundredths % 100)
+  return engine.Widgets.Time(math.floor(hundredths / 100)) .. (".%02d"):format(hundredths % 100)
 end
 
 --- Where the player is, as a sample of a ghost
@@ -283,18 +288,18 @@ View.__index = View
 --- @param state FreedoomState
 --- @return FreedoomRun
 local function newRun(state)
-  local Actors = private.Actors
-  if not private.SectorMap.Has(state.map) then
+  local Actors = engine.Actors
+  if not engine.SectorMap.Has(state.map) then
     -- The maps are an addon of their own, loaded the first time one is wanted
     local load = C_AddOns and C_AddOns.LoadAddOn or LoadAddOn
     if load then
       pcall(load, MAPS_ADDON)
     end
-    if not private.SectorMap.Has(state.map) then
+    if not engine.SectorMap.Has(state.map) then
       return nil
     end
   end
-  local map = private.SectorMap.Load(state.map)
+  local map = engine.SectorMap.Load(state.map)
   local start
   local animated, here, totalItems, totalSecrets = {}, {}, 0, 0
   local kinds = map.data.kinds or {}
@@ -363,7 +368,7 @@ end
 --- @param stage Frame
 --- @return FreedoomView
 local function createView(stage)
-  Widgets = private.Widgets
+  Widgets = engine.Widgets
   local self = setmetatable({ stage = stage, runs = {}, down = {}, shown = 0, crossed = {}, touched = {}, look = 1, lookAt = 0,
     -- What each thing is saying right now, by the thing, the player's own included
     voices = setmetatable({}, { __mode = "k" }) }, View)
@@ -373,9 +378,9 @@ local function createView(stage)
   self.box:SetFrameLevel(self.border:GetFrameLevel() + 2)
   -- Clicks in the view are shots: they must not get through to the window and drag it about
   self.box:EnableMouse(true)
-  self.screen = private.SectorView.New(self.box, { height = VIEW_HEIGHT })
+  self.screen = engine.SectorView.New(self.box, { height = VIEW_HEIGHT })
   self.screen.frame:SetPoint("TOPLEFT")
-  self.hud = private.Strips.New(self.box, { width = SCREEN_WIDTH, height = SCREEN_HEIGHT, filter = "NEAREST" })
+  self.hud = engine.Strips.New(self.box, { width = SCREEN_WIDTH, height = SCREEN_HEIGHT, filter = "NEAREST" })
   self.hud.frame:SetAllPoints()
   self.hud.frame:SetFrameLevel(self.screen.frame:GetFrameLevel() + 1)
   self.hint = stage:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -620,7 +625,7 @@ end
 --- @param name string
 --- @param origin table? Where it is heard from, a thing or a point: the player's own if left out
 function View:sound(name, origin)
-  if not PlaySoundFile or (ForeverGames and ForeverGames.db and not ForeverGames.db.profile.sound) then
+  if not PlaySoundFile or not engine.SoundOn() then
     return
   end
   local player = self.run.player
@@ -764,7 +769,7 @@ function View:tick(elapsed)
       end
       local fromX, fromY = player.x, player.y
       moving = map:Slide(player, dx, dy, crossed)
-      local behind = private.SectorMap.Behind
+      local behind = engine.SectorMap.Behind
       for _, line in ipairs(crossed) do
         trigger(run, line, "walk", nil, not behind(line.x1, line.y1, line.dx, line.dy, fromX, fromY))
       end
@@ -939,7 +944,7 @@ function View:drawGun()
     local frame = actor.sequence and actor.picture and frames[actor.picture]
     local picture = frame and sprites[frame[1][1]]
     if picture then
-      self.hud:SetLevel(private.Strips.LOWEST + index - 1)
+      self.hud:SetLevel(engine.Strips.LOWEST + index - 1)
       local left, top = x - picture.left, y - picture.top + VIEW_HEIGHT / 2 - 100
       local bottom = math.min(top + picture.height, VIEW_HEIGHT)
       if bottom > top then
@@ -1004,7 +1009,7 @@ end
 --- the other, then the time and the par. Under them, once they have counted up, the time to
 --- the hundredth and how it stands: a new best or the best to beat, and the rival's in a race
 function View:drawFinish()
-  self.pictures = self.pictures or private.SectorMap.Pictures(HUD_PICTURES)
+  self.pictures = self.pictures or engine.SectorMap.Pictures(HUD_PICTURES)
   if not self.pictures then
     return
   end
@@ -1012,7 +1017,7 @@ function View:drawFinish()
   local finished = run.finished
   hud:Begin()
   self:patch("WIMAP0", 0, 0)
-  hud:SetLevel(private.Strips.LOWEST + 1)
+  hud:SetLevel(engine.Strips.LOWEST + 1)
   -- The first episode's maps have pictures of their names; any other has its name written
   local number = tonumber(run.level:match("^e1m(%d)$"))
   local title, done = number and pictures["WILV0" .. (number - 1)], pictures.WIF
@@ -1088,7 +1093,7 @@ end
 
 --- The status bar, and whatever is drawn over the view
 function View:drawHud()
-  self.pictures = self.pictures or private.SectorMap.Pictures(HUD_PICTURES)
+  self.pictures = self.pictures or engine.SectorMap.Pictures(HUD_PICTURES)
   if not self.pictures then
     return
   end
@@ -1097,15 +1102,15 @@ function View:drawHud()
   local now = GetTime and GetTime() or 0
   hud:Begin()
   self:drawGun()
-  hud:SetLevel(private.Strips.LOWEST + 2)
+  hud:SetLevel(engine.Strips.LOWEST + 2)
   if run.hurt > 0 then
     hud:Fill(0, 0, SCREEN_WIDTH, VIEW_HEIGHT, RED[1], RED[2], RED[3], RED_ALPHA * math.min(8, math.floor((run.hurt + 7) / 8)) / 8)
   elseif run.bonus > 0 then
     hud:Fill(0, 0, SCREEN_WIDTH, VIEW_HEIGHT, GOLD[1], GOLD[2], GOLD[3], GOLD_ALPHA * run.bonus / BONUS_TICS)
   end
-  hud:SetLevel(private.Strips.LOWEST)
+  hud:SetLevel(engine.Strips.LOWEST)
   self:patch("STBAR", 0, VIEW_HEIGHT)
-  hud:SetLevel(private.Strips.LOWEST + 3)
+  hud:SetLevel(engine.Strips.LOWEST + 3)
   local carried = WEAPONS[inventory.weapon].ammo
   if carried then
     self:number(inventory.ammo[carried], BAR.ammo[1], BAR.ammo[2], "STTNUM")
@@ -1203,7 +1208,7 @@ function View:measure(stats, now, drawn)
       sample.x, sample.y, sample.angle = run.player.x, run.player.y, run.angle
     end
   end
-  if now - sample.since >= LOG_EVERY and private.Log then
+  if now - sample.since >= LOG_EVERY and engine.Log then
     local count = math.max(1, sample.drawn)
     local awake = 0
     for _, actor in ipairs(self.run.actors) do
@@ -1211,7 +1216,7 @@ function View:measure(stats, now, drawn)
         awake = awake + 1
       end
     end
-    private.Log("freedoom", ("fps %.0f drawn %d%% ms %.1f (walls %.1f floors %.1f things %.1f) pieces %.0f moved %.0f kb %.1f awake %d, worst ms %.1f pieces %d things %d at %.0f %.0f facing %.0f, %s"):format(
+    engine.Log("freedoom", ("fps %.0f drawn %d%% ms %.1f (walls %.1f floors %.1f things %.1f) pieces %.0f moved %.0f kb %.1f awake %d, worst ms %.1f pieces %d things %d at %.0f %.0f facing %.0f, %s"):format(
       sample.frames / (now - sample.since), sample.drawn * 100 / sample.frames, sample.ms / count, sample.walls / count, sample.planes / count,
       sample.things / count, sample.pieces / count, sample.moved / count, sample.garbage / count, awake, sample.worst or 0, sample.worstPieces or 0,
       sample.worstThings or 0, sample.x or 0, sample.y or 0, math.deg(sample.angle or 0), self.screen.detail == 1 and "high" or "low"))
@@ -1219,12 +1224,13 @@ function View:measure(stats, now, drawn)
   end
 end
 
-private.Games.Register({
+engine.Games.Register({
   id = "freedoom",
   name = L["game_freedoom"],
   description = L["game_freedoom_description"],
   genre = "solo",
-  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\freedoom",
+  icon = "Interface\\AddOns\\ForeverGames_Freedoom\\Images\\icon",
+  plugin = ADDON,
   addon = MAPS_ADDON,
   version = 4,
   seats = 1,

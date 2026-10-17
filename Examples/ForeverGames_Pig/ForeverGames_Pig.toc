@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Forever Games: Pig
+## Notes: Pig, the dice game, for Forever Games. An example of a game in an addon of its own
+## Author: Jeany
+## Version: 1.0.0
+## Dependencies: ForeverGames
+## Group: ForeverGames
+
+Locales\enUS.lua
+Pig.lua

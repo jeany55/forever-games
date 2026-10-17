@@ -1,21 +1,14 @@
 ## Interface: 16001
 ## Title: Forever Games: Freedoom
-## Notes: The maps of Freedoom for Forever Games, loaded when a game of it is played
+## Notes: Freedoom, the free Doom, as a game of Forever Games: race to the exit, or race a friend's ghost
 ## Author: Jeany
-## Version: 0.1.0
+## Version: 0.2.0
 ## Dependencies: ForeverGames
 ## Group: ForeverGames
-## IconTexture: Interface\AddOns\ForeverGames\Images\Icons\freedoom
-## LoadOnDemand: 1
+## IconTexture: Interface\AddOns\ForeverGames_Freedoom\Images\icon
 
+Locales\enUS.lua
 Hud.lua
-Maps\Run.lua
-Maps\E1M1.lua
-Maps\E1M2.lua
-Maps\E1M3.lua
-Maps\E1M4.lua
-Maps\E1M5.lua
-Maps\E1M6.lua
-Maps\E1M7.lua
-Maps\E1M8.lua
-Maps\E1M9.lua
+Carry.lua
+World.lua
+Freedoom.lua

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Draws the icons of the games that have no pictures of their own to come with them: Where in
-Azeroth (Games/Where.lua), Sketch (Games/Sketch.lua) and Trivia (Games/Trivia.lua), and the
-addon's own.
+Azeroth (ForeverGames_Where/Where.lua), Sketch (Games/Sketch.lua) and Trivia (Games/Trivia.lua),
+and the addon's own.
 
     python3 Tools/make_icons.py Images
 
-Writes Images/Icons/where.tga, a map with a pin in it, sketch.tga, a pencil over a drawing, and
-trivia.tga, the four answers in the colours and marks Trivia gives them. And Images/icon.tga, the
+Writes ForeverGames_Where/Images/icon.tga, a map with a pin in it, into Where in Azeroth's own
+addon, and Images/Icons/sketch.tga, a pencil over a drawing, and trivia.tga, the four answers in the colours and marks Trivia gives them. And Images/icon.tga, the
 gold infinity of the logo with its loops lit, which the addon list, the minimap button and
 private.ICON show. Only the standard library is used. Pass a second folder to also get PNG copies there, which are easier to look at
 than TGA.
@@ -352,7 +352,7 @@ def render(size, paint):
     return rows
 
 
-def write(path, rows, preview):
+def write(path, rows, preview, name=None):
     size = len(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     # TGA rows run bottom to top
@@ -367,11 +367,12 @@ def write(path, rows, preview):
         png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
         png += chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
         preview.mkdir(parents=True, exist_ok=True)
-        (preview / (path.stem + ".png")).write_bytes(png)
+        (preview / ((name or path.stem) + ".png")).write_bytes(png)
 
 
 target = Path(sys.argv[1])
 preview = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-for name, paint in (("where", where), ("sketch", sketch), ("trivia", trivia)):
+write(Path(__file__).resolve().parent.parent / "ForeverGames_Where" / "Images" / "icon.tga", render(64, where), preview, "where")
+for name, paint in (("sketch", sketch), ("trivia", trivia)):
     write(target / "Icons" / (name + ".tga"), render(64, paint), preview)
 write(target / "icon.tga", render(64, forevergames), preview)

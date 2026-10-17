@@ -1,15 +1,15 @@
 --------------------------
 --  Freedoom: what the player carries
 --------------------------
--- One of the parts of Freedoom (Games/Freedoom.lua): Doom's rules for what the player carries,
+-- One of the parts of Freedoom (Freedoom.lua): Doom's rules for what the player carries,
 -- what picking things up gives them and which doors their keys open. Nothing in here touches
 -- the WoW API.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
+--- @type nil, table
+local _, own = ...
 -- What the parts of Freedoom share, and the tests are let see
-local Freedoom = private.Freedoom or {}
-private.Freedoom = Freedoom
+local Freedoom = own.Freedoom or {}
+own.Freedoom = Freedoom
 
 -----------------------------
 -- What the player carries

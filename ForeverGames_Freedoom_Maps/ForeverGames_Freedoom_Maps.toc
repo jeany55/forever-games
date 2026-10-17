@@ -1,0 +1,20 @@
+## Interface: 16001
+## Title: Forever Games: Freedoom maps
+## Notes: The maps of Freedoom, loaded when a game of it is played
+## Author: Jeany
+## Version: 0.2.0
+## Dependencies: ForeverGames_Freedoom
+## Group: ForeverGames
+## IconTexture: Interface\AddOns\ForeverGames_Freedoom\Images\icon
+## LoadOnDemand: 1
+
+Run.lua
+E1M1.lua
+E1M2.lua
+E1M3.lua
+E1M4.lua
+E1M5.lua
+E1M6.lua
+E1M7.lua
+E1M8.lua
+E1M9.lua

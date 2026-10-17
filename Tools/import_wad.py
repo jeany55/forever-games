@@ -3,7 +3,7 @@
 pictures it is drawn with.
 
     python3 Tools/import_wad.py freedoom1.wad E1M1 freedoom_e1m1 Images/Freedoom Games/Maps/FreedoomE1M1.lua \
-        --icon BIGDOOR2 Images/Icons/freedoom.tga
+        --icon BIGDOOR2 ForeverGames_Freedoom/Images/icon.tga
 
 Freedoom's own maps go into an addon of their own that Forever Games loads when a game of it is
 played, made by Tools/import_freedoom.sh.
@@ -444,7 +444,7 @@ def main():
     parser.add_argument("--global", dest="out_global", action="store_true", help="Write the map (and the status bar) for an addon of its own, loaded on demand: into ForeverGamesSectorMaps (and ForeverGamesSectorPictures), where SectorMap finds them, rather than registered with the addon")
     parser.add_argument("--sounds", type=Path, default=None, help="Also write Doom's sound effects into this folder, as Ogg Vorbis (takes ffmpeg)")
     parser.add_argument("--hud", nargs=2, metavar=("ID", "PATH"), default=None, help="Also write the status bar's pictures, and a Lua file registering them under an id, e.g. freedoom_hud Games/Maps/FreedoomHud.lua")
-    parser.add_argument("--icon", nargs=2, metavar=("PICTURE", "PATH"), default=None, help="Also write a 64 pixel icon of the middle of a wall picture, e.g. BIGDOOR2 Images/Icons/freedoom.tga")
+    parser.add_argument("--icon", nargs=2, metavar=("PICTURE", "PATH"), default=None, help="Also write a 64 pixel icon of the middle of a wall picture, e.g. BIGDOOR2 ForeverGames_Freedoom/Images/icon.tga")
     parser.add_argument("--pwad", type=Path, default=None, help="A WAD of the map's own (Tools/mapkit.py makes them), read over the main one, as Doom loads a PWAD: the map from it, the pictures from either")
     parser.add_argument("--preview", type=Path, default=None)
     args = parser.parse_args()

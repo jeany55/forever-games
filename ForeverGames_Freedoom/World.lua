@@ -1,16 +1,17 @@
 --------------------------
 --  Freedoom: the world
 --------------------------
--- One of the parts of Freedoom (Games/Freedoom.lua): what goes on in a map while it is played.
+-- One of the parts of Freedoom (Freedoom.lua): what goes on in a map while it is played.
 -- Doors, lifts and switches and what the lines of a map set off; the monsters, barrels and what
 -- flies and bursts, living 35 tics a second; and the player's weapons. The view (in
--- Games/Freedoom.lua) runs it a tic at a time and draws it.
+-- Freedoom.lua) runs it a tic at a time and draws it.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
+--- @type nil, table
+local _, own = ...
+local engine = ForeverGamesAPI
 -- What the parts of Freedoom share, and the tests are let see
-local Freedoom = private.Freedoom or {}
-private.Freedoom = Freedoom
+local Freedoom = own.Freedoom or {}
+own.Freedoom = Freedoom
 local WEAPONS, newInventory, pickUp, unlocks = Freedoom.WEAPONS, Freedoom.newInventory, Freedoom.pickUp, Freedoom.unlocks
 
 -----------------------------
@@ -52,7 +53,7 @@ local DOOR_GAP = 4
 --- @field leaving number? Seconds since the player got to an exit
 --- @field dead integer? The tic the player died on
 --- @field level string Which map, "run" or "e1m1" to "e1m9"
---- @field key string What its best time is kept under: the map and the skill (see Games/Freedoom.lua)
+--- @field key string What its best time is kept under: the map and the skill (see Freedoom.lua)
 --- @field halfDamage boolean? The player takes half of every blow: the easiest skill, as in Doom
 
 -- Made later, with what lives: the flash of a teleport
@@ -513,7 +514,7 @@ end
 -- monster that is hurt may flinch, and turns on whoever hurt it, even another monster. Everything
 -- that is left to chance is, as in Doom, a number up to 255.
 
-local Actors = private.Actors
+local Actors = engine.Actors
 local TWO_PI, EIGHTH = math.pi * 2, math.pi / 4
 local MELEE_RANGE, MISSILE_RANGE = 64, 2048
 -- A monster turns on whoever hurt it for this many of its steps before it may turn on another
@@ -887,7 +888,7 @@ local function step(run, monster)
   local moved, touched = run.map:TryMoveThing(monster, fromX + way[1] * speed, fromY + way[2] * speed, monster.info.floats)
   if moved then
     -- Over a line that does something a monster may set off
-    local behind = private.SectorMap.Behind
+    local behind = engine.SectorMap.Behind
     for _, line in ipairs(touched) do
       if line.special ~= 0 and behind(line.x1, line.y1, line.dx, line.dy, fromX, fromY) ~= behind(line.x1, line.y1, line.dx, line.dy, monster.x, monster.y) then
         trigger(run, line, "walk", monster, not behind(line.x1, line.y1, line.dx, line.dy, fromX, fromY))

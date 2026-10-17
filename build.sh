@@ -1,6 +1,7 @@
 #!/bin/bash
-# Packages the addon, Freedoom's maps and the places of Where in Azeroth into
-# .release/ForeverGames-<version>.zip, ready to unzip into Interface/AddOns.
+# Packages the addon and the addons that come with it (every ForeverGames_* folder: Freedoom and its
+# maps, the places of Where in Azeroth) into .release/ForeverGames-<version>.zip, ready to unzip
+# into Interface/AddOns.
 # Run from the repository root.
 set -e
 
@@ -11,10 +12,10 @@ ZIP="ForeverGames-${VERSION}.zip"
 rm -rf "$OUT"
 mkdir -p "$OUT/ForeverGames"
 cp -r ForeverGames.toc embeds.xml ./*.lua Engine Games GUI Lexicon Images Sounds Libs Locales LICENSE "$OUT/ForeverGames/"
-# Freedoom's maps go along as an addon of their own, loaded when a game of it is played, and so
-# do the panoramas of Where in Azeroth
-cp -r ForeverGames_Freedoom ForeverGames_Places "$OUT/"
+# The addons that go along with it, each a folder of its own beside it
+COMPANIONS=$(ls -d ForeverGames_*/ | tr -d /)
+cp -r $COMPANIONS "$OUT/"
 
-(cd "$OUT" && zip -qr "$ZIP" ForeverGames ForeverGames_Freedoom ForeverGames_Places)
-rm -rf "$OUT/ForeverGames" "$OUT/ForeverGames_Freedoom" "$OUT/ForeverGames_Places"
+(cd "$OUT" && zip -qr "$ZIP" ForeverGames $COMPANIONS)
+(cd "$OUT" && rm -rf ForeverGames $COMPANIONS)
 echo "$OUT/$ZIP"

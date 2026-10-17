@@ -111,14 +111,17 @@ local function serialize(value, path, out)
 end
 
 --- Every key the English locale has
+--- @param files string[] Where its strings are: Forever Games' own, and those of the plugins
 --- @return table<string, boolean>
-local function localeKeys()
-  local file = assert(io.open("Locales/enUS.lua"))
-  local text = file:read("*a")
-  file:close()
+local function localeKeys(files)
   local keys = {}
-  for key in text:gmatch('L%["([^"]+)"%]%s*=') do
-    keys[key] = true
+  for _, path in ipairs(files) do
+    local file = assert(io.open(path))
+    local text = file:read("*a")
+    file:close()
+    for key in text:gmatch('L%["([^"]+)"%]%s*=') do
+      keys[key] = true
+    end
   end
   return keys
 end
@@ -1128,8 +1131,9 @@ local FAULTS = {
 
 --- @param tests table<string, fun()>
 --- @param loadEngine fun(): table A fresh copy of the engine and every game
-return function(tests, loadEngine)
-  local keys = localeKeys()
+--- @param strings string[]? The files the English strings are in, Locales/enUS.lua if left out
+return function(tests, loadEngine, strings)
+  local keys = localeKeys(strings or { "Locales/enUS.lua" })
   for _, listed in ipairs(loadEngine().Games.List()) do
     local gameId = listed.id
     tests["EveryGame_" .. gameId] = function()

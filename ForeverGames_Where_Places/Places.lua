@@ -1,11 +1,10 @@
--- Every place Where in Azeroth deals, in the order they were added: written by
--- Tools/places.py from Tools/places.json, run that again rather than change this.
--- Only ever added to at the end, see Engine/Places.lua.
+-- The places of ForeverGames_Where_Places for Where in Azeroth to deal, in the order they were added:
+-- written by Tools/places.py from Tools/places.json, run that again rather than change
+-- this. Only ever added to at the end, see Engine/Places.lua.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
+local ADDON = ...
 
-private.WherePlaces = {
+ForeverGamesAPI.Places.AddPack("where", ADDON, {
   { id = "brill", continent = 0, x = 2216.4, y = 251.6, mapID = 1420, zone = "Tirisfal Glades", subzone = "Brill", pano = { tiles = 4, width = 4096, height = 1024, top = 0.61495, bottom = -0.36015, facing = 3.7456, sky = { 0.217, 0.3223, 0.2297 }, ground = { 0.1648, 0.1808, 0.0909 } } },
   { id = "brightwater", continent = 0, x = 2428.2, y = 109.5, mapID = 1420, zone = "Tirisfal Glades", subzone = "Brightwater Lake", pano = { tiles = 4, width = 4096, height = 1024, top = 0.51205, bottom = -0.44835, facing = 5.2706, sky = { 0.1952, 0.316, 0.2449 }, ground = { 0.2151, 0.2144, 0.0727 } } },
   { id = "tirisfalbridge", continent = 0, x = 2245.5, y = 590.8, mapID = 1420, zone = "Tirisfal Glades", pano = { tiles = 4, width = 4096, height = 1024, top = 0.56105, bottom = -0.40425, facing = 2.1389, sky = { 0.1198, 0.1766, 0.1439 }, ground = { 0.0696, 0.0791, 0.0468 } } },
@@ -55,4 +54,4 @@ private.WherePlaces = {
   { id = "ametharan", continent = 1, x = 5670.7, y = 293.6, mapID = 1439, zone = "Darkshore", subzone = "Ameth'Aran", pano = { tiles = 4, width = 4096, height = 1024, top = 0.27685, bottom = -0.72765, facing = 3.4031, sky = { 0.139, 0.1144, 0.1024 }, ground = { 0.0774, 0.0632, 0.0371 } } },
   { id = "harborkeep", continent = 0, x = -8448.5, y = 1224.5, mapID = 1453, zone = "Stormwind City", subzone = "Stormwind Harbor", pano = { tiles = 4, width = 4096, height = 1024, top = 0.45815, bottom = -0.50225, facing = 3.1253, sky = { 0.5856, 0.4171, 0.4299 }, ground = { 0.2826, 0.146, 0.0941 } } },
   { id = "thunderbluffbridge", continent = 1, x = -1177.5, y = 31.6, mapID = 1456, zone = "Thunder Bluff", pano = { tiles = 4, width = 4096, height = 1024, top = 0.30625, bottom = -0.68355, facing = 0.0887, sky = { 0.6772, 0.6028, 0.5707 }, ground = { 0.3788, 0.1985, 0.0979 } } },
-}
+})

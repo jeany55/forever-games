@@ -32,6 +32,7 @@ Engine\Places.lua
 Engine\SectorMap.lua
 Engine\Actors.lua
 Engine\Course.lua
+Engine\API.lua
 GUI\Widgets.lua
 GUI\LetteringGlyphs.lua
 GUI\Lettering.lua
@@ -78,15 +79,9 @@ Games\Blockfall.lua
 Games\Sudoku.lua
 Games\Fourtiles.lua
 Games\Warcraftstein.lua
-Games\Freedoom\Carry.lua
-Games\Freedoom\World.lua
-Games\Freedoom.lua
 Games\Wormcraft.lua
 Games\Sketch.lua
 Games\Trivia.lua
-Games\Where\Places.lua
-Games\Where\View.lua
-Games\Where.lua
 Transport.lua
 Links.lua
 GUI\Toast.lua
