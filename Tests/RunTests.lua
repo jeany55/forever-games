@@ -30,6 +30,7 @@ local ENGINE_FILES = {
   "Games/ConnectFour.lua",
   "Games/Reversi.lua",
   "Games/Mancala.lua",
+  "Games/Nim.lua",
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
   "Games/Backgammon.lua",
@@ -1089,6 +1090,95 @@ function tests.MancalaComputerGoesAgainAndTakes()
 end
 end
 
+-----------------------------
+-- Nim
+-----------------------------
+
+do
+  --- A game of Nim to try the rules on
+  --- @param chosen table? Options, the usual rules where left out
+  --- @param seed number?
+  --- @return table state, table game, table private
+  local function nim(chosen, seed)
+    local private = loadEngine()
+    local game = private.Games.Get("nim")
+    return game.newState(2, private.Random.New(seed or 1), private.Games.Rules(game.options, chosen)), game, private
+  end
+
+  function tests.NimTakesFromOneRow()
+    local state, game = nim()
+    equal("1,3,5,7", table.concat(state.rows, ","))
+    local event = game.apply(state, 1, "D3")
+    equal("1,3,5,4", table.concat(state.rows, ","))
+    equal(3, state.taken[1])
+    equal(4, event.row)
+    equal(3, event.count)
+    equal("D3", event.notation)
+    equal(2, game.turn(state))
+    equal(16 - 3, #game.moves(state, 2), "one move for every stone that could be the first taken")
+
+    equal(false, (game.validate(state, 1, "A1")), "not the first player's turn")
+    local ok, err = game.validate(state, 2, "D5")
+    equal(false, ok)
+    equal("nim_too_many", err)
+    for _, move in ipairs({ "E1", "A0", "a1", "A", "1", "A10", "AA", "" }) do
+      equal(false, (game.validate(state, 2, move)), move)
+    end
+  end
+
+  function tests.NimLastStoneWinsOrLoses()
+    local state, game = nim({ rows = "small" })
+    equal("3,4,5", table.concat(state.rows, ","))
+    for _, move in ipairs({ "A3", "B4" }) do
+      game.apply(state, game.turn(state), move)
+    end
+    equal(nil, game.result(state))
+    game.apply(state, 1, "C5")
+    equal(1, game.result(state).winner, "whoever takes the last stone wins")
+    equal("nim_last", game.result(state).detail)
+
+    state, game = nim({ rows = "small", misere = true })
+    for _, move in ipairs({ "A3", "B4", "C5" }) do
+      game.apply(state, game.turn(state), move)
+    end
+    equal(2, game.result(state).winner, "or with the last stone losing, the other player does")
+  end
+
+  function tests.NimDealsRowsAtRandom()
+    local state = nim({ rows = "random" }, 5)
+    equal(4, #state.rows)
+    for index, stones in ipairs(state.rows) do
+      assert(stones >= 1 and stones <= 7, "a row of " .. stones)
+      assert(index == 1 or stones >= state.rows[index - 1], "shortest first")
+    end
+    equal(table.concat(state.rows, ","), table.concat(nim({ rows = "random" }, 5).rows, ","), "the same deal from the same seed")
+    equal(table.concat(state.rows, ","), table.concat(state.size, ","))
+  end
+
+  function tests.NimComputerPlaysItRight()
+    local state, game, private = nim()
+    local Computer, lost = private.Computer, game.rules.lost
+    state.rows = { 0, 0, 1, 3 }
+    equal("D2", Computer.Think(game, Computer.Copy(state), 1, "hard", 1):Finish(), "two rows of one each")
+    state.misere = true
+    equal("D3", Computer.Think(game, Computer.Copy(state), 1, "hard", 1):Finish(), "one row of one, for the other to take")
+
+    -- The second player wins the classic layout, every time, against anything
+    for seed = 1, 6 do
+      state = nim(nil, seed)
+      while not game.result(state) do
+        local seat = game.turn(state)
+        local move = Computer.Think(game, Computer.Copy(state), seat, seat == 1 and "easy" or "hard", seed):Finish()
+        game.apply(state, seat, move)
+        if seat == 2 then
+          equal(true, lost(state.rows), "hard leaves nothing to win with")
+        end
+      end
+      equal(2, game.result(state).winner, "seed " .. seed)
+    end
+  end
+end
+
 --- @param state table Checkers position
 --- @return string[]
 local function checkersMoves(state)
@@ -1986,6 +2076,60 @@ function tests.WindowPlaysMancalaByClickingPits()
   equal("3,6,1,2", logOf(alice, id))
 end
 
+function tests.WindowPlaysNimByPickingStones()
+  local world, alice, bob, id = gameOnScreen("nim")
+  local board = shownBoard()
+  -- The slate is 11.24 units across and 4.68 down, its four rows 0.92 apart round the middle,
+  -- with spots 0.82 wide
+  local unit = board.width / 11.24
+  local pointer = Client.Find(function(widget)
+    return widget.parent == board and widget.scripts.OnUpdate ~= nil
+  end)[1]
+  local function pointAtStone(row, index, stones)
+    local x = 5.62 + (index - (stones + 1) / 2) * 0.82
+    local y = 2.34 + (row - 2.5) * 0.92
+    Client.cursor = { x * unit, board.height - y * unit }
+    pointer:Fire("OnUpdate", 0.02)
+  end
+  local function settle()
+    for _ = 1, 100 do
+      board:Fire("OnUpdate", 0.02)
+      pointer:Fire("OnUpdate", 0.02)
+    end
+  end
+  local function says(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+
+  -- Pointing at the fifth stone of the bottom row lifts it and the two to its right
+  pointAtStone(4, 5, 7)
+  assert(says("nim_preview"), "what clicking would take")
+  board:Fire("OnMouseDown", "LeftButton")
+  equal("D3", logOf(alice, id))
+  settle()
+  equal("nimClack", Client.sounds[#Client.sounds], "each stone lands in the bowl")
+  assert(says("3"), "the bowl counts what she took")
+
+  -- Not on the opponent's turn
+  pointAtStone(3, 1, 5)
+  board:Fire("OnMouseDown", "LeftButton")
+  equal("D3", logOf(alice, id))
+  world:Deliver()
+  assert(bob.session:Move(id, "C5"))
+  world:Deliver()
+  settle()
+
+  -- Nor where a stone was
+  pointAtStone(4, 6, 7)
+  board:Fire("OnMouseDown", "LeftButton")
+  equal("D3,C5", logOf(alice, id))
+  pointAtStone(1, 1, 1)
+  board:Fire("OnMouseDown", "LeftButton")
+  equal("D3,C5,A1", logOf(alice, id))
+end
+
 --- Clicks the square checkers players know by a number, on a board with red at the bottom
 --- @param board table
 --- @param number number 1 to 32
@@ -2134,7 +2278,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
   equal("chess,reversi,mancala,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
-  equal("tictactoe,connectfour", idsOf(Games.Search(nil, "casual")))
+  equal("tictactoe,connectfour,nim", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
   equal("crazyeights,solitaire", idsOf(Games.Search(nil, "cards")), "a game for one goes with the others like it")
@@ -2307,7 +2451,7 @@ function tests.WizardNarrowsTheGamesDown()
 
   -- By genre, on top of whatever is typed
   clickGenre("genre_casual")
-  equal("connectfour,tictactoe", idsOf(offeredGames()), "by name")
+  equal("connectfour,nim,tictactoe", idsOf(offeredGames()), "by name")
   type("chess")
   equal(0, #offeredGames())
   clickGenre("wizard_all_games")

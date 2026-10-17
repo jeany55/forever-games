@@ -219,7 +219,9 @@ where pieces are placed look at `Games/ConnectFour.lua` and `Games/Reversi.lua`,
 `Games/Checkers.lua` for moves made in several steps, and at `Games/ChineseCheckers.lua` for more
 than two players and a board that isn't a grid. `Games/Mancala.lua` keeps counts of things
 that are all alike, seeds in pits, and draws them as heaps of their own that are carried and
-swept from place to place (`GUI/Heaps.lua`). `Games/Backgammon.lua` rolls dice and stacks
+swept from place to place (`GUI/Heaps.lua`); `Games/Nim.lua` lays them out in rows instead, lets
+the player point at one stone of a row, and lays the board out anew for the rules it is set up
+with. `Games/Backgammon.lua` rolls dice and stacks
 its pieces, `Games/CrazyEights.lua` deals cards and keeps hands hidden. `Games/Battleship.lua`
 hides what a player chose rather than what they were dealt, on two boards at once, with pieces
 several squares long. `Games/Solitaire.lua` is for one, on a card table (`GUI/CardTable.lua`)

@@ -21,6 +21,8 @@ local SOUNDS = {
   blockfallQuad = 1, blockfallSpin = 1, blockfallLevel = 1, blockfallOver = 1, blockfallBeat = 1, blockfallGo = 1,
   -- Mancala's, made by Tools/make_mancala.py
   mancalaSow = 4, mancalaPour = 2, mancalaAgain = 1,
+  -- Nim's, made by Tools/make_nim.py
+  nimClack = 4,
 }
 
 Widgets.GREEN = { 0.3, 0.9, 0.3 }

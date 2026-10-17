@@ -63,6 +63,7 @@ Games\Chess.lua
 Games\ConnectFour.lua
 Games\Reversi.lua
 Games\Mancala.lua
+Games\Nim.lua
 Games\Checkers.lua
 Games\ChineseCheckers.lua
 Games\Backgammon.lua

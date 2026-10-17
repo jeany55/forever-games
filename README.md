@@ -63,6 +63,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/reversi.png" width="32"> | Reversi | 2 | Trap discs between yours to flip them. |
 | <img src=".github/readme/icons/mancala.png" width="32"> | Mancala | 2 | Sow seeds round the board, land in your store to go again. |
 | <img src=".github/readme/icons/connectfour.png" width="32"> | Connect Four | 2 | Four in a row: across, up or diagonal. |
+| <img src=".github/readme/icons/nim.png" width="32"> | Nim | 2 | Take stones from one row a turn, and take the last. |
 | <img src=".github/readme/icons/tictactoe.png" width="32"> | Tic Tac Toe | 2 | Over in a minute. |
 | <img src=".github/readme/icons/battleship.png" width="32"> | Battleship | 2 | Hide your fleet, then hunt for theirs. |
 | <img src=".github/readme/icons/backgammon.png" width="32"> | Backgammon | 2 | Race your checkers home by the roll of the dice. |
@@ -222,6 +223,15 @@ unless the game says otherwise.
   board. Your store is the long one at the right.
 - Point at a pit first to see where its seeds go: where the last one lands is lit, green when it
   lands in your store and you go again, orange when it takes what is across.
+
+</details>
+
+<details>
+<summary><b>Nim</b></summary>
+
+- Point at a stone: it and every stone to its right in its row lift up. Click to take them.
+- The rows can be laid out 1-3-5-7, 3-4-5 or dealt at random, and the last stone can be set to
+  lose instead of win.
 
 </details>
 
