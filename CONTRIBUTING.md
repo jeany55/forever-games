@@ -22,6 +22,10 @@ moves (`moves`, see `Engine/Games.lua`) is played out at random from a few seeds
 move it lists has to be legal and fit in a message, and the log has to replay to the same
 position on another client. A new game is checked the moment it is registered.
 
+The games of addons of their own are checked the same way. The tests load every `ForeverGames_*`
+folder and every one in `Examples/` after the engine, as the client would, and run the tests in
+their `Tests.lua`. See [API.md](API.md#testing).
+
 A game the computer plays has it decide on a move at some of those positions, at every level:
 it has to be a move the game takes, the same one every time from the same position, and deciding
 mustn't change what it was shown. What the game tells the computer is held to that too: a guess
@@ -76,7 +80,9 @@ Words after it run only the tests whose names have one of them in:
   - `Actors.lua` things that go through states the way Doom's do: a frame of a sprite for so many
     tics, something done on coming to it, and what comes next. Monsters, fireballs and smoke, a
     weapon in the player's hands
-- `Games/` one file per game: its rules and its view. `Games/Maps/` the sector maps
+  - `API.lua` `ForeverGamesAPI`, what an addon of its own makes a game with: the parts of the
+    engine above and of `GUI/` that games use, and a place for its strings. See [API.md](API.md)
+- `Games/` one file per game: its rules and its view
 - `Transport.lua` addon messages, lockdown and online/offline detection
 - `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
 - `GUI/` main window, new game wizard and toast
@@ -119,14 +125,29 @@ Words after it run only the tests whose names have one of them in:
 - `Core.lua` wires it all together
 - `Sounds/` cards, chips and dice
 - `Tools/` scripts that made the textures in `Images/`
-- `ForeverGames_Freedoom/` an addon of its own, loaded when a game of Freedoom is first shown:
-  its maps, Run among them, the pictures they are drawn with and its status bar, too much to load
-  at every login. Made by `Tools/import_freedoom.sh` from `freedoom1.wad`; `install.sh` and `build.sh` take it along
+- `ForeverGames_Freedoom/` Freedoom, a game in an addon of its own, written against
+  `ForeverGamesAPI` only: its rules and view (`Freedoom.lua`, `Carry.lua`, `World.lua`), its
+  strings, status bar, pictures and sounds
+- `ForeverGames_Freedoom_Maps/` Freedoom's maps, Run among them, in another addon that is loaded
+  when a game of Freedoom is first shown: too much to load at every login. Made with the pictures
+  by `Tools/import_freedoom.sh` from `freedoom1.wad`
+- `ForeverGames_Where/` Where in Azeroth, another game in an addon of its own: its rules
+  (`Where.lua`), its view (`View.lua`), its strings and icon
+- `ForeverGames_Where_Places/` the pack of places that comes with Where in Azeroth: the list of
+  them (`Places.lua`, written by `Tools/places.py`) and their panoramas. Any other
+  `ForeverGames_Where_<Name>` folder is another pack, dealt from with it (`Places.AddPack` in
+  `Engine/Places.lua`); `Tools/places.py --pack <Name>` makes one
+- `Examples/ForeverGames_Pig/` the example in [API.md](API.md), tested with the rest but not
+  shipped
+
+`install.sh` and `build.sh` take every `ForeverGames_*` folder along beside `ForeverGames`.
 
 ## Adding a game
 
 Add a file to `Games/`, list it in `ForeverGames.toc` and call `private.Games.Register` with the
-functions described at the top of `Engine/Games.lua`. A game has two halves:
+functions described at the top of `Engine/Games.lua`. A game can also be an addon of its own,
+which registers it through `ForeverGamesAPI` instead: [API.md](API.md) says how. A game has two
+halves:
 
 - **Rules**: `newState`, `turn`, `validate`, `apply` and `result`, pure functions over a state
   table. A move is a short string the game defines (letters, digits and `-+.=_`). `apply` can
@@ -245,7 +266,7 @@ monastery many times a second and draws what they see, walls a column at a time 
 ceiling a row at a time, and the engine only ever hears who went in, and that the way out was
 found or that they died looking. What a class is in there, what its talents do and what the
 Crusade is like are tables of numbers in the file (`CLASSES`, `TALENTS`, `FOES`).
-`Games/Freedoom.lua` is played the same way, on a sector map: the map and its view are the
+`ForeverGames_Freedoom/Freedoom.lua` is played the same way, on a sector map: the map and its view are the
 engine's, and the game is what the lines of a Doom map do (`SPECIALS`), what picking things up
 gives (`PICKUPS`), which doors need which key (`LOCKS`), the monsters and barrels and how they
 live (`MONSTERS`), the player's weapons (`GUNS`), how the player walks and the status bar.

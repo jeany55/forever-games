@@ -10,6 +10,10 @@
 -- Games/ConnectFour.lua and Games/Reversi.lua place pieces instead of moving them, and
 -- Games/ChineseCheckers.lua is for up to six players on a board that isn't a grid.
 --
+-- A game can also come in an addon of its own, which registers it the same way through
+-- ForeverGamesAPI (Engine/API.lua): ForeverGames_Freedoom and ForeverGames_Where are two, and
+-- API.md says how.
+--
 -- The window around the view is the engine's: who is playing, whose turn it is, resigning, draw
 -- offers, the list of moves and stepping back through them. A game opts into the last two with
 -- `draws` and `history`, it doesn't build them.
@@ -134,6 +138,7 @@ local _, private = ...
 --- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
 --- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
 --- @field computer GameComputer? The game can be played against the computer, and this is what it knows about playing it (Engine/Computer.lua). `{}` will do for a game with `moves`
+--- @field plugin string? The addon the game comes in, for a game that isn't one of Forever Games' own (Engine/API.lua). Named to whoever challenges a player who doesn't have it
 --- @field addon string? What the game needs to be played is an addon of its own, loaded when it is (its maps, say, too much to load at every login). The game is only offered, and a challenge to it only taken up, while that addon is there and switched on (Games.Offered)
 --- @field daily GameDaily? For a game that can be played alone: it is a challenge every day, the same for everyone who plays it that day (Engine/Daily.lua)
 --- @field ghost GameGhost? For a game for one that can be raced (`clock` and `record`): the player's run is kept as they go, a few samples a second, goes to the rival with their time, and is shown to the rival while they race it (Engine/Race.lua). Nothing is asked of a game without one
@@ -400,6 +405,7 @@ function Games.Register(definition)
   end
   assert(definition.together or type(definition.turn) == "function", "Game " .. definition.id .. " is missing turn")
   assert(definition.moves == nil or type(definition.moves) == "function", "Game " .. definition.id .. " has moves that aren't a function")
+  assert(definition.plugin == nil or type(definition.plugin) == "string", "Game " .. definition.id .. " comes in an addon that isn't named")
   local problem = private.Computer.Problem(definition)
   assert(not problem, "Game " .. definition.id .. " " .. tostring(problem))
   if definition.daily then

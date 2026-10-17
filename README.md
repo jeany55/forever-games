@@ -32,6 +32,7 @@ puzzles and solo games with a new challenge for your guild every day.
 - [How to play each game](#how-to-play-each-game)
 - [Commands and options](#commands-and-options)
 - [Good to know](#good-to-know)
+- [Making a game of your own](#making-a-game-of-your-own)
 
 ## Install
 
@@ -39,10 +40,12 @@ puzzles and solo games with a new challenge for your guild every day.
    [latest release](https://github.com/jeany55/forever-games/releases/latest).
 2. Unzip it into `Interface\AddOns`, inside the folder for the version of the game you play in your
    World of Warcraft folder. Create the `AddOns` folder if it isn't there.
-3. You should now have three folders there: `ForeverGames`, `ForeverGames_Freedoom` and
-   `ForeverGames_Places`. Keep all three. The last two hold the maps for Freedoom and the pictures
-   for Where in Azeroth, which is why the download is large. They are only loaded when you play
-   those games.
+3. You should now have five folders there: `ForeverGames`, `ForeverGames_Freedoom`,
+   `ForeverGames_Freedoom_Maps`, `ForeverGames_Where` and `ForeverGames_Where_Places`. Keep all five.
+   Freedoom and Where in Azeroth are addons of their own. `ForeverGames_Freedoom_Maps` holds
+   Freedoom's maps and `ForeverGames_Where_Places` the places of Where in Azeroth, which is why
+   the download is large. The maps are only loaded when you play Freedoom, and a place's pictures
+   only when you are taken there.
 4. Restart the game if it was running, and check Forever Games is ticked in the AddOns list on the
    character screen.
 
@@ -447,6 +450,10 @@ unless the game says otherwise.
   The wrong continent scores nothing.
 - Five places per game. Whoever sets it up can add a time limit for each place.
 - Races are won on points, and you see your rival's guesses on the map next to yours.
+- More places can come in packs. A pack is a folder named `ForeverGames_Where_<Name>`: put it
+  next to `ForeverGames_Where` and restart the game, and its places are dealt along with the rest.
+  To race someone, you both need the same packs. With different packs, the day's game deals you
+  different places.
 
 </details>
 
@@ -536,6 +543,17 @@ log if you can.
 
 Want to fix something or add a game? [CONTRIBUTING.md](CONTRIBUTING.md) covers running the tests,
 how the code is laid out, and how a game is put together.
+
+## Making a game of your own
+
+A game can also come in an addon of its own. Anyone who installs it next to Forever Games finds it
+in their list of games, and plays it with friends, against the computer or in a race like any
+other game. Forever Games doesn't need to be changed for it. Freedoom and Where in Azeroth are
+made this way.
+
+[API.md](API.md) is the guide for writing one. It goes through a complete example, Pig in
+[`Examples/ForeverGames_Pig`](Examples/ForeverGames_Pig), and covers the rules, the view,
+strings, testing without the game client, and playing with people who don't have your addon.
 
 ## Credits
 

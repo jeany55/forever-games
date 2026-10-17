@@ -80,6 +80,8 @@ local defaults = {
     party = { mini = false },
     -- The questions of Trivia this player asked as a host, and when, see Games/Trivia.lua
     trivia = { serial = 0, ids = {} },
+    -- What each game keeps of the player's settings for it, by game id (ForeverGamesAPI.Settings)
+    settings = {},
   },
 }
 

@@ -1,9 +1,0 @@
-## Interface: 16001
-## Title: Forever Games: Places
-## Notes: The panoramas of the places Where in Azeroth takes you, for Forever Games
-## Author: Jeany
-## Version: 0.1.0
-## Dependencies: ForeverGames
-## Group: ForeverGames
-## IconTexture: Interface\AddOns\ForeverGames\Images\Icons\where
-## LoadOnDemand: 1

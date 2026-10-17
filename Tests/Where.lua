@@ -1,7 +1,7 @@
--- Where in Azeroth and what it is built on: places in the world (Engine/Places.lua), a race won
--- on points and a ghost of marks (Engine/Race.lua), the catalogue of places and its pictures,
--- and the two views, looking round a panorama (GUI/PanoView.lua) and the map to guess on
--- (GUI/MapView.lua), in the fake client.
+-- Where in Azeroth (ForeverGames_Where, an addon of its own) and what it is built on: places in
+-- the world (Engine/Places.lua), a race won on points and a ghost of marks (Engine/Race.lua), the
+-- catalogue of places and its pictures, and the two views, looking round a panorama
+-- (GUI/PanoView.lua) and the map to guess on (GUI/MapView.lua), in the fake client.
 
 local ADDON_NAME = "ForeverGames"
 
@@ -202,7 +202,7 @@ return function(tests, loadEngine)
     local state = game.newState(1, private.Random.New(7), private.Games.Rules(game.options))
     equal(5, #state.places)
     equal(0, state.time)
-    local first = private.Where.placeOf(state)
+    local first = private.plugins.ForeverGames_Where.Where.placeOf(state)
     assert(game.validate(state, 1, "g" .. Places.Encode(first)))
     equal(false, (game.validate(state, 1, "gnowhere")))
     equal(false, (game.validate(state, 1, "x")))
@@ -211,14 +211,14 @@ return function(tests, loadEngine)
     equal(2, state.round)
     game.apply(state, 1, "s")
     equal(0, state.guesses[2].points, "no guess")
-    local third = private.Where.placeOf(state)
+    local third = private.plugins.ForeverGames_Where.Where.placeOf(state)
     local elsewhere = (third.continent + 1) % 2
     game.apply(state, 1, "g" .. Places.Encode({ continent = elsewhere, x = third.x, y = third.y }))
     equal(0, state.guesses[3].points, "the wrong continent")
     equal(nil, state.guesses[3].yards)
     equal(nil, game.result(state))
     equal(nil, game.record(state, 30, nil), "nothing to keep before the end")
-    local fourth = private.Where.placeOf(state)
+    local fourth = private.plugins.ForeverGames_Where.Where.placeOf(state)
     game.apply(state, 1, "g" .. Places.Encode({ continent = fourth.continent, x = fourth.x + 1000, y = fourth.y }))
     assert(state.guesses[4].points > 3000 and state.guesses[4].points < 5000, "a thousand yards out is a good guess")
     game.apply(state, 1, "s")
@@ -233,7 +233,44 @@ return function(tests, loadEngine)
 
   function tests.WhereVersionCountsItsPlaces()
     local private = loadEngine()
-    equal(1000 + #private.WherePlaces, private.Games.Get("where").version)
+    equal(2000000 + private.Places.Signature("where"), private.Games.Get("where").version)
+  end
+
+  --- A pack of a few places, made up
+  local function pack(...)
+    local places = {}
+    for index, id in ipairs({ ... }) do
+      places[index] = { id = id, continent = index % 2, x = index * 100, y = -index * 50, mapID = 1429,
+        pano = { tiles = 4, width = 4096, height = 1024, top = 0.6, bottom = -0.4, sky = { 0.5, 0.6, 0.7 }, ground = { 0.2, 0.2, 0.1 } } }
+    end
+    return places
+  end
+
+  function tests.WherePlacesComeInPacksDroppedIn()
+    local private = loadEngine()
+    local Places, game = private.Places, private.Games.Get("where")
+    local before, version = #Places.Catalogue("where"), game.version
+    local first = Places.Catalogue("where")[1]
+    equal("ForeverGames_Where_Places", first.pack, "the pack that comes with the game")
+    -- A pack loaded after the game: dealt from too, before the other by its name
+    Places.AddPack("where", "ForeverGames_Where_Bob", pack("bobsfarm", "bobshill", first.id))
+    local catalogue = Places.Catalogue("where")
+    equal(before + 2, #catalogue, "a place two packs have is there once")
+    equal("bobsfarm", catalogue[1].id)
+    equal("ForeverGames_Where_Bob", catalogue[1].pack, "with its pictures in its own folder")
+    equal("ForeverGames_Where_Bob", Places.Find(catalogue, first.id).pack, "the first pack by name has it")
+    assert(game.version ~= version, "another version, for other places")
+    equal(2000000 + Places.Signature("where"), game.version)
+
+    -- Two clients with the same packs deal the same, whichever order the client loaded them in
+    local other = loadEngine()
+    other.Places.AddPack("where", "ForeverGames_Where_Zed", pack("zedsden"))
+    other.Places.AddPack("where", "ForeverGames_Where_Bob", pack("bobsfarm", "bobshill", first.id))
+    Places.AddPack("where", "ForeverGames_Where_Zed", pack("zedsden"))
+    equal(game.version, other.Games.Get("where").version)
+    local mine = game.newState(1, private.Random.New(11), private.Games.Rules(game.options))
+    local theirs = other.Games.Get("where").newState(1, other.Random.New(11), other.Games.Rules(game.options))
+    equal(table.concat(mine.places, ","), table.concat(theirs.places, ","))
   end
 
   function tests.RaceIsWonOnPointsByAGameThatSaysSo()
@@ -249,9 +286,9 @@ return function(tests, loadEngine)
     equal("lost", Race.Outcome(less, game))
     equal("drawn", Race.Outcome({ run = { "5" }, heard = { "5" }, told = 1 }, game))
     equal("won", Race.Outcome({ run = { "0" }, heard = { "-" }, told = 1 }, game), "any score beats a run given up")
-    equal("21,000", private.Where.points(21000))
-    equal("999", private.Where.points(999))
-    equal("1,234,567", private.Where.points(1234567))
+    equal("21,000", private.plugins.ForeverGames_Where.Where.points(21000))
+    equal("999", private.plugins.ForeverGames_Where.Where.points(999))
+    equal("1,234,567", private.plugins.ForeverGames_Where.Where.points(1234567))
     equal("string", type(Race.Show(game, 2100000)), "points are shown by the game")
     equal(nil, Race.Show(private.Games.Get("minesweeper"), 100), "a time is shown by the window")
     local state = { places = { "a" }, round = 2, total = 4321, guesses = {} }
@@ -278,23 +315,41 @@ return function(tests, loadEngine)
     end }) }
     assert(loadfile("Engine/Codec.lua"))(ADDON_NAME, private)
     assert(loadfile("Engine/Places.lua"))(ADDON_NAME, private)
-    assert(loadfile("Games/Where/Places.lua"))(ADDON_NAME, private)
+    -- Every pack there is, as it hands its places over
+    local packs, engine = {}, ForeverGamesAPI
+    ForeverGamesAPI = { Places = { AddPack = function(catalogue, name, places)
+      equal("where", catalogue)
+      packs[#packs + 1] = { name = name, places = places }
+    end } }
+    local listing = io.popen("ls -d ForeverGames_Where_*/")
+    for folder in listing:lines() do
+      folder = folder:gsub("/$", "")
+      assert(loadfile(folder .. "/Places.lua"))(folder, {})
+    end
+    listing:close()
+    ForeverGamesAPI = engine
     local Places, seen = private.Places, {}
-    assert(#private.WherePlaces >= 1, "there is somewhere to go")
-    for index, place in ipairs(private.WherePlaces) do
-      local where = "place " .. index .. " (" .. tostring(place.id) .. ")"
-      assert(type(place.id) == "string" and place.id:match("^%l[%l%d]+$"), where .. " has a bad id")
-      assert(not seen[place.id], where .. " is there twice")
-      seen[place.id] = true
-      assert(math.floor(place.continent) == place.continent, where .. " is on no continent")
-      local back = Places.Decode(Places.Encode(place))
-      assert(back and math.abs(back.x - place.x) <= 0.5 and math.abs(back.y - place.y) <= 0.5, where .. " doesn't travel")
-      assert(type(place.mapID) == "number", where .. " has no map")
-      local pano = place.pano
-      assert(pano.tiles >= 1 and pano.top > 0 and pano.bottom < 0, where .. " has a panorama that doesn't go round")
-      for tile = 1, pano.tiles do
-        local file = ("ForeverGames_Places/Images/%s_%d"):format(place.id, tile)
-        assert(exists(file .. ".blp") or exists(file .. ".tga"), where .. " has no picture " .. file)
+    local own = 0
+    for _, pack in ipairs(packs) do
+      own = pack.name == "ForeverGames_Where_Places" and #pack.places or own
+    end
+    assert(own >= 1, "the game's own pack has somewhere to go")
+    for _, pack in ipairs(packs) do
+      for index, place in ipairs(pack.places) do
+        local where = pack.name .. "'s place " .. index .. " (" .. tostring(place.id) .. ")"
+        assert(type(place.id) == "string" and place.id:match("^%l[%l%d]+$"), where .. " has a bad id")
+        assert(not seen[place.id], where .. " is there twice")
+        seen[place.id] = true
+        assert(math.floor(place.continent) == place.continent, where .. " is on no continent")
+        local back = Places.Decode(Places.Encode(place))
+        assert(back and math.abs(back.x - place.x) <= 0.5 and math.abs(back.y - place.y) <= 0.5, where .. " doesn't travel")
+        assert(type(place.mapID) == "number", where .. " has no map")
+        local pano = place.pano
+        assert(pano.tiles >= 1 and pano.top > 0 and pano.bottom < 0, where .. " has a panorama that doesn't go round")
+        for tile = 1, pano.tiles do
+          local file = ("%s/Images/%s_%d"):format(pack.name, place.id, tile)
+          assert(exists(file .. ".blp") or exists(file .. ".tga"), where .. " has no picture " .. file)
+        end
       end
     end
   end
@@ -419,7 +474,7 @@ return function(tests, loadEngine)
     local continent = fakeMaps(Client)
     local private = loadEngine()
     for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Effects.lua", "GUI/Viewport.lua", "GUI/Strips.lua", "GUI/PanoView.lua",
-      "GUI/MapView.lua", "Games/Where/View.lua" }) do
+      "GUI/MapView.lua" }) do
       assert(loadfile(file))(ADDON_NAME, private)
     end
     local game = private.Games.Get("where")
@@ -445,14 +500,14 @@ return function(tests, loadEngine)
     end
     Client.over = false
     view.keepButton:Fire("OnClick")
-    equal(true, ForeverGames.db.profile.whereKeepMap)
+    equal(true, ForeverGames.db.profile.settings.where.keepMap, "with the addon's settings")
     for _ = 1, 30 do
       now = now + 0.1
       view:tick(0.1)
     end
     near(1, view.mapGrow, 0.01, "grown")
     view.keepButton:Fire("OnClick")
-    equal(nil, ForeverGames.db.profile.whereKeepMap)
+    equal(nil, ForeverGames.db.profile.settings.where.keepMap)
     for _ = 1, 30 do
       now = now + 0.1
       view:tick(0.1)
@@ -460,7 +515,7 @@ return function(tests, loadEngine)
     near(0, view.mapGrow, 0.01, "let shrink")
     Client.over = true
     -- Pinned right on the place, and guessed
-    local place = private.Where.placeOf(state)
+    local place = private.plugins.ForeverGames_Where.Where.placeOf(state)
     view:pinAt(place)
     view:guess()
     equal("g" .. private.Places.Encode(place), submitted[1])
@@ -483,7 +538,7 @@ return function(tests, loadEngine)
     fakeMaps(Client)
     local private = loadEngine()
     for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Effects.lua", "GUI/Viewport.lua", "GUI/Strips.lua", "GUI/PanoView.lua",
-      "GUI/MapView.lua", "Games/Where/View.lua" }) do
+      "GUI/MapView.lua" }) do
       assert(loadfile(file))(ADDON_NAME, private)
     end
     local game = private.Games.Get("where")

@@ -4,34 +4,47 @@
 -- Taken somewhere in the world, the player looks round and says where on the map they think they
 -- are. The nearer the guess, the more it is worth: all 5000 within a few yards, falling away the
 -- further out it was, nothing for the wrong continent (Engine/Places.lua). Five places a game,
--- each dealt from the game's chance out of every place there is (Games/Where/Places.lua), so a
--- race (Engine/Race.lua) and the day's game (Engine/Daily.lua) deal the same five for everyone.
+-- each dealt from the game's chance out of every place there is, so a race (Engine/Race.lua) and
+-- the day's game (Engine/Daily.lua) deal the same five for everyone.
 -- A race is won on points rather than time, and what the rival guessed at each place goes with
 -- their score, to be shown on the map next to the player's own.
 --
--- The places are panoramas of the client's own world, looked round in (GUI/PanoView.lua): their
--- pictures are an addon of their own, ForeverGames_Places, too big to load at every login. What
--- the rules need of each, where it is, is here.
+-- The places are panoramas of the client's own world, looked round in (GUI/PanoView.lua). They come
+-- in packs, addons of their own named ForeverGames_Where_<something>, each a list of places
+-- (Places.AddPack) and the pictures of them. ForeverGames_Where_Places is the one that comes with
+-- the game, and is needed for it to be played (PLACES_ADDON); anybody can make another with
+-- Tools/GeoBench and Tools/places.py, and every place of every pack there is is dealt from.
+--
+-- Where in Azeroth is an addon of its own, not a part of Forever Games: it knows the engine only
+-- by what ForeverGamesAPI has (Engine/API.lua). Its strings are in Locales/enUS.lua, its view in
+-- View.lua.
 --
 -- A move is a guess at the place the game is at: "g" and the place (Places.Encode), or "s" for
 -- none, when the time ran out without one. Whoever sets a game up may give each place a time
 -- (`time`): the view puts in what the player had pinned when it runs out, or "s". Nothing checks
 -- the time but the player's own client, as with every timed game here.
 --
--- Places are only ever added to the end of the catalogue, and the game's version is counted from
--- how many there are, so that two players with different catalogues are told they are on other
--- versions rather than being dealt different places.
+-- Places are only ever added to the end of a pack, and the game's version is counted from which
+-- places there are (Places.Signature), so that two players with different packs are told they are
+-- on other versions rather than being dealt different places.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
-local L = private.L
-local Places = private.Places
+--- @type string, table
+local ADDON, own = ...
+local engine = ForeverGamesAPI
+local L = engine.L
+local Places = engine.Places
 
 local ROUNDS = 5
 local GUESS, SKIP = "g", "s"
-local PLACES_ADDON = "ForeverGames_Places"
--- How the version is counted: this, then one more for every place there is
-local VERSION = 1000
+local PLACES_ADDON = "ForeverGames_Where_Places"
+-- How the version is counted: the rules' own, by the million, and which places there are under
+-- that. Before there were packs it was a thousand and one more for every place
+local RULES = 2
+
+--- @return integer
+local function version()
+  return RULES * 1000000 + Places.Signature("where")
+end
 
 --- @class WhereGuess
 --- @field guess Place? Where the player said, nil for no guess
@@ -46,7 +59,7 @@ local VERSION = 1000
 --- @field time integer Seconds each place is given, 0 for as long as it takes
 
 local function catalogue()
-  return private.WherePlaces or {}
+  return Places.Catalogue("where")
 end
 
 --- The place a game is at, or one of its places by round
@@ -142,15 +155,16 @@ local function moves(state)
   return { GUESS .. Places.Encode(place), GUESS .. Places.Encode(near), GUESS .. Places.Encode(far), SKIP }
 end
 
-private.Where = { ROUNDS = ROUNDS, GUESS = GUESS, SKIP = SKIP, placeOf = placeOf, points = points, catalogue = catalogue }
+own.Where = { ROUNDS = ROUNDS, GUESS = GUESS, SKIP = SKIP, placeOf = placeOf, points = points, catalogue = catalogue }
 
-private.Games.Register({
+local WHERE = {
   id = "where",
   name = L["game_where"],
   description = L["game_where_description"],
   genre = "solo",
-  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\where",
-  version = VERSION + #catalogue(),
+  icon = "Interface\\AddOns\\ForeverGames_Where\\Images\\icon",
+  plugin = ADDON,
+  version = version(),
   seats = 1,
   options = OPTIONS,
   howto = {
@@ -198,6 +212,12 @@ private.Games.Register({
     end,
   },
   createView = function(stage)
-    return private.WhereView.New(stage)
+    return own.WhereView.New(stage)
   end,
-})
+}
+
+engine.Games.Register(WHERE)
+-- A pack loads after the game, and has the game deal from more places than it did: another version
+Places.OnPack("where", function()
+  WHERE.version = version()
+end)

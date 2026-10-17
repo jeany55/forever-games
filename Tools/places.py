@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """Adds a stitched panorama (Tools/GeoBench, stitch.py) to the places Where in Azeroth deals,
-and writes the catalogue the game reads.
+and writes the pack of places the game reads.
 
     Tools/GeoBench/python.sh ../places.py add <pano> <id>    a stitched panorama as place <id>: c3 for
                                                              your capture 3, bob3 for a friend's
     Tools/GeoBench/python.sh ../places.py list
-    Tools/GeoBench/python.sh ../places.py write                 Games/Where/Places.lua again
+    Tools/GeoBench/python.sh ../places.py write              ForeverGames_Where_Places/Places.lua again
 
-Tools/places.json is the catalogue, in the order places were added: a place is only ever added
-at its end, because the game deals by that order (Engine/Places.lua) and every player has to
-deal the same places from the same seed. To take one out or change where one is, bump the
-game's version in Games/Where.lua.
+Places come in packs, addons of their own named ForeverGames_Where_<Name>. Without --pack it is
+ForeverGames_Where_Places, the one that comes with the game. With --pack <Name> before the rest
+it is ForeverGames_Where_<Name>, which is made, .toc and all, the first time a place is added to
+it: a folder to drop into Interface/AddOns next to ForeverGames_Where, and its places are dealt
+along with every other pack's.
 
-The panorama's pictures go into the addon of places, ForeverGames_Places/Images/<id>_<n>.blp, a
-BLP each (Tools/blp.py), and what the game needs to know of each place into
-Games/Where/Places.lua: where it is, and how its panorama is cut and how far up and down it goes.
+    Tools/GeoBench/python.sh ../places.py --pack Bob add bob3 bobsfarm
+
+Tools/places.json is the catalogue of ForeverGames_Where_Places, Tools/places_<Name>.json that of
+another pack, in the order places were added: a place is only ever added at its end, because the
+game deals by that order (Engine/Places.lua) and every player has to deal the same places from
+the same seed. The game's version is worked out from which places there are, so two players
+with other packs, or another place in one, are told they are on other versions.
+
+The panorama's pictures go into the pack's Images/<id>_<n>.blp, a BLP each (Tools/blp.py), and
+what the game needs to know of each place into its Places.lua: where it is, and how its panorama
+is cut and how far up and down it goes.
 """
 import json
 import re
@@ -30,9 +39,36 @@ sys.path.insert(0, str(HERE))
 import blp  # noqa: E402
 
 BENCH = HERE / "GeoBench" / "Images"
+# The pack being worked on, ForeverGames_Where_Places unless --pack says another (main)
+NAME = "Places"
+ADDON = "ForeverGames_Where_Places"
 CATALOGUE = HERE / "places.json"
-PACK = ROOT / "ForeverGames_Places" / "Images"
-LUA = ROOT / "Games" / "Where" / "Places.lua"
+FOLDER = ROOT / ADDON
+PACK = FOLDER / "Images"
+LUA = FOLDER / "Places.lua"
+
+
+def use_pack(name):
+    global NAME, ADDON, CATALOGUE, FOLDER, PACK, LUA
+    if not re.fullmatch(r"[A-Z][A-Za-z0-9]{0,31}", name):
+        sys.exit("A pack's name is a capital letter then letters or digits, as in Bob or Northrend")
+    NAME, ADDON = name, f"ForeverGames_Where_{name}"
+    CATALOGUE = HERE / ("places.json" if name == "Places" else f"places_{name}.json")
+    FOLDER = ROOT / ADDON
+    PACK = FOLDER / "Images"
+    LUA = FOLDER / "Places.lua"
+
+
+TOC = """## Interface: 16001
+## Title: Forever Games: Where in Azeroth, {name}
+## Notes: Places for Where in Azeroth to take you, and their panoramas
+## Version: 1.0.0
+## Dependencies: ForeverGames_Where
+## Group: ForeverGames
+## IconTexture: Interface\\AddOns\\ForeverGames_Where\\Images\\icon
+
+Places.lua
+"""
 
 
 def load():
@@ -62,15 +98,19 @@ def for_game(places):
 
 def write(places):
     LUA.parent.mkdir(parents=True, exist_ok=True)
+    toc = FOLDER / f"{ADDON}.toc"
+    if not toc.exists():
+        toc.write_text(TOC.format(name=NAME), newline="\n")
+        print(toc)
     with open(LUA, "w", newline="\n") as out:
-        out.write("-- Every place Where in Azeroth deals, in the order they were added: written by\n")
-        out.write("-- Tools/places.py from Tools/places.json, run that again rather than change this.\n")
-        out.write("-- Only ever added to at the end, see Engine/Places.lua.\n\n")
-        out.write("--- @type nil, ForeverGamesPrivate\nlocal _, private = ...\n\n")
-        out.write("private.WherePlaces = {\n")
+        out.write(f"-- The places of {ADDON} for Where in Azeroth to deal, in the order they were added:\n")
+        out.write(f"-- written by Tools/places.py from Tools/{CATALOGUE.name}, run that again rather than change\n")
+        out.write("-- this. Only ever added to at the end, see Engine/Places.lua.\n\n")
+        out.write("local ADDON = ...\n\n")
+        out.write('ForeverGamesAPI.Places.AddPack("where", ADDON, {\n')
         for place in places:
             out.write("  " + lua(place) + ",\n")
-        out.write("}\n")
+        out.write("})\n")
     print(LUA)
 
 
@@ -116,12 +156,16 @@ def add(name, place_id):
 
 
 def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "add" and len(sys.argv) == 4:
-        add(sys.argv[2], sys.argv[3])
-    elif len(sys.argv) == 2 and sys.argv[1] == "list":
+    args = sys.argv[1:]
+    if len(args) >= 2 and args[0] == "--pack":
+        use_pack(args[1])
+        args = args[2:]
+    if len(args) == 3 and args[0] == "add":
+        add(args[1], args[2])
+    elif args == ["list"]:
         for place in load():
             print(f"{place['id']:24} {place['zone']} / {place.get('subzone') or ''}  ({place['continent']}: {place['x']}, {place['y']})")
-    elif len(sys.argv) == 2 and sys.argv[1] == "write":
+    elif args == ["write"]:
         write(for_game(load()))
     else:
         sys.exit(__doc__)

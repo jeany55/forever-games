@@ -270,8 +270,8 @@ local function describeRace(match, game)
     -- A run played for the race goes on as a game for one, a best that was sent is only the race
     if match.status ~= "active" and not race.best then
       return nil
-    elseif race.declined == "nogame" and game.addon then
-      return L["status_declined_addon"]:format(rival, game.addon)
+    elseif race.declined == "nogame" and (game.plugin or game.addon) then
+      return L["status_declined_addon"]:format(rival, game.plugin or game.addon)
     end
     return L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival)
   elseif mine ~= nil then
@@ -331,6 +331,10 @@ function MainFrame.Describe(match)
     return L["status_outgoing"]:format(MainFrame.Names(match, private.session:Behind(match)))
   elseif match.status == "declined" then
     local who = (crowd and match.declinedBy) and MainFrame.Names(match, { match.declinedBy }) or opponent
+    -- A game that comes in an addon of its own: that is what they are missing
+    if match.declineReason == "nogame" and (game.plugin or game.addon) then
+      return L["status_declined_addon"]:format(who, game.plugin or game.addon)
+    end
     return L[DECLINE_REASONS[match.declineReason] or "status_declined"]:format(who)
   elseif match.status == "finished" then
     local result = Match.Result(match)

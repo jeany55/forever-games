@@ -154,3 +154,100 @@ function Places.Find(catalogue, id)
   end
   return nil
 end
+
+-----------------------------
+-- Packs of places
+-----------------------------
+-- A game's places can come in packs: addons of their own, each a list of places and the pictures
+-- that go with them, which anybody can make and drop in beside the game (API.md). A pack adds its
+-- places to the game's catalogue under its own name, and the catalogue is every pack there is in
+-- the order of their names, each in its own order. So two clients with the same packs have the
+-- same catalogue whatever order the client happened to load them in. A place whose id a pack
+-- before it has already is left out.
+--
+-- Which places there are, in which order, is summed up in a number (Signature) for the game to
+-- count its version from, so that two players with different packs are told they are on other
+-- versions rather than being dealt different places.
+
+local catalogues = {}
+
+--- @param name string
+--- @return { packs: table<string, table[]>, listeners: fun()[], merged: table[]? }
+local function catalogueNamed(name)
+  local catalogue = catalogues[name]
+  if not catalogue then
+    catalogue = { packs = {}, listeners = {} }
+    catalogues[name] = catalogue
+  end
+  return catalogue
+end
+
+--- Adds a pack of places to a catalogue. Each place is given the pack's name (`pack`), for the
+--- game to find its pictures by
+--- @param name string Which catalogue: the id of the game that deals from it
+--- @param pack string The addon the places come in
+--- @param places table[] Its places, in the order they were added to it: only ever added to at the end
+function Places.AddPack(name, pack, places)
+  assert(type(name) == "string" and type(pack) == "string", "A pack of places needs a catalogue and a name")
+  assert(type(places) == "table", "A pack of places needs places")
+  local catalogue = catalogueNamed(name)
+  catalogue.packs[pack] = places
+  catalogue.merged = nil
+  for _, listener in ipairs(catalogue.listeners) do
+    listener()
+  end
+end
+
+--- Every place of a catalogue: the packs in the order of their names, each in its own order
+--- @param name string
+--- @return table[]
+function Places.Catalogue(name)
+  local catalogue = catalogueNamed(name)
+  if not catalogue.merged then
+    local names = {}
+    for pack in pairs(catalogue.packs) do
+      names[#names + 1] = pack
+    end
+    table.sort(names)
+    local merged, seen = {}, {}
+    for _, pack in ipairs(names) do
+      for _, place in ipairs(catalogue.packs[pack]) do
+        if type(place.id) == "string" and not seen[place.id] then
+          seen[place.id] = true
+          place.pack = pack
+          merged[#merged + 1] = place
+        end
+      end
+    end
+    catalogue.merged = merged
+  end
+  return catalogue.merged
+end
+
+-- Signatures are worked out below this, a prime, so that they stay whole numbers a double holds
+local SIGNATURE_MODULUS = 999983
+
+--- A number for which places a catalogue has and in which order, the same on every client with
+--- the same packs, and almost surely another with any other
+--- @param name string
+--- @return integer From 0 up to but not including a million
+function Places.Signature(name)
+  local signature = 0
+  for _, place in ipairs(Places.Catalogue(name)) do
+    for index = 1, #place.id do
+      signature = (signature * 31 + place.id:byte(index)) % SIGNATURE_MODULUS
+    end
+    -- Between one id and the next, so that "ab" then "c" isn't "a" then "bc"
+    signature = (signature * 31 + 1) % SIGNATURE_MODULUS
+  end
+  return signature
+end
+
+--- Has something told whenever a pack is added to a catalogue, as one that loads after the game
+--- that deals from it will be
+--- @param name string
+--- @param listener fun()
+function Places.OnPack(name, listener)
+  local listeners = catalogueNamed(name).listeners
+  listeners[#listeners + 1] = listener
+end

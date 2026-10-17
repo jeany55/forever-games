@@ -16,19 +16,19 @@
 -- game picked up again later starts the place it is at afresh. A timed place that runs out puts
 -- in whatever is pinned, or no guess.
 
---- @type nil, ForeverGamesPrivate
-local _, private = ...
-local L = private.L
+--- @type nil, table
+local _, own = ...
+local engine = ForeverGamesAPI
+local L = engine.L
 
 --- @class WhereView
 local WhereView = {}
-private.WhereView = WhereView
+own.WhereView = WhereView
 
 local View = {}
 View.__index = View
 
 local floor, min, max = math.floor, math.min, math.max
-local FOLDER = "Interface\\AddOns\\ForeverGames_Places\\Images\\"
 -- The map to guess on: its size in the corner as a part of the window across, and while the
 -- cursor is over it, how much of its width its height is, and the room for the button under it
 local SMALL, LARGE, SHAPE, BUTTON = 0.3, 0.58, 0.66, 30
@@ -67,7 +67,9 @@ end
 --- @return Panorama
 local function panorama(place)
   local pano = place.pano
-  return { folder = FOLDER, file = place.id, tiles = pano.tiles, top = pano.top, bottom = pano.bottom, facing = pano.facing,
+  -- In the Images folder of the pack the place came in
+  local folder = "Interface\\AddOns\\" .. place.pack .. "\\Images\\"
+  return { folder = folder, file = place.id, tiles = pano.tiles, top = pano.top, bottom = pano.bottom, facing = pano.facing,
     sky = pano.sky, ground = pano.ground }
 end
 
@@ -85,10 +87,10 @@ end
 --- @param stage Frame
 --- @return table
 function WhereView.New(stage)
-  Where, Places, Widgets = private.Where, private.Places, private.Widgets
+  Where, Places, Widgets = own.Where, engine.Places, engine.Widgets
   local self = setmetatable({ stage = stage, width = 0, height = 0, mapGrow = 0, mapGoal = 0 }, View)
 
-  self.pano = private.PanoView.New(stage, { compass = true })
+  self.pano = engine.PanoView.New(stage, { compass = true })
   self.pano.frame:SetPoint("TOPLEFT")
   self.missing = self.pano.frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   self.missing:SetPoint("CENTER")
@@ -116,7 +118,7 @@ function WhereView.New(stage)
   corner:SetFrameLevel(self.pano.frame:GetFrameLevel() + 20)
   corner:SetPoint("BOTTOMRIGHT", -PAD, PAD)
   self.corner = corner
-  self.small = private.MapView.New(corner, { trail = true, onClick = function(place)
+  self.small = engine.MapView.New(corner, { trail = true, onClick = function(place)
     self:pinAt(place)
   end })
   self.small.frame:SetPoint("TOPLEFT", 4, -4)
@@ -124,7 +126,8 @@ function WhereView.New(stage)
   self.keepButton = Widgets.Button(corner, "", 96, 24)
   self.keepButton:SetPoint("BOTTOMLEFT", 4, 4)
   self.keepButton:SetScript("OnClick", function()
-    ForeverGames.db.profile.whereKeepMap = not ForeverGames.db.profile.whereKeepMap or nil
+    local settings = engine.Settings("where")
+    settings.keepMap = not settings.keepMap or nil
     self:refreshKeep()
   end)
   self:refreshKeep()
@@ -144,7 +147,7 @@ function WhereView.New(stage)
   local back = reveal:CreateTexture(nil, "BACKGROUND")
   back:SetAllPoints()
   back:SetColorTexture(0.05, 0.05, 0.06, 0.96)
-  self.big = private.MapView.New(reveal)
+  self.big = engine.MapView.New(reveal)
   self.big.frame:SetPoint("TOPLEFT")
   self.big:Lock(true)
   local bar = CreateFrame("Frame", nil, reveal)
@@ -186,7 +189,7 @@ function WhereView.New(stage)
   end)
   local ticker = CreateFrame("Frame", nil, stage)
   self.animator = Widgets.Animator(ticker)
-  self.effects = private.Effects.New(stage)
+  self.effects = engine.Effects.New(stage)
 
   -- Keys, while the cursor is over the game
   local keys = CreateFrame("Frame", nil, stage)
@@ -288,7 +291,7 @@ function View:refreshGuess()
 end
 
 function View:refreshKeep()
-  self.keepButton:SetText(ForeverGames.db.profile.whereKeepMap and L["where_map_let_shrink"] or L["where_map_keep_open"])
+  self.keepButton:SetText(engine.Settings("where").keepMap and L["where_map_let_shrink"] or L["where_map_keep_open"])
 end
 
 function View:refreshHud()
@@ -328,7 +331,7 @@ function View:tick(elapsed)
   -- while it is kept open
   if self.corner:IsShown() then
     local small = self.small
-    local busy = small.viewport.grab or small.diving or ForeverGames.db.profile.whereKeepMap
+    local busy = small.viewport.grab or small.diving or engine.Settings("where").keepMap
     if busy or self.corner:IsMouseOver() then
       self.mapGoal, self.leftAt = 1, nil
     elseif self.mapGoal == 1 then

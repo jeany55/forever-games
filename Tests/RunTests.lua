@@ -5,6 +5,16 @@
 -- sessions together through a fake network that can drop messages or take a player offline.
 
 local ADDON_NAME = "ForeverGames"
+-- What the window needs on top of the engine, in load order. Only the tests that click through
+-- the window load these, on top of the fake client in Tests/FakeClient.lua.
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
+local Client = dofile("Tests/FakeClient.lua")
+
+-- A fresh copy of the engine, and the plugins loaded into it with the files their English may be
+-- in (PLUGINS.english). Made in a block of their own, as the main chunk has room for only so many
+-- locals
+local loadEngine, PLUGINS
+do
 local ENGINE_FILES = {
   "Engine/Codec.lua",
   "Engine/Random.lua",
@@ -52,23 +62,84 @@ local ENGINE_FILES = {
   "Engine/SectorMap.lua",
   "Engine/Actors.lua",
   "Engine/Course.lua",
-  "Games/Freedoom/Carry.lua",
-  "Games/Freedoom/World.lua",
-  "Games/Freedoom.lua",
   "Games/Wormcraft.lua",
   "Engine/Places.lua",
-  "Tests/WherePlaces.lua",
-  "Games/Where.lua",
+  "Engine/API.lua",
 }
 
--- What the window needs on top of the engine, in load order. Only the tests that click through
--- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
-local Client = dofile("Tests/FakeClient.lua")
+-- The addons beside Forever Games that bring games of their own through ForeverGamesAPI
+-- (Engine/API.lua), loaded into every copy of the engine after it the way the client loads them:
+-- every ForeverGames_* folder here and in Examples/ that isn't loaded on demand and whose .toc
+-- says it needs Forever Games, or an addon that does (a pack of places needs Where in Azeroth),
+-- and any other addon folder named in FOREVER_GAMES_PLUGINS, separated by semicolons. Each is
+-- loaded after what it needs, as the client would.
+-- Their games are put through the checks of Tests/EveryGame.lua like any other.
+--- @class TestPlugin
+--- @field name string The addon's name, which is its folder's
+--- @field folder string
+--- @field files string[] The Lua files its .toc lists, in order, as paths from here
+PLUGINS = {}
+do
+  local folders = {}
+  local listing = io.popen("ls -d ForeverGames_*/ Examples/ForeverGames_*/ 2>/dev/null")
+  for folder in listing:lines() do
+    folders[#folders + 1] = folder:gsub("/$", "")
+  end
+  listing:close()
+  for folder in (os.getenv("FOREVER_GAMES_PLUGINS") or ""):gmatch("[^;]+") do
+    folders[#folders + 1] = folder:gsub("[/\\]$", "")
+  end
+  for _, folder in ipairs(folders) do
+    local name = folder:match("([^/\\]+)$")
+    local toc = assert(io.open(folder .. "/" .. name .. ".toc"), "no " .. name .. ".toc in " .. folder)
+    local plugin, onDemand = { name = name, folder = folder, files = {}, needs = {} }, false
+    for line in toc:lines() do
+      line = line:gsub("^%s+", ""):gsub("%s+$", "")
+      local field, value = line:match("^##%s*([%w%-]+):%s*(.*)$")
+      if field == "Dependencies" or field == "RequiredDeps" then
+        for dependency in value:gmatch("[^,%s]+") do
+          plugin.needs[#plugin.needs + 1] = dependency
+        end
+      elseif field == "LoadOnDemand" then
+        onDemand = value == "1"
+      elseif line ~= "" and not line:find("^#") and line:find("%.lua$") then
+        plugin.files[#plugin.files + 1] = folder .. "/" .. line:gsub("\\", "/")
+      end
+    end
+    toc:close()
+    if #plugin.needs > 0 and not onDemand then
+      folders[name] = plugin
+    end
+  end
+  -- Each in turn once everything it needs is in, until nothing more can be
+  local loaded, more = { [ADDON_NAME] = true }, true
+  while more do
+    more = false
+    for _, folder in ipairs(folders) do
+      local plugin = folders[folder:match("([^/\\]+)$")]
+      local ready = plugin ~= nil and not loaded[plugin.name]
+      for _, dependency in ipairs(plugin and plugin.needs or {}) do
+        ready = ready and loaded[dependency] == true
+      end
+      if ready then
+        loaded[plugin.name], more = true, true
+        PLUGINS[#PLUGINS + 1] = plugin
+      end
+    end
+  end
+end
+
+-- Whatever files a plugin brings may have its strings in, so all of them are looked in
+PLUGINS.english = { "Locales/enUS.lua" }
+for _, plugin in ipairs(PLUGINS) do
+  for _, file in ipairs(plugin.files) do
+    PLUGINS.english[#PLUGINS.english + 1] = file
+  end
+end
 
 --- Loads a fresh copy of the engine, the way the client would for one player
 --- @return table private
-local function loadEngine()
+function loadEngine()
   local private = { L = setmetatable({}, {
     __index = function(_, key)
       return key
@@ -77,7 +148,17 @@ local function loadEngine()
   for _, file in ipairs(ENGINE_FILES) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
+  -- Each plugin with a table of its own, as the client gives every addon, kept here for its tests
+  private.plugins = {}
+  for _, plugin in ipairs(PLUGINS) do
+    local own = {}
+    for _, file in ipairs(plugin.files) do
+      assert(loadfile(file))(plugin.name, own)
+    end
+    private.plugins[plugin.name] = own
+  end
   return private
+end
 end
 
 -----------------------------
@@ -2285,11 +2366,12 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
+  -- The games of plugins come after Forever Games' own: Freedoom, Where in Azeroth, and Pig of Examples/
   local alone = "yacht,solitaire,minesweeper,2048,blockfall,sudoku,fourtiles,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
-  equal("chinesecheckers,yacht,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
-  equal("backgammon,yacht", idsOf(Games.Search(nil, "dice", 2)), "a game played alone or around a table is found either way")
+  equal("chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("backgammon,yacht,pig", idsOf(Games.Search(nil, "dice", 2)), "a game played alone or around a table is found either way")
   equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
 
@@ -20938,7 +21020,7 @@ do
     equal(2, map:SectorAt(200, 60).index, "east")
     -- And for a real map: just in front of every seg is the sector it is seen from
     local private = mapEngine()
-    assert(loadfile("ForeverGames_Freedoom/Maps/E1M1.lua"))(ADDON_NAME, private)
+    assert(loadfile("ForeverGames_Freedoom_Maps/E1M1.lua"))(ADDON_NAME, private)
     local e1m1 = private.SectorMap.Load("freedoom_e1m1")
     for index, seg in ipairs(e1m1.segs) do
       local length = math.sqrt((seg.x2 - seg.x1) ^ 2 + (seg.y2 - seg.y1) ^ 2)
@@ -20947,7 +21029,7 @@ do
       assert(e1m1:SectorAt(x, y) == seg.front, "seg " .. index .. " looks into another sector")
     end
     -- And for Run, whose nodes Tools/mapkit.py built
-    assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))(ADDON_NAME, private)
+    assert(loadfile("ForeverGames_Freedoom_Maps/Run.lua"))(ADDON_NAME, private)
     local run = private.SectorMap.Load("freedoom_run")
     for index, seg in ipairs(run.segs) do
       local length = math.sqrt((seg.x2 - seg.x1) ^ 2 + (seg.y2 - seg.y1) ^ 2)
@@ -21113,7 +21195,7 @@ do
   end
 
   function tests.FreedoomPicksThingsUpByDoomsRules()
-    local Freedoom = loadEngine().Freedoom
+    local Freedoom = loadEngine().plugins.ForeverGames_Freedoom.Freedoom
     local carried = Freedoom.NewInventory()
     equal(nil, (Freedoom.PickUp(carried, 2011)), "no stimpack for whoever is well")
     carried.health = 20
@@ -21250,7 +21332,7 @@ do
   end
 
   function tests.FreedoomArmourTakesSomeOfABlow()
-    local Freedoom = loadEngine().Freedoom
+    local Freedoom = loadEngine().plugins.ForeverGames_Freedoom.Freedoom
     local player = { shootable = true }
     local run = { player = player, inventory = Freedoom.NewInventory(), tic = 0 }
     Freedoom.Damage(run, player, 30)
@@ -21274,15 +21356,15 @@ do
   local function freedoomView(level, skill)
     Client.Install()
     local private = loadEngine()
-    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Strips.lua", "GUI/SectorView.lua", "ForeverGames_Freedoom/Hud.lua" }) do
+    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Strips.lua", "GUI/SectorView.lua" }) do
       assert(loadfile(file))(ADDON_NAME, private)
     end
     -- As the maps' own addon puts them, when it is loaded (Run only when it is played, to be quicker)
     if level == "run" then
-      assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))()
+      assert(loadfile("ForeverGames_Freedoom_Maps/Run.lua"))()
     end
     for map = 1, 9 do
-      assert(loadfile("ForeverGames_Freedoom/Maps/E1M" .. map .. ".lua"))()
+      assert(loadfile("ForeverGames_Freedoom_Maps/E1M" .. map .. ".lua"))()
     end
     local game = private.Games.Get("freedoom")
     local stage = CreateFrame("Frame", nil, UIParent)
@@ -21315,7 +21397,7 @@ do
       local run = view.run
       equal(level, run.level, "the map picked")
       for _, line in ipairs(run.map.lines) do
-        assert(line.special == 0 or private.Freedoom.Specials[line.special] or cosmetic[line.special],
+        assert(line.special == 0 or private.plugins.ForeverGames_Freedoom.Freedoom.Specials[line.special] or cosmetic[line.special],
           level .. " has a line that does what nothing here does: " .. line.special)
       end
       local monsters = 0
@@ -21356,7 +21438,7 @@ do
     for _, skill in ipairs({ "baby", "easy", "medium", "hard" }) do
       local view, private = freedoomView("run", skill)
       local run = view.run
-      local Freedoom = private.Freedoom
+      local Freedoom = private.plugins.ForeverGames_Freedoom.Freedoom
       local count = 0
       for _, actor in ipairs(run.actors) do
         count = count + ((actor.info and not actor.info.barrel) and 1 or 0)
@@ -21435,7 +21517,7 @@ do
   end
 
   function tests.FreedoomGhostSamplesAreFiveLetters()
-    local Freedoom = loadEngine().Freedoom
+    local Freedoom = loadEngine().plugins.ForeverGames_Freedoom.Freedoom
     for _, case in ipairs({ { -416, 256, 0, false }, { 3104.7, -2160.2, 2.5, true }, { 0, 0, 6.2, false } }) do
       local sample = Freedoom.GhostSample(case[1], case[2], case[3], case[4])
       equal(5, #sample, "five letters")
@@ -21454,7 +21536,7 @@ do
     local view, private = freedoomView()
     local run = view.run
     local player = run.player
-    local Freedoom = private.Freedoom
+    local Freedoom = private.plugins.ForeverGames_Freedoom.Freedoom
     -- Bob's run: standing 160 ahead of where the player starts, then walking towards them
     local trail = {}
     for index = 0, 9 do
@@ -21546,7 +21628,7 @@ do
         monster = actor
       end
     end
-    private.Freedoom.Damage(run, monster, 10000)
+    private.plugins.ForeverGames_Freedoom.Freedoom.Damage(run, monster, 10000)
     equal(1, run.kills, "a kill")
     local secret
     for _, subsector in ipairs(run.map.subsectors) do
@@ -21610,7 +21692,7 @@ do
     local view, private = freedoomView()
     local run = view.run
     local player = run.player
-    local Freedoom = private.Freedoom
+    local Freedoom = private.plugins.ForeverGames_Freedoom.Freedoom
     local function trail(ahead)
       local samples = {}
       for _ = 1, 6 do
@@ -21701,7 +21783,7 @@ do
     end
     -- Stood in front of it
     run.map:MoveThing(player, (door.x1 + door.x2) / 2 + door.dy / door.length * 40, (door.y1 + door.y2) / 2 - door.dx / door.length * 40)
-    private.Freedoom.Trigger(run, door, "use")
+    private.plugins.ForeverGames_Freedoom.Freedoom.Trigger(run, door, "use")
     assert(last():match("^doropn[12]$"), "a door, heard from where it is: " .. tostring(last()))
 
     -- Using a wall with nothing to it is a grunt
@@ -21731,9 +21813,9 @@ do
     end
     assert(line, "a teleport")
     local x, y = run.player.x, run.player.y
-    assert(not private.Freedoom.Trigger(run, line, "walk", nil, false), "not from behind")
+    assert(not private.plugins.ForeverGames_Freedoom.Freedoom.Trigger(run, line, "walk", nil, false), "not from behind")
     equal(x, run.player.x, "and stayed where they were")
-    assert(private.Freedoom.Trigger(run, line, "walk", nil, true), "from the front")
+    assert(private.plugins.ForeverGames_Freedoom.Freedoom.Trigger(run, line, "walk", nil, true), "from the front")
     local landed = false
     for _, landing in ipairs(run.teleports) do
       if landing.x == run.player.x and landing.y == run.player.y then
@@ -22125,7 +22207,7 @@ do
       coverage(private, map, 40, 70, 41, turn * math.pi / 8)
       coverage(private, map, 200, 30, 65, turn * math.pi / 8, 2)
     end
-    assert(loadfile("ForeverGames_Freedoom/Maps/E1M1.lua"))(ADDON_NAME, private)
+    assert(loadfile("ForeverGames_Freedoom_Maps/E1M1.lua"))(ADDON_NAME, private)
     local e1m1 = private.SectorMap.Load("freedoom_e1m1")
     local looked = 0
     for _, thing in ipairs(e1m1.data.things) do
@@ -22136,7 +22218,7 @@ do
       end
     end
     -- Run, from every other thing in it, looking every which way
-    assert(loadfile("ForeverGames_Freedoom/Maps/Run.lua"))(ADDON_NAME, private)
+    assert(loadfile("ForeverGames_Freedoom_Maps/Run.lua"))(ADDON_NAME, private)
     local run = private.SectorMap.Load("freedoom_run")
     for index, thing in ipairs(run.data.things) do
       if index % 2 == 0 then
@@ -22536,10 +22618,10 @@ do
   function tests.GameThatNeedsAnAddonIsOnlyOfferedWithIt()
     local Games = loadEngine().Games
     local freedoom = Games.Get("freedoom")
-    equal("ForeverGames_Freedoom", freedoom.addon, "Freedoom's maps are an addon of their own")
+    equal("ForeverGames_Freedoom_Maps", freedoom.addon, "Freedoom's maps are an addon of their own")
     assert(Games.Offered(freedoom), "taken to be there until the client says")
     Games.SetAddOnCheck(function(addon)
-      return addon ~= "ForeverGames_Freedoom"
+      return addon ~= "ForeverGames_Freedoom_Maps"
     end)
     assert(not Games.Offered(freedoom), "not without its maps")
     for _, game in ipairs(Games.Search()) do
@@ -22554,13 +22636,56 @@ do
     local world = World.New()
     world.prepare = function(private)
       private.Games.SetAddOnCheck(function(addon)
-        return addon ~= "ForeverGames_Freedoom"
+        return addon ~= "ForeverGames_Freedoom_Maps"
       end)
     end
     local bob = world:AddPlayer("Bob-Realm")
     world.queue = {}
     bob.session:Receive("Alice-Realm", "1:RAC:r1:freedoom:" .. freedoom.version)
     equal("1:DEC:r1:nogame", world.queue[1] and world.queue[1].text)
+  end
+
+  function tests.PluginsAreGivenThePartsOfTheEngineAGameIsMadeWith()
+    local private = loadEngine()
+    local API = ForeverGamesAPI
+    equal(1, API.version)
+    equal(private.Games, API.Games, "the registry of this engine")
+    equal(private.SectorMap, API.SectorMap)
+    equal(nil, API.Session, "but not what runs the addon")
+    equal(nil, API.plugins)
+    assert(not pcall(function()
+      API.Mine = {}
+    end), "and nothing is put in it")
+    assert(API.Locale("enUS", true), "somewhere for the strings")
+    equal(nil, API.Locale("deDE"), "and nowhere for a language that isn't the client's")
+    API.Settings("pig").target = 50
+    equal(50, API.Settings("pig").target, "and somewhere to keep a setting")
+    -- Freedoom and Where in Azeroth are plugins, and so is the example in Examples/
+    equal("ForeverGames_Freedoom", private.Games.Get("freedoom").plugin)
+    equal("ForeverGames_Where", private.Games.Get("where").plugin)
+    local pig = private.Games.Get("pig")
+    equal("ForeverGames_Pig", pig.plugin)
+    equal(pig, private.Games.Search("pig")[1], "offered like any other game")
+    assert(private.plugins.ForeverGames_Freedoom.Freedoom, "with a table of its own")
+  end
+
+  function tests.ChallengeToAGameOfAPluginTheOtherDoesntHaveNamesIt()
+    local world = World.New()
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    -- A game only Alice's client has
+    local lonely = {}
+    for key, value in pairs(alice.private.Games.Get("pig")) do
+      lonely[key] = value
+    end
+    lonely.id, lonely.plugin = "lonely", "ForeverGames_Lonely"
+    alice.private.Games.Register(lonely)
+    local MainFrame = openWindow(alice)
+    local mine = assert(alice.session:Invite("Bob-Realm", "lonely"))
+    world:Deliver()
+    equal("declined", mine.status)
+    equal("nogame", mine.declineReason)
+    equal(nil, next(bob.matches), "Bob has no game of it")
+    equal("status_declined_addon", MainFrame.Describe(mine), "Alice is told what Bob is missing")
   end
 
   function tests.RaceLeavesOutAGameThatSaysSo()
@@ -23056,10 +23181,21 @@ do
   end
 end
 
--- The checks every game is put through, a test for each
-dofile("Tests/EveryGame.lua")(tests, loadEngine)
+-- The checks every game is put through, a test for each, the games of plugins too
+dofile("Tests/EveryGame.lua")(tests, loadEngine, PLUGINS.english)
 -- Where in Azeroth, and the places, races and views it is built on
 dofile("Tests/Where.lua")(tests, loadEngine)
+-- A plugin's own tests, in Tests.lua in its folder: a function that is handed the tests to add
+-- to, the engine to load (with every plugin in it), and what the tests here are written with
+for _, plugin in ipairs(PLUGINS) do
+  local file = io.open(plugin.folder .. "/Tests.lua")
+  if file then
+    file:close()
+    assert(loadfile(plugin.folder .. "/Tests.lua"))()(tests, loadEngine, {
+      equal = equal, near = near, World = World, Client = Client, openWindow = openWindow,
+    })
+  end
+end
 
 -----------------------------
 -- Runner
