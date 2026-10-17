@@ -149,7 +149,7 @@ private.Games.Register({
   name = L["game_where"],
   description = L["game_where_description"],
   genre = "solo",
-  icon = "Interface\\Icons\\INV_Misc_Map_01",
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\where",
   version = VERSION + #catalogue(),
   seats = 1,
   options = OPTIONS,

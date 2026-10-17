@@ -533,7 +533,7 @@ Rooms.Register({
   id = "trivia",
   name = L["game_trivia"],
   description = L["game_trivia_description"],
-  icon = "Interface\\Icons\\INV_Misc_QuestionMark",
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\trivia",
   version = 1,
   options = {
     {

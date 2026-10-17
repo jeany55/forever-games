@@ -263,7 +263,8 @@ the client won't write in a font an addon brings, so they are pictures.
 The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
 ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
 `Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
-are drawn by `Tools/make_wormcraft.py`. Freedoom's maps, the pictures they are drawn with, the
+are drawn by `Tools/make_wormcraft.py`. The icons of Where in Azeroth, Sketch and Trivia are drawn
+by `Tools/make_icons.py`. Freedoom's maps, the pictures they are drawn with, the
 sprites of what lies about in them, the status bar and the icon are taken from `freedoom1.wad` by
 `Tools/import_freedoom.sh`, with `Tools/import_wad.py`, which takes any map of a Doom WAD. Run is
 written rather than drawn, by `Tools/make_run.py` with `Tools/mapkit.py`, which builds a Doom map

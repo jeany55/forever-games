@@ -84,17 +84,17 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/freedoom.png" width="32"> | Freedoom | | Yes | The free version of Doom, drawn inside WoW. Race the ghost of your best run. |
 | <img src=".github/readme/icons/fourtiles.png" width="32"> | Fourtiles | Yes | | A word puzzle. A friend can join in and solve it with you, no turns. |
 | <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | | | Fill the card alone. 200 points is a win. |
-| | Where in Azeroth | Yes | Yes | You're dropped somewhere in the world. Look around and pin where you think you are. |
+| <img src=".github/readme/icons/where.png" width="32"> | Where in Azeroth | Yes | Yes | You're dropped somewhere in the world. Look around and pin where you think you are. |
 
 ### Party games
 
 Party games are played in a room that your guild, your group, or people you invite can join.
 Anyone can come and go while it's open.
 
-| Game | |
-|---|---|
-| Sketch | One person draws, everyone else guesses. The sooner you guess, the more it's worth. |
-| Trivia | A quiz in the style of Kahoot, good for a raid waiting on someone. General knowledge, Warcraft lore from the Third War to the Lich King, or both. |
+| | Game | |
+|---|---|---|
+| <img src=".github/readme/icons/sketch.png" width="32"> | Sketch | One person draws, everyone else guesses. The sooner you guess, the more it's worth. |
+| <img src=".github/readme/icons/trivia.png" width="32"> | Trivia | A quiz in the style of Kahoot, good for a raid waiting on someone. General knowledge, Warcraft lore from the Third War to the Lich King, or both. |
 
 ## Getting started
 

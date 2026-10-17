@@ -1115,7 +1115,7 @@ Rooms.Register({
   id = "sketch",
   name = L["game_sketch"],
   description = L["game_sketch_description"],
-  icon = "Interface\\Icons\\INV_Inscription_Tradeskill01",
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\sketch",
   version = 2,
   -- The picture waits behind everything the game can't do without
   lanes = { D = 2 },
