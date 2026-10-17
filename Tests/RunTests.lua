@@ -2239,6 +2239,22 @@ function tests.ListsSayWhenThereIsMoreToScrollTo()
   equal(false, thumb():IsShown())
 end
 
+function tests.ListsDrawRowsPutInWhileOutOfSight()
+  Client.Install()
+  local private = loadEngine()
+  assert(loadfile("GUI/Widgets.lua"))(ADDON_NAME, private)
+  local list = private.Widgets.List(UIParent, 100, 20, function(content)
+    return CreateFrame("Frame", nil, content)
+  end)
+  list.frame:Hide()
+  list:Update({ 1 }, function() end)
+  local before = list.frame.childRectUpdates or 0
+  list.frame:Show()
+  equal(before + 1, list.frame.childRectUpdates, "shown, the rows put in meanwhile are drawn")
+  list.frame:Fire("OnSizeChanged")
+  equal(before + 2, list.frame.childRectUpdates, "and again once it has its room")
+end
+
 -----------------------------
 -- More than two players
 -----------------------------

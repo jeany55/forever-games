@@ -217,6 +217,11 @@ function methods:GetVerticalScroll()
   return self.scroll
 end
 
+--- How many times a scroll frame was told to work out again what of its rows is in view
+function methods:UpdateScrollChildRect()
+  self.childRectUpdates = (self.childRectUpdates or 0) + 1
+end
+
 for _, name in ipairs({ "CreateTexture", "CreateMaskTexture", "CreateFontString", "CreateAnimationGroup", "CreateAnimation", "CreateLine" }) do
   methods[name] = function(self)
     return newWidget(name:sub(7), self)

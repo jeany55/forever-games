@@ -609,8 +609,17 @@ function Widgets.List(parent, width, rowHeight, createRow)
     self:SetVerticalScroll(math.min(furthest, math.max(0, self:GetVerticalScroll() - delta * rowHeight)))
     placeThumb()
   end)
+  -- The client works out what of the rows is in view only now and then: rows put in while the
+  -- list was out of sight, or before it had any room, aren't drawn until it is told again. A list
+  -- the front page shows for the first game there is would stay empty until the window was
+  -- closed and opened again
+  local function placeRows()
+    scroll:UpdateScrollChildRect()
+    placeThumb()
+  end
   -- The room the list gets changes with the window
-  scroll:SetScript("OnSizeChanged", placeThumb)
+  scroll:SetScript("OnSizeChanged", placeRows)
+  scroll:SetScript("OnShow", placeRows)
 
   local list = { frame = scroll, rows = {} }
 
@@ -631,7 +640,7 @@ function Widgets.List(parent, width, rowHeight, createRow)
     end
     content:SetHeight(math.max(1, #items * rowHeight))
     scroll:SetVerticalScroll(math.min(scroll:GetVerticalScroll(), math.max(0, #items * rowHeight - scroll:GetHeight())))
-    placeThumb()
+    placeRows()
   end
 
   --- Makes the rows this wide from now on, for a list that follows the window
