@@ -1141,6 +1141,12 @@ Rooms.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["sketch_howto_goal"] },
+    { heading = L["sketch_howto_round"], text = L["sketch_howto_round_text"] },
+    { heading = L["howto_scoring"], text = L["sketch_howto_scoring"] },
+    { heading = L["howto_end"], text = L["sketch_howto_end"] },
+  },
   new = function(_, rules)
     return {
       phase = "idle",

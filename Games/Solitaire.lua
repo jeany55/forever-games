@@ -622,6 +622,14 @@ private.Games.Register({
   version = 1,
   seats = 1,
   undo = true,
+  howto = {
+    { heading = L["howto_goal"], text = L["solitaire_howto_goal"] },
+    { heading = L["solitaire_howto_columns"], text = L["solitaire_howto_columns_text"] },
+    { heading = L["solitaire_howto_stock"], text = L["solitaire_howto_stock_text"] },
+    { heading = L["howto_controls"], text = L["solitaire_howto_controls"] },
+    { heading = L["howto_scoring"], text = L["solitaire_howto_scoring"] },
+    { heading = L["howto_end"], text = L["solitaire_howto_end"] },
+  },
   newState = newState,
   turn = function()
     return 1

@@ -1042,6 +1042,17 @@ private.Games.Register({
   options = {
     { id = "again", name = L["battleship_option_again"], description = L["battleship_option_again_tip"], default = false },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["battleship_howto_goal"] },
+    { heading = L["battleship_howto_fleet"], text = L["battleship_howto_fleet_text"] },
+    {
+      heading = L["howto_turn"],
+      text = function(rules)
+        return L[rules.again and "battleship_howto_turn_again" or "battleship_howto_turn"]
+      end,
+    },
+    { heading = L["howto_end"], text = L["battleship_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

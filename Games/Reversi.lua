@@ -413,6 +413,12 @@ private.Games.Register({
   version = 1,
   seats = 2,
   history = true,
+  howto = {
+    { heading = L["howto_goal"], text = L["reversi_howto_goal"] },
+    { heading = L["howto_turn"], text = L["reversi_howto_turn"] },
+    { heading = L["reversi_howto_pass"], text = L["reversi_howto_pass_text"] },
+    { heading = L["howto_end"], text = L["reversi_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

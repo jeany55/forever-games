@@ -601,6 +601,12 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\chinesecheckers",
   version = 1,
   seats = { 2, 3, 4, 6 },
+  howto = {
+    { heading = L["howto_goal"], text = L["chinesecheckers_howto_goal"] },
+    { heading = L["howto_turn"], text = L["chinesecheckers_howto_turn"] },
+    { heading = L["chinesecheckers_howto_rules"], text = L["chinesecheckers_howto_rules_text"] },
+    { heading = L["howto_end"], text = L["chinesecheckers_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

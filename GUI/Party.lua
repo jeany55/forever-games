@@ -17,6 +17,7 @@
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
+local HowTo = private.HowTo
 local Rooms = private.Rooms
 local Widgets = private.Widgets
 
@@ -49,6 +50,10 @@ local small
 local views = {}
 --- @type table<table, string> The room each of them was last given
 local laid = {}
+-- The rules being read (GUI/HowTo.lua), while they are: of which game, and over the lobby or
+-- over the room
+--- @type { game: PartyGame, room: boolean }?
+local reading
 -- The game a room is being set up for, who for, and what its options are set to
 --- @type PartyGame?
 local chosenGame
@@ -272,6 +277,36 @@ local function fillOptionRow(row, option)
   end
 end
 
+--- Lays the rules of a game over the lobby or the room
+--- @param game PartyGame
+--- @param over Frame
+--- @param inRoom boolean
+--- @param rules table<string, any>? How it is set up, if that is known here
+local function readRules(game, over, inRoom, rules)
+  reading = { game = game, room = inRoom }
+  HowTo.Open(game, rules, nil, over, function()
+    reading = nil
+    if page then
+      page.room.howto:SetText(L["howto"])
+    end
+  end)
+end
+
+--- Puts the rules away once what they were read over is gone: the room left or made small, or
+--- another game set up
+--- @param room Room?
+local function stillReading(room)
+  if not reading then
+    return
+  end
+  local onPage = page:IsShown() and not isSmall
+  local over = reading.room and (room ~= nil and Rooms.Game(room.game) == reading.game)
+    or (not reading.room and room == nil and chosenGame == reading.game)
+  if not onPage or not over then
+    HowTo.Close()
+  end
+end
+
 --- @param parent Frame
 --- @return Frame
 local function createLobby(parent)
@@ -294,6 +329,12 @@ local function createLobby(parent)
   about.players = Widgets.Label(about, "GameFontHighlightSmall", L["players_party"])
   about.players:SetPoint("TOPLEFT", about.name, "BOTTOMLEFT", 0, -5)
   about.players:SetTextColor(unpack(Widgets.GREY))
+  -- The rules of the game for anyone who doesn't know it, as they are set here
+  about.howto = Widgets.Button(about, L["howto"], 110, 20)
+  about.howto:SetPoint("TOPRIGHT", -ABOUT_INSET, -14)
+  about.howto:SetScript("OnClick", function()
+    readRules(chosenGame, lobby, false, chosenRules)
+  end)
   about.description = Widgets.Label(about, "GameFontHighlightSmall")
   about.description:SetPoint("TOPLEFT", ABOUT_INSET, -62)
   about.description:SetWidth(ABOUT_WIDTH - ABOUT_INSET * 2)
@@ -379,6 +420,7 @@ local function refreshLobby()
   about.icon:SetTexture(game.icon or private.ICON)
   about.name:SetText(game.name)
   about.description:SetText(game.description or "")
+  about.howto:SetShown(HowTo.Has(game))
   local options = game.options or {}
   about.usual:SetShown(#options == 0)
   for index = 1, math.max(#about.rows, #options) do
@@ -477,6 +519,19 @@ local function createRoom(parent)
     Party.MakeSmall(true)
   end)
   tooltip(room.shrink, L["party_small"], L["party_shrink_tip"])
+  -- The rules, over the game, which goes on underneath: it is everybody's, not the player's to stop
+  room.howto = Widgets.Button(room, L["howto"], 120, 22)
+  room.howto:SetPoint("RIGHT", room.shrink, "LEFT", -6, 0)
+  room.howto:SetScript("OnClick", function(self)
+    local game = private.rooms.room and Rooms.Game(private.rooms.room.game)
+    if reading then
+      HowTo.Close()
+    elseif game then
+      -- Only whoever opened the room was told how it is set up
+      readRules(game, room.reading, true, nil)
+      self:SetText(L["howto_back"])
+    end
+  end)
   room.where = Widgets.Label(room, "GameFontDisableSmall")
   room.where:SetPoint("TOPRIGHT", room.home, "BOTTOMRIGHT", -2, -6)
 
@@ -484,6 +539,9 @@ local function createRoom(parent)
   -- themselves out from the numbers before the frame has been drawn
   room.stage = CreateFrame("Frame", nil, room)
   room.stage:SetPoint("TOPLEFT", STAGE_SIDE, -STAGE_TOP)
+  room.reading = CreateFrame("Frame", nil, room)
+  room.reading:SetPoint("TOPLEFT", STAGE_SIDE, -STAGE_TOP)
+  room.reading:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, STAGE_BOTTOM)
 
   room.leave = Widgets.Button(room, L["party_leave"], 130, 24)
   room.leave:SetPoint("BOTTOMRIGHT", -STAGE_SIDE, 12)
@@ -598,6 +656,7 @@ local function refreshRoom(room)
   panel.link:SetShown(host)
   panel.note:SetShown(not host)
   panel.note:SetText(L["party_guest_note"]:format(owner))
+  panel.howto:SetShown(HowTo.Has(game))
 
   local width, height = page:GetWidth() - STAGE_SIDE * 2, page:GetHeight() - STAGE_TOP - STAGE_BOTTOM
   panel.stage:SetSize(width, height)
@@ -730,6 +789,9 @@ function Party.Refresh()
   if not room then
     isSmall, grown, declined = false, false, false
   end
+  if page then
+    stillReading(room)
+  end
 
   -- A game that needs the player gets the whole page, for as long as it does
   local busy = game ~= nil and game.busy ~= nil and game.busy(room)
@@ -792,6 +854,7 @@ function Party.MakeSmall(on, byGame)
     end
     -- The point of it is to have the big window out of the way
     page:Hide()
+    stillReading(room)
     private.MainFrame.Hide()
     Party.Refresh()
   else
@@ -826,6 +889,7 @@ end
 function Party.Hide()
   if page and page:IsShown() then
     page:Hide()
+    stillReading(private.rooms.room)
     private.MainFrame.Refresh()
   end
 end

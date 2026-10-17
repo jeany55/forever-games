@@ -765,6 +765,18 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["crazyeights_howto_goal"] },
+    {
+      heading = L["crazyeights_howto_dealing"],
+      text = function(rules)
+        return rules.dealt == 0 and L["crazyeights_howto_deal_usual"] or L["crazyeights_howto_deal"]:format(rules.dealt)
+      end,
+    },
+    { heading = L["howto_turn"], text = L["crazyeights_howto_turn"] },
+    { heading = L["crazyeights_howto_eights"], text = L["crazyeights_howto_eights_text"] },
+    { heading = L["howto_end"], text = L["crazyeights_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

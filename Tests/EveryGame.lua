@@ -241,6 +241,32 @@ local function inLocale(keys, text, what)
   end
 end
 
+--- How to play it has to be there, and in the locale: with the rules set the usual way and then
+--- every option set every other way it can be, for every number of players it takes
+--- @param Games Games
+--- @param game GameDefinition|PartyGame
+--- @param keys table<string, boolean>
+local function checkHowTo(Games, game, keys)
+  assert(game.howto and #game.howto > 0, "it doesn't say how it is played (howto)")
+  local settings = { {} }
+  for _, option in ipairs(game.options or {}) do
+    for _, value in ipairs(Games.Choices(option)) do
+      settings[#settings + 1] = { [option.id] = value }
+    end
+  end
+  -- A game for a room is for however many come, which isn't known
+  local counts = game.seats and Games.SeatCounts(game) or { false }
+  for _, chosen in ipairs(settings) do
+    for _, seats in ipairs(counts) do
+      for _, section in ipairs(Games.HowTo(game, chosen, seats or nil)) do
+        inLocale(keys, section.heading, "a heading of how to play it")
+        assert(type(section.text) == "string", "how to play it says something that isn't text under " .. section.heading)
+        inLocale(keys, section.text, "how to play it under " .. section.heading)
+      end
+    end
+  end
+end
+
 --- What the game shows the players about itself has to be in the locale
 --- @param private table
 --- @param game GameDefinition
@@ -259,23 +285,7 @@ local function checkNames(private, game, keys)
       inLocale(keys, Games.OptionLabel(option, value), "option " .. option.id .. " set to " .. tostring(value))
     end
   end
-  -- How to play it, with the rules set the usual way and then every option set every other way
-  -- it can be, for every number of players it takes
-  local settings = { {} }
-  for _, option in ipairs(game.options or {}) do
-    for _, value in ipairs(Games.Choices(option)) do
-      settings[#settings + 1] = { [option.id] = value }
-    end
-  end
-  for _, chosen in ipairs(settings) do
-    for _, seats in ipairs(Games.SeatCounts(game)) do
-      for _, section in ipairs(Games.HowTo(game, chosen, seats)) do
-        inLocale(keys, section.heading, "a heading of how to play it")
-        assert(type(section.text) == "string", "how to play it says something that isn't text under " .. section.heading)
-        inLocale(keys, section.text, "how to play it under " .. section.heading)
-      end
-    end
-  end
+  checkHowTo(Games, game, keys)
   if game.seatLabel then
     for _, seats in ipairs(Games.SeatCounts(game)) do
       for seat = 1, seats do
@@ -919,6 +929,7 @@ local function faulty(fault)
     name = "game_tictactoe",
     version = 1,
     seats = 2,
+    howto = { { heading = "howto_goal", text = "game_tictactoe_description" } },
     newState = function()
       return { total = 0, turn = 1 }
     end,
@@ -949,6 +960,7 @@ end
 -- What is wrong with it, and what has to be said about that
 local FAULTS = {
   Nothing = { {}, nil },
+  NoHowTo = { { howto = {} }, "doesn't say how it is played" },
   HowToOutOfLocale = {
     {
       howto = {
@@ -1123,6 +1135,17 @@ return function(tests, loadEngine)
     tests["EveryGame_" .. gameId] = function()
       local private = loadEngine()
       checkGame(private, private.Games.Get(gameId), keys, loadEngine)
+    end
+  end
+
+  -- The games for a room aren't played through here, but say how they are played all the same
+  for _, listed in ipairs(loadEngine().Rooms.Games()) do
+    local gameId = listed.id
+    tests["EveryPartyGame_" .. gameId] = function()
+      local private = loadEngine()
+      local game = private.Rooms.Game(gameId)
+      inLocale(keys, game.name, "its name")
+      checkHowTo(private.Games, game, keys)
     end
   end
 

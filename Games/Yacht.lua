@@ -1290,6 +1290,18 @@ private.Games.Register({
   -- 2: for more than one, each with a card of their own
   version = 2,
   seats = { 1, 2, 3, MOST_SEATS },
+  howto = {
+    {
+      heading = L["howto_goal"],
+      text = function(_, players)
+        return L[(players == 1 and "yacht_howto_goal_alone") or (players and "yacht_howto_goal_table") or "yacht_howto_goal_either"]
+      end,
+    },
+    { heading = L["howto_turn"], text = L["yacht_howto_turn"] },
+    { heading = L["yacht_howto_boxes"], text = L["yacht_howto_boxes_text"] },
+    { heading = L["yacht_howto_bonus"], text = L["yacht_howto_bonus_text"] },
+    { heading = L["howto_end"], text = L["yacht_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

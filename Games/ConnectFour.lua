@@ -317,6 +317,11 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\connectfour",
   version = 1,
   seats = 2,
+  howto = {
+    { heading = L["howto_goal"], text = L["connectfour_howto_goal"] },
+    { heading = L["howto_turn"], text = L["connectfour_howto_turn"] },
+    { heading = L["howto_end"], text = L["connectfour_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

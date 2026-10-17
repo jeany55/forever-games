@@ -4082,6 +4082,20 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["wormcraft_howto_goal"] },
+    { heading = L["wormcraft_howto_class"], text = L["wormcraft_howto_class_text"] },
+    { heading = L["howto_turn"], text = L["wormcraft_howto_turn"] },
+    { heading = L["wormcraft_howto_firing"], text = L["wormcraft_howto_firing_text"] },
+    { heading = L["wormcraft_howto_spells"], text = L["wormcraft_howto_spells_text"] },
+    {
+      heading = L["howto_end"],
+      -- Whether the sea rises at all
+      text = function(rules)
+        return L[rules.sudden == 0 and "wormcraft_howto_end_never" or "wormcraft_howto_end_sudden"]
+      end,
+    },
+  },
   newState = newState,
   turn = function(state)
     -- Alone, every move is the player's to make, the computer's too

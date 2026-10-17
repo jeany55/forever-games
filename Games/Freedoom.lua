@@ -1250,6 +1250,12 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["freedoom_howto_goal"] },
+    { heading = L["howto_controls"], text = L["freedoom_howto_controls"] },
+    { heading = L["freedoom_howto_world"], text = L["freedoom_howto_world_text"] },
+    { heading = L["howto_end"], text = L["freedoom_howto_end"] },
+  },
   clock = "open",
   newState = newState,
   turn = function()

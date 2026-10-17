@@ -979,6 +979,19 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\fourtiles",
   version = 1,
   seats = { 1, 2 },
+  howto = {
+    { heading = L["howto_goal"], text = L["fourtiles_howto_goal"] },
+    { heading = L["howto_turn"], text = L["fourtiles_howto_turn"] },
+    {
+      heading = L["fourtiles_howto_together"],
+      -- Only where there are two, or might be
+      text = function(_, players)
+        return players ~= 1 and L["fourtiles_howto_together_text"] or nil
+      end,
+    },
+    { heading = L["howto_scoring"], text = L["fourtiles_howto_scoring"] },
+    { heading = L["howto_end"], text = L["fourtiles_howto_end"] },
+  },
   together = true,
   newState = newState,
   validate = validate,

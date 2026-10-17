@@ -1048,6 +1048,13 @@ private.Games.Register({
   version = 1,
   seats = 1,
   options = OPTIONS,
+  howto = {
+    { heading = L["howto_goal"], text = L["minesweeper_howto_goal"] },
+    { heading = L["minesweeper_howto_numbers"], text = L["minesweeper_howto_numbers_text"] },
+    { heading = L["howto_controls"], text = L["minesweeper_howto_controls"] },
+    { heading = L["minesweeper_howto_chord"], text = L["minesweeper_howto_chord_text"] },
+    { heading = L["howto_end"], text = L["minesweeper_howto_end"] },
+  },
   clock = "move",
   newState = newState,
   turn = function()

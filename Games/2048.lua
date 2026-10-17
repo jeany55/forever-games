@@ -714,6 +714,18 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    {
+      heading = L["howto_goal"],
+      text = function(rules)
+        return L[rules.size == 3 and "2048_howto_goal_small" or "2048_howto_goal"]
+      end,
+    },
+    { heading = L["howto_turn"], text = L["2048_howto_turn"] },
+    { heading = L["howto_controls"], text = L["2048_howto_controls"] },
+    { heading = L["howto_scoring"], text = L["2048_howto_scoring"] },
+    { heading = L["howto_end"], text = L["2048_howto_end"] },
+  },
   newState = newState,
   turn = function()
     return 1

@@ -3342,6 +3342,14 @@ private.Games.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["warcraftstein_howto_goal"] },
+    { heading = L["warcraftstein_howto_class"], text = L["warcraftstein_howto_class_text"] },
+    { heading = L["howto_controls"], text = L["warcraftstein_howto_controls"] },
+    { heading = L["warcraftstein_howto_monastery"], text = L["warcraftstein_howto_monastery_text"] },
+    { heading = L["warcraftstein_howto_talents"], text = L["warcraftstein_howto_talents_text"] },
+    { heading = L["howto_end"], text = L["warcraftstein_howto_end"] },
+  },
   clock = "open",
   newState = newState,
   turn = function()

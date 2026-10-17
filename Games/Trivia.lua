@@ -564,6 +564,12 @@ Rooms.Register({
       end,
     },
   },
+  howto = {
+    { heading = L["howto_goal"], text = L["trivia_howto_goal"] },
+    { heading = L["trivia_howto_question"], text = L["trivia_howto_question_text"] },
+    { heading = L["howto_scoring"], text = L["trivia_howto_scoring"] },
+    { heading = L["howto_end"], text = L["trivia_howto_end"] },
+  },
   -- Its small window keeps out of the way of a fight
   calm = true,
   new = function(_, rules)

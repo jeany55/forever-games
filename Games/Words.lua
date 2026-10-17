@@ -2822,6 +2822,30 @@ private.Games.Register({
   version = 1,
   seats = { 2, 3, 4 },
   options = OPTIONS,
+  howto = {
+    { heading = L["howto_goal"], text = L["words_howto_goal"] },
+    { heading = L["howto_turn"], text = L["words_howto_turn"] },
+    { heading = L["words_howto_instead"], text = L["words_howto_instead_text"] },
+    {
+      heading = L["howto_scoring"],
+      text = function(rules)
+        return L[rules.bingo > 0 and "words_howto_scoring_bingo" or "words_howto_scoring"]
+      end,
+    },
+    {
+      heading = L["words_howto_blanks"],
+      text = function(rules)
+        return rules.blanks > 0 and L["words_howto_blanks_text"] or nil
+      end,
+    },
+    {
+      heading = L["words_howto_azeroth"],
+      text = function(rules)
+        return L[rules.azeroth and "words_howto_azeroth_text" or "words_howto_azeroth_off"]
+      end,
+    },
+    { heading = L["howto_end"], text = L["words_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

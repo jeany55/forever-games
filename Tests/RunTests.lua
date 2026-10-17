@@ -18734,7 +18734,7 @@ function tests.PartyPagesSetUpARoomAndPlayIt()
       private.Party.Refresh()
     end,
   }
-  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/Party.lua" }) do
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/HowTo.lua", "GUI/Party.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   local Party = private.Party
@@ -18755,9 +18755,16 @@ function tests.PartyPagesSetUpARoomAndPlayIt()
     return widget.text == "party_summary_GUILD" and widget:IsVisible()
   end)[1].text, "a room can't be for a group she isn't in")
   audience("sketch_list_w"):Fire("OnClick")
+  -- Its rules can be read first, and are put away once the room is open
+  Client.Button("howto"):Fire("OnClick")
+  equal(1, #Client.Find(function(widget)
+    return widget.text == "howto_title" and widget:IsVisible()
+  end))
   Client.Button("party_open_room"):Fire("OnClick")
   world:Run(1)
   local room = alice.rooms.room
+  Party.Refresh()
+  equal(false, private.HowTo.IsOpen(), "put away once the room is open")
   equal("w", room.state.list)
   equal("GUILD", room.channel)
   equal("w", ForeverGames.db.profile.rules.sketch.list, "and it is set up that way next time")
@@ -19358,7 +19365,7 @@ function tests.TriviaPageAnswersAndShowsTheRightOne()
       private.Party.Refresh()
     end,
   }
-  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Party.lua" }) do
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/HowTo.lua", "GUI/Party.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   local Party = private.Party
@@ -19396,10 +19403,18 @@ function tests.TriviaPageAnswersAndShowsTheRightOne()
   equal(true, room.members[1].score > 0)
   equal(true, shown("trivia_pause"), "the host can stop it")
 
-  -- Made small it stays out of the way of a fight
+  -- The rules can be read over the game, which goes on underneath
+  Client.Button("howto"):Fire("OnClick")
+  equal(true, shown("howto_title"))
+  Client.Button("howto_back"):Fire("OnClick")
+  equal(false, shown("howto_title"))
+  Client.Button("howto"):Fire("OnClick")
+
+  -- Made small it stays out of the way of a fight, the rules put away
   Client.Button("party_small"):Fire("OnClick")
   Party.Refresh()
   equal(true, Party.IsOpen())
+  equal(false, private.HowTo.IsOpen())
   Client.combat = true
   Party.Refresh()
   equal(false, Party.IsOpen())
@@ -19434,7 +19449,7 @@ function tests.PartyPageShowsOnlyTheGameOfTheRoomItIsIn()
       private.Party.Refresh()
     end,
   }
-  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/Party.lua" }) do
+  for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Canvas.lua", "GUI/HowTo.lua", "GUI/Party.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   local Party = private.Party

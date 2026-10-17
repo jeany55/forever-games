@@ -2064,6 +2064,18 @@ private.Games.Register({
   version = 1,
   seats = 1,
   options = OPTIONS,
+  howto = {
+    { heading = L["howto_goal"], text = L["sudoku_howto_goal"] },
+    { heading = L["howto_turn"], text = L["sudoku_howto_turn"] },
+    { heading = L["sudoku_howto_notes"], text = L["sudoku_howto_notes_text"] },
+    {
+      heading = L["sudoku_mistakes"],
+      text = function(rules)
+        return L[rules.check and "sudoku_howto_mistakes_checked" or "sudoku_howto_mistakes_unchecked"]
+      end,
+    },
+    { heading = L["howto_end"], text = L["sudoku_howto_end"] },
+  },
   undo = true,
   clock = "open",
   newState = newState,

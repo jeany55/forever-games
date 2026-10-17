@@ -153,6 +153,18 @@ private.Games.Register({
   version = VERSION + #catalogue(),
   seats = 1,
   options = OPTIONS,
+  howto = {
+    { heading = L["howto_goal"], text = L["where_howto_goal"] },
+    { heading = L["where_howto_look"], text = L["where_howto_look_text"] },
+    { heading = L["where_howto_guess"], text = L["where_howto_guess_text"] },
+    {
+      heading = L["where_time"],
+      text = function(rules)
+        return rules.time > 0 and L["where_howto_timed"] or nil
+      end,
+    },
+    { heading = L["howto_scoring"], text = L["where_howto_scoring"] },
+  },
   clock = "open",
   addon = PLACES_ADDON,
   newState = newState,

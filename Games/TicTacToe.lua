@@ -268,6 +268,11 @@ private.Games.Register({
   icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\tictactoe",
   version = 1,
   seats = 2,
+  howto = {
+    { heading = L["howto_goal"], text = L["tictactoe_howto_goal"] },
+    { heading = L["howto_turn"], text = L["tictactoe_howto_turn"] },
+    { heading = L["howto_end"], text = L["tictactoe_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn

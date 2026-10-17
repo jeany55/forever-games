@@ -1024,6 +1024,13 @@ private.Games.Register({
   seats = 2,
   draws = true,
   history = true,
+  howto = {
+    { heading = L["howto_goal"], text = L["chess_howto_goal"] },
+    { heading = L["howto_turn"], text = L["chess_howto_turn"] },
+    { heading = L["chess_howto_pieces"], text = L["chess_howto_pieces_text"] },
+    { heading = L["chess_howto_special"], text = L["chess_howto_special_text"] },
+    { heading = L["howto_end"], text = L["chess_howto_end"] },
+  },
   newState = newState,
   turn = function(state)
     return state.turn
