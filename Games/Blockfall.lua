@@ -677,15 +677,16 @@ end
 
 local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Blockfall\\"
 local FLAT = "Interface\\Buttons\\WHITE8X8"
--- The colours of the pieces, the ones every game of falling blocks has come to give them
+-- The colours of the pieces, the ones every game of falling blocks has come to give them, set
+-- apart in hue and lightness so no two are taken for each other (cyan and blue most of all)
 local COLORS = {
-  [I] = { 0.19, 0.86, 0.95 },
-  [O] = { 1, 0.84, 0.13 },
-  [T] = { 0.7, 0.33, 0.95 },
-  [S] = { 0.38, 0.88, 0.27 },
-  [Z] = { 0.97, 0.27, 0.32 },
-  [J] = { 0.24, 0.47, 1 },
-  [LL] = { 1, 0.58, 0.14 },
+  [I] = { 0.15, 0.95, 0.95 },
+  [O] = { 1, 0.92, 0.15 },
+  [T] = { 0.82, 0.32, 1 },
+  [S] = { 0.35, 0.82, 0.18 },
+  [Z] = { 0.92, 0.12, 0.25 },
+  [J] = { 0.18, 0.36, 1 },
+  [LL] = { 1, 0.56, 0.1 },
 }
 -- What the stack turns as the game is lost
 local DEAD = { 0.42, 0.43, 0.48 }
