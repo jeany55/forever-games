@@ -7,7 +7,7 @@ nobody is around.
 Games so far: Tic Tac Toe, Chess, Connect Four, Reversi, Checkers, Battleship, Backgammon,
 Chinese Checkers, which is for up to six, and Crazy Eights, which is too. Wormcraft, artillery for
 up to four the way Worms played it. And Solitaire, Minesweeper
-Sudoku, 2048, Warcraftstein 3D and Freedoom, for when nobody is around. And Fourtiles, a word puzzle to
+Sudoku, 2048, Tetris, Warcraftstein 3D and Freedoom, for when nobody is around. And Fourtiles, a word puzzle to
 solve on your own or the two of you together, both at once.
 
 ## Usage
@@ -53,12 +53,12 @@ solve on your own or the two of you together, both at once.
 - The games you play alone have a challenge every day, which their card shows with a pocket
   watch: click it for **Today's Challenge**. Everyone in your guild who plays it that day gets
   the same game: the same deal of Solitaire, the same field of mines (a middling one), the same
-  Sudoku, the same tiles turning up in 2048, the same Fourtiles and the same monastery to find
+  Sudoku, the same tiles turning up in 2048, the same pieces in two minutes of Tetris, the same Fourtiles and the same monastery to find
   the way out of. You get one go a day, played to the end with nothing taken back, and the
   **Guild Board** beside it shows how everyone did: the best score, or the quickest time, first.
   What you made of it goes round the guild when you finish, and opening a challenge asks the
   guild how they did. A new one is dealt at midnight UTC. `/fg daily <game>` goes straight to it
-- The games you play alone against the clock (Minesweeper, Sudoku, Warcraftstein 3D and
+- The games you play alone against the clock (Minesweeper, Sudoku, Tetris, Warcraftstein 3D and
   Freedoom) can be raced: pick somebody on the second step, as you would for any game, and
   **Challenge to a Race**. You each get the same deal, set up the way you chose: the same field
   of mines, the same puzzle, the same monastery or map. You start at once and they start when
@@ -177,6 +177,19 @@ solve on your own or the two of you together, both at once.
   nothing moves, and your best score and biggest tile are kept for every size of board. The
   board is four by four unless you pick three or five when you set the game up, and on three
   the tile to make is 256
+- Tetris is played three ways: a **Marathon** of 150 lines, faster every ten (from the level
+  you pick), a **Sprint** of 40 lines against the clock, or **Ultra**, as many points as you can
+  make in two minutes. Left and Right (or A and D) move the piece, held they slide it to the wall;
+  Up (or X, or W) turns it and Z (or Q) turns it back; Down (or S) pushes it down and Space drops
+  it all the way; C (or Shift) puts it aside for later. The keys are the game's wherever the cursor
+  is while it is on, and go back to your character when it is paused or over. P or Escape pauses
+  and covers the well, and so do closing the window and going into a fight; it counts you back
+  in. It plays the way modern Tetris does: the pieces come in bags of all seven, the next five
+  are shown, where the piece would land is outlined, a piece that lands can still be moved for
+  half a second, and pieces turned against a wall or the stack kick aside. Four lines at once and
+  T-spins are worth the most, more back to back, and so are combos and a well cleared to the
+  bottom. A race at a Sprint is on time, at the others on points, with how far your rival had got
+  at the same moment beside the well
 - Sudoku asks how hard a puzzle you want before it begins, from Easy to Expert, and whether
   wrong digits should be pointed out as you write them. Click a square, or move to it with the
   arrow keys, and write with the digits on your keyboard or the keys next to the grid: each key
@@ -496,6 +509,7 @@ dice and sounds are converted by `Tools/convert_kenney.py`, and what a card tabl
 (a blank card, the outline of a place for one, the icon of Solitaire) is drawn by
 `Tools/make_cards.py`. The tiles, flags and mines of Minesweeper are drawn by
 `Tools/make_minesweeper.py`. The tile 2048 tints and its icon are drawn by `Tools/make_2048.py`.
+Tetris's squares, its icon and its sounds are made by `Tools/make_blockfall.py`.
 The puzzles of Fourtiles, its icon and its tiles are made by `Tools/make_fourtiles.py`.
 The letters on the tiles of Fourtiles and Words are drawn from Lexend by `Tools/make_lettering.py`:
 the client won't write in a font an addon brings, so they are pictures.

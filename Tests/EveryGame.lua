@@ -825,7 +825,7 @@ local function checkRace(private, game, loadEngine)
     end
     local state, result = Match.State(match), Match.Result(match)
     local before = serialize(state)
-    local time = Race.Time(game, state, 100 + seed, result)
+    local time = Race.Time(game, state, 100 + seed, result, match.options)
     local where = string.format("a run %s after %d moves", result.reason, #match.log)
     assert(time == false or (type(time) == "number" and time == math.floor(time) and time >= 0), where .. " came to " .. tostring(time))
     assert(serialize(state) == before, where .. ": working out its time changed the position")

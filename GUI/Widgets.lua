@@ -14,7 +14,12 @@ local FLAT = "Interface\\Buttons\\WHITE8X8"
 local SOUND_FILES = "Interface\\AddOns\\ForeverGames\\Sounds\\"
 -- The addon's own sounds and how many takes there are of each, so the same thing doesn't sound
 -- the same every time: Sounds/<name><take>.ogg
-local SOUNDS = { cardPlace = 3, cardSlide = 3, chipsCollide = 3, dieThrow = 2, dieShuffle = 1 }
+local SOUNDS = {
+  cardPlace = 3, cardSlide = 3, chipsCollide = 3, dieThrow = 2, dieShuffle = 1,
+  -- Blockfall's, made by Tools/make_blockfall.py
+  blockfallMove = 1, blockfallTurn = 1, blockfallLand = 1, blockfallDrop = 1, blockfallHold = 1, blockfallClear = 1,
+  blockfallQuad = 1, blockfallSpin = 1, blockfallLevel = 1, blockfallOver = 1, blockfallBeat = 1, blockfallGo = 1,
+}
 
 Widgets.GREEN = { 0.3, 0.9, 0.3 }
 Widgets.GREY = { 0.65, 0.65, 0.65 }

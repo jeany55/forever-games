@@ -20,7 +20,9 @@
 -- A game can be raced for something else it keeps a record of instead (`raceFor`): its points,
 -- say, the more the better, as a guessing game is won on how near the guesses came. Everything
 -- else about the race is the same, down to the value going in hundredths: the game says how one
--- is shown.
+-- is shown. What a race is run for can depend on how its rules are set, a game of falling
+-- blocks raced on its time to clear forty lines and on its points in the other ways it is
+-- played, so every question about a race is asked with the rules it was set up with.
 --
 -- The challenge (RAC, see Engine/Codec.lua) says which game and how its rules are set, and is
 -- answered like any other with ACC or DEC. Whoever sent it can play at once. Then each player's
@@ -54,7 +56,10 @@ local _, private = ...
 
 --- What a game for one that is raced against somebody keeps of the race. The match is the
 --- player's own like any game for one: only its id, which the deal comes from, is the rival's too
---- What a game that isn't raced on its time is raced on instead, see GameDefinition.raceFor
+--- What a game that isn't raced on its time is raced on instead, see GameDefinition.raceFor. A
+--- function of the rules for a game raced on one thing or another depending on how they are set
+--- @alias GameRaceForRules fun(rules: table<string, any>): GameRaceFor? nil for its time
+
 --- @class GameRaceFor
 --- @field key string The GameRecord it is raced for, by its key
 --- @field show fun(value: number): string How a run's value is shown, "23 410 points"
@@ -103,11 +108,24 @@ function Race.Has(game)
   return game ~= nil and private.Games.IsSolo(game) and game.clock ~= nil and game.record ~= nil and game.raced ~= false
 end
 
+--- What a game is raced on with its rules set a way: a record it keeps, or nil for its time
+--- @param game GameDefinition?
+--- @param chosen table<string, any>? How its rules were set for the race, the usual rules if left out (Match.options)
+--- @return GameRaceFor?
+function Race.For(game, chosen)
+  local raceFor = game and game.raceFor
+  if type(raceFor) == "function" then
+    return raceFor(private.Games.Rules(game.options, chosen))
+  end
+  return raceFor
+end
+
 --- Whether a run of a game is the better for coming to more: its points, rather than its time
 --- @param game GameDefinition?
+--- @param chosen table<string, any>? How its rules were set, see Race.For
 --- @return boolean
-function Race.Higher(game)
-  return game ~= nil and game.raceFor ~= nil
+function Race.Higher(game, chosen)
+  return Race.For(game, chosen) ~= nil
 end
 
 --- What a run of a game came to once it is over: the time the game keeps as its record for it,
@@ -116,12 +134,14 @@ end
 --- @param state table
 --- @param seconds number It was played for
 --- @param result MatchResult?
+--- @param chosen table<string, any>? How its rules were set, see Race.For
 --- @return number|false|nil hundredths Of a second (of what it is raced for), false for a run that didn't finish, nil for one that isn't over
-function Race.Time(game, state, seconds, result)
+function Race.Time(game, state, seconds, result, chosen)
   if not result then
     return nil
   end
-  local key = game.raceFor and game.raceFor.key
+  local raceFor = Race.For(game, chosen)
+  local key = raceFor and raceFor.key
   for _, record in ipairs(game.record(state, seconds, result) or {}) do
     local counts = key and record.key == key or (not key and record.lower)
     if counts and type(record.value) == "number" and record.value == record.value then
@@ -135,9 +155,11 @@ end
 --- one raced on its time, which the window shows itself
 --- @param game GameDefinition?
 --- @param hundredths number
+--- @param chosen table<string, any>? How its rules were set, see Race.For
 --- @return string?
-function Race.Show(game, hundredths)
-  return game and game.raceFor and game.raceFor.show(hundredths / 100) or nil
+function Race.Show(game, hundredths, chosen)
+  local raceFor = Race.For(game, chosen)
+  return raceFor and raceFor.show(hundredths / 100) or nil
 end
 
 --- Keeps where the player is now for the ghost of their run, if a sample is due: one for every
@@ -247,13 +269,15 @@ end
 --- to more, for a game raced on its points), either one that finished over one that didn't
 --- @param race MatchRace
 --- @param game GameDefinition? The game it is a race at, nil for one raced on its time
+--- @param chosen table<string, any>? How its rules were set, see Race.For
 --- @return "won"|"lost"|"drawn"|nil nil while a run is still on, or not told yet
-function Race.Outcome(race, game)
+function Race.Outcome(race, game, chosen)
   local mine, theirs = Race.Mine(race), Race.Theirs(race)
   if mine == nil or theirs == nil then
     return nil
   end
-  local better = mine ~= false and theirs ~= false and (Race.Higher(game) and mine > theirs or (not Race.Higher(game) and mine < theirs))
+  local higher = Race.Higher(game, chosen)
+  local better = mine ~= false and theirs ~= false and (higher and mine > theirs or (not higher and mine < theirs))
   if mine == theirs then
     return "drawn"
   elseif theirs == false or better then

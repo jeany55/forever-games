@@ -235,12 +235,13 @@ end
 --- else, Race.Show), that it didn't finish, or that it isn't over yet
 --- @param time number|false|nil Hundredths of a second, see Race.Mine
 --- @param game GameDefinition?
+--- @param chosen table<string, any>? How the race's rules were set (Match.options)
 --- @return string
-local function raceTimeText(time, game)
+local function raceTimeText(time, game, chosen)
   if time == nil then
     return L["race_running"]
   end
-  return time and (Race.Show(game, time) or MainFrame.RaceTime(time)) or L["race_no_time"]
+  return time and (Race.Show(game, time, chosen) or MainFrame.RaceTime(time)) or L["race_no_time"]
 end
 
 --- Where a race stands, in a line: the challenge, the run on the way, or how the two compare
@@ -253,13 +254,13 @@ local function describeRace(match, game)
   if match.status == "incoming" then
     return L["status_race_incoming"]:format(rival)
   end
-  local mine, theirs, outcome = Race.Mine(race), Race.Theirs(race), Race.Outcome(race, game)
+  local mine, theirs, outcome = Race.Mine(race), Race.Theirs(race), Race.Outcome(race, game, match.options)
   if outcome == "won" then
-    return theirs and L["status_race_won"]:format(rival, raceTimeText(mine, game), raceTimeText(theirs, game)) or L["status_race_won_unfinished"]:format(rival)
+    return theirs and L["status_race_won"]:format(rival, raceTimeText(mine, game, match.options), raceTimeText(theirs, game, match.options)) or L["status_race_won_unfinished"]:format(rival)
   elseif outcome == "lost" then
-    return mine and L["status_race_lost"]:format(rival, raceTimeText(theirs, game), raceTimeText(mine, game)) or L["status_race_lost_unfinished"]:format(rival)
+    return mine and L["status_race_lost"]:format(rival, raceTimeText(theirs, game, match.options), raceTimeText(mine, game, match.options)) or L["status_race_lost_unfinished"]:format(rival)
   elseif outcome == "drawn" then
-    return mine and L["status_race_tied"]:format(rival, raceTimeText(mine, game)) or L["status_race_neither"]:format(rival)
+    return mine and L["status_race_tied"]:format(rival, raceTimeText(mine, game, match.options)) or L["status_race_neither"]:format(rival)
   elseif race.declined then
     -- A run played for the race goes on as a game for one, a best that was sent is only the race
     if match.status ~= "active" and not race.best then
@@ -269,13 +270,13 @@ local function describeRace(match, game)
     end
     return L[RACE_DECLINES[race.declined] or DECLINE_REASONS[race.declined] or "status_race_declined"]:format(rival)
   elseif mine ~= nil then
-    return mine and L["status_race_waiting"]:format(raceTimeText(mine, game), rival) or L["status_race_waiting_none"]:format(rival)
+    return mine and L["status_race_waiting"]:format(raceTimeText(mine, game, match.options), rival) or L["status_race_waiting_none"]:format(rival)
   end
   local note
   if race.unanswered then
     note = L["status_race_asked"]:format(rival)
   elseif theirs then
-    note = L["status_race_to_beat"]:format(rival, raceTimeText(theirs, game))
+    note = L["status_race_to_beat"]:format(rival, raceTimeText(theirs, game, match.options))
   elseif theirs == false then
     note = L["status_race_unfinished"]:format(rival)
   else
@@ -1421,7 +1422,7 @@ local function fillRaceRow(row, entry)
   row.mine:SetShown(entry.me == true)
   row.place:SetText(entry.place and (entry.place .. ".") or "")
   row.name:SetText(Transport.DisplayName(entry.name))
-  row.score:SetText(raceTimeText(entry.time, entry.game))
+  row.score:SetText(raceTimeText(entry.time, entry.game, entry.options))
   if type(entry.time) == "number" then
     row.score:SetTextColor(1, 1, 1)
   else
@@ -1436,9 +1437,9 @@ local function refreshRaceBoard(match)
   local board, race = frame.detail.board, match.race
   board.title:SetText(L["race_board"])
   local game = Games.Get(match.game)
-  local mine = { name = match.players[match.me], time = Race.Mine(race), me = true, game = game }
-  local theirs = { name = race.rival, time = Race.Theirs(race), game = game }
-  local outcome = Race.Outcome(race, game)
+  local mine = { name = match.players[match.me], time = Race.Mine(race), me = true, game = game, options = match.options }
+  local theirs = { name = race.rival, time = Race.Theirs(race), game = game, options = match.options }
+  local outcome = Race.Outcome(race, game, match.options)
   if outcome then
     mine.place, theirs.place = outcome == "lost" and 2 or 1, outcome == "won" and 2 or 1
   end
@@ -2470,7 +2471,12 @@ local function create()
     if catching and not Wizard.IsOpen() then
       catchingUp(elapsed)
     elseif selectedId and not review and not Wizard.IsOpen() then
-      private.session:Spend(selectedId, elapsed)
+      -- Not while the game itself is held still, see GameViewObject.Paused
+      local match = private.session:Get(selectedId)
+      local entry = match and views[match.game]
+      if not (entry and entry.view.Paused and entry.view:Paused()) then
+        private.session:Spend(selectedId, elapsed)
+      end
       ponder(elapsed)
     end
   end)

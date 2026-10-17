@@ -80,6 +80,7 @@ local _, private = ...
 --- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
 --- @field Update fun(self: GameViewObject, view: GameView) Show a position. Called on every change and often when nothing changed at all, so it has to be cheap and must not restart animations
 --- @field Busy (fun(self: GameViewObject): boolean)? Whether it is still showing a move being made. The window waits for it before the computer makes its next move, and before showing the next of the moves the player missed
+--- @field Paused (fun(self: GameViewObject): boolean)? For a game that is timed (`clock`): whether the player is keeping it still, as a game played against the clock as it falls is paused. The clock isn't run while it is
 
 --- Something about a game that whoever sets it up may change
 --- @class GameOption
@@ -130,7 +131,7 @@ local _, private = ...
 --- @field daily GameDaily? For a game that can be played alone: it is a challenge every day, the same for everyone who plays it that day (Engine/Daily.lua)
 --- @field ghost GameGhost? For a game for one that can be raced (`clock` and `record`): the player's run is kept as they go, a few samples a second, goes to the rival with their time, and is shown to the rival while they race it (Engine/Race.lua). Nothing is asked of a game without one
 --- @field raced boolean? False for a game that is timed and keeps records but isn't to be raced, which every other such game can be (Engine/Race.lua)
---- @field raceFor GameRaceFor? A game that is raced is raced on its time unless it says what else: the record it is raced for, the more the better, and how a run's value is shown (Engine/Race.lua)
+--- @field raceFor (GameRaceFor|GameRaceForRules)? A game that is raced is raced on its time unless it says what else: the record it is raced for, the more the better, and how a run's value is shown (Engine/Race.lua). Or a function of the rules that says so for a race set up that way, nil for its time
 
 --- @class Games
 local Games = {}
@@ -378,8 +379,9 @@ function Games.Register(definition)
     assert(Games.CanSeat(definition, 1), "Game " .. definition.id .. " is a daily challenge and can't be played alone")
     assert(type(definition.daily.score) == "function", "Game " .. definition.id .. " is a daily challenge without a score")
   end
-  if definition.raceFor then
-    assert(type(definition.raceFor.key) == "string" and type(definition.raceFor.show) == "function",
+  local raceFor = definition.raceFor
+  if raceFor and type(raceFor) ~= "function" then
+    assert(type(raceFor.key) == "string" and type(raceFor.show) == "function",
       "Game " .. definition.id .. " is raced for something without saying what or how it is shown")
   end
   if definition.ghost then

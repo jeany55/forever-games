@@ -71,6 +71,7 @@ Games\Words.lua
 Games\Solitaire.lua
 Games\Minesweeper.lua
 Games\2048.lua
+Games\Blockfall.lua
 Games\Sudoku.lua
 Games\Fourtiles.lua
 Games\Warcraftstein.lua

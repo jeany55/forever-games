@@ -1476,7 +1476,7 @@ function Session:startRace(game, rival, setup)
       return nil, "no_best"
     end
     -- Over before it is sent: the rival has the run to hear as soon as they take the race up
-    race.run = Race.Run(Race.Time(game, Match.State(match), match.played, Match.Result(match)) or false, trail)
+    race.run = Race.Run(Race.Time(game, Match.State(match), match.played, Match.Result(match), match.options) or false, trail)
     match.race = race
     self.env.matches[match.id] = match
     self.env.notify("changed", match)
@@ -1564,7 +1564,7 @@ function Session:finishRun(match)
   if not result then
     return
   end
-  race.run = Race.Run(Race.Time(game, Match.State(match), match.played or 0, result) or false, race.trail)
+  race.run = Race.Run(Race.Time(game, Match.State(match), match.played or 0, result, match.options) or false, race.trail)
   race.trail, race.samples = nil, nil
   self:pushRun(match)
 end

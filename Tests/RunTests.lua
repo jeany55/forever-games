@@ -42,6 +42,7 @@ local ENGINE_FILES = {
   "Games/Solitaire.lua",
   "Games/Minesweeper.lua",
   "Games/2048.lua",
+  "Games/Blockfall.lua",
   "Games/Sudoku.lua",
   "Lexicon/Fourtiles.lua",
   "Games/Fourtiles.lua",
@@ -1952,7 +1953,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  local alone = "yacht,solitaire,minesweeper,2048,sudoku,fourtiles,warcraftstein,freedoom,where"
+  local alone = "yacht,solitaire,minesweeper,2048,blockfall,sudoku,fourtiles,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("chinesecheckers,yacht,crazyeights,words,wormcraft", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -9349,6 +9350,695 @@ function tests.WindowSaysWhenA2048GameIsLost()
   Client.Button("give_up"):Fire("OnClick")
   equal(nil, player.matches[other.id])
   equal(true, MainFrame.IsViewing(id) or not says("2048_over"))
+end
+
+-----------------------------
+-- Blockfall
+-----------------------------
+-- In a block of its own: the file has more locals than Lua allows in one function
+do
+
+  local FALLING_KINDS = { I = 1, O = 2, T = 3, S = 4, Z = 5, J = 6, L = 7 }
+
+  --- A game of Blockfall with the bottom of the well filled the way a test wants
+  --- @param rows string[] The lowest rows of the well, the last at the bottom: "#" for a square that is filled, "." for one that isn't
+  --- @param current string? The piece falling now, by its letter
+  --- @param rules table?
+  --- @return table game, table state, table private
+  local function fallingGame(rows, current, rules)
+    local private = loadEngine()
+    local game = private.Games.Get("blockfall")
+    local state = game.newState(1, private.Random.New(1), rules)
+    local top = 22 - #rows
+    for index, text in ipairs(rows) do
+      equal(10, #text, "squares in row " .. index)
+      for column = 1, 10 do
+        state.cells[(top + index - 1) * 10 + column] = text:sub(column, column) == "." and 0 or 5
+      end
+    end
+    if current then
+      state.current = FALLING_KINDS[current]
+    end
+    return game, state, private
+  end
+
+  --- Plays a move of Blockfall, which has to be legal
+  --- @return table event
+  local function fallingPlay(game, state, move, current)
+    if current then
+      state.current = FALLING_KINDS[current]
+    end
+    assert(game.validate(state, 1, move), move .. " should be legal")
+    return game.apply(state, 1, move)
+  end
+
+  --- The lowest rows of a well, the way fallingGame reads them
+  --- @param state table
+  --- @param count number
+  --- @return string
+  local function fallingRows(state, count)
+    local rows = {}
+    for row = 23 - count, 22 do
+      local text = ""
+      for column = 1, 10 do
+        text = text .. (state.cells[(row - 1) * 10 + column] == 0 and "." or "#")
+      end
+      rows[#rows + 1] = text
+    end
+    return table.concat(rows, " ")
+  end
+
+  --- Where a player who looks a little ahead would put the piece: where it clears the most rows
+  --- and leaves the fewest holes under the flattest stack
+  --- @param game table
+  --- @param state table
+  --- @return string?
+  local function fallingMove(game, state)
+    local best, bestScore = nil, math.huge
+    for _, move in ipairs(game.moves(state, 1)) do
+      if move ~= "h" and move ~= "e" then
+        local after = copy(state)
+        game.apply(after, 1, move)
+        local holes, height, bumps, last = 0, 0, 0, nil
+        for column = 1, 10 do
+          local top = nil
+          for row = 1, 22 do
+            local filled = after.cells[(row - 1) * 10 + column] ~= 0
+            if filled and not top then
+              top = row
+            elseif top and not filled then
+              holes = holes + 1
+            end
+          end
+          local tall = top and 23 - top or 0
+          height = height + tall
+          bumps = bumps + (last and math.abs(tall - last) or 0)
+          last = tall
+        end
+        local score = height * 0.5 + holes * 4 + bumps * 0.4 - (after.lines - state.lines) * 8 + (after.blocked and 1000 or 0)
+        if score < bestScore then
+          best, bestScore = move, score
+        end
+      end
+    end
+    return best
+  end
+
+  function tests.BlockfallClearsFullRowsAndScoresThemByTheLevel()
+    -- An I laid flat in the gap along the bottom clears it, and what was above comes down
+    local game, state = fallingGame({ "#.........", "###....###" }, "I")
+    local event = fallingPlay(game, state, "0.4.21")
+    equal("..........", fallingRows(state, 2):sub(1, 10))
+    equal("#.........", fallingRows(state, 1))
+    equal(22, event.rows[1])
+    equal(1, #event.rows)
+    equal(100, event.gained)
+    equal(100, state.score)
+    equal(1, state.lines)
+    equal(1, state.pieces)
+    local placed = {}
+    for _, square in ipairs(event.placed) do
+      placed[#placed + 1] = square
+    end
+    table.sort(placed)
+    equal("214,215,216,217", table.concat(placed, ","), "the squares it came to rest on, before the row went")
+
+    -- Times the level, and a drop is worth two a row whatever the level
+    game, state = fallingGame({ "#.........", "###....###" }, "I", { mode = "marathon", level = 5 })
+    equal(5, state.level)
+    fallingPlay(game, state, "0.4.21d19")
+    equal(500 + 38, state.score)
+    game, state = fallingGame({ "#.........", "###....###" }, "I")
+    fallingPlay(game, state, "0.4.21s6")
+    equal(106, state.score, "pushed down a row at a time it is one a row")
+
+    -- Four at once is a quad, and one that empties the well is a perfect clear on top
+    local four = { "#########.", "#########.", "#########.", "#########." }
+    game, state = fallingGame(four, "I")
+    event = fallingPlay(game, state, "1.8.19")
+    equal(4, #event.rows)
+    equal(true, event.perfect)
+    equal(800 + 2000, state.score)
+    equal("..........", fallingRows(state, 1))
+    game, state = fallingGame({ "#.........", unpack(four) }, "I")
+    event = fallingPlay(game, state, "1.8.19")
+    equal(nil, event.perfect)
+    equal(800, state.score)
+    equal(1, state.quads)
+  end
+
+  function tests.BlockfallChainsHardClearsAndCombos()
+    local four = { "#########.", "#########.", "#########.", "#########." }
+    local rows = { "#.........", unpack(four) }
+    for _, row in ipairs(four) do
+      rows[#rows + 1] = row
+    end
+    -- Two quads in a row: the second back to back, and a combo of one
+    local game, state = fallingGame(rows, "I")
+    local event = fallingPlay(game, state, "1.8.19")
+    equal(4, #event.rows)
+    equal(nil, event.chain, "the first only starts a chain")
+    equal(nil, event.combo)
+    equal(true, state.chain)
+    event = fallingPlay(game, state, "1.8.19", "I")
+    equal(true, event.chain)
+    equal(1, event.combo)
+    equal(1200 + 50, event.gained)
+
+    -- A piece that clears nothing ends the combo but keeps the chain, an easy clear breaks it
+    game, state = fallingGame({ "#.........", "###....###" }, "O")
+    state.chain, state.combo = true, 2
+    event = fallingPlay(game, state, "0.3.21", "O")
+    equal(0, #event.rows)
+    equal(-1, state.combo)
+    equal(true, state.chain)
+    event = fallingPlay(game, state, "0.5.21", "O")
+    equal(1, #event.rows)
+    equal(nil, event.chain)
+    equal(false, state.chain, "a single isn't a hard clear")
+
+    -- Clears one after the other make a combo that grows, with the level
+    game, state = fallingGame({ "#.........", "####.#####", "####.#####", "####.#####" }, "I", { mode = "marathon", level = 2 })
+    event = fallingPlay(game, state, "1.3.19")
+    equal(3, #event.rows)
+    equal(1000, event.gained, "a triple at level 2")
+    equal(0, state.combo, "the first clear is a combo of none")
+    equal(nil, event.combo)
+  end
+
+  function tests.BlockfallScoresTSpins()
+    -- The slot for a T pointing down, with a square over one of its back corners
+    local slot = { "####......", "###...####", "####.#####" }
+    local game, state = fallingGame(slot, "T")
+    local event = fallingPlay(game, state, "2.4.20t")
+    equal("full", event.spin)
+    equal(2, #event.rows)
+    equal(1200, event.gained)
+    equal(1, state.spins)
+    equal(true, state.chain, "a T-spin that clears is a hard clear")
+
+    -- Not turned in last: two rows cleared, nothing more
+    game, state = fallingGame(slot, "T")
+    event = fallingPlay(game, state, "2.4.20d3")
+    equal(nil, event.spin)
+    equal(300 + 6, event.gained)
+
+    -- Only two corners filled: no spin, however it was turned
+    game, state = fallingGame({ "..........", "###...####", "####.#####" }, "T")
+    event = fallingPlay(game, state, "2.4.20t")
+    equal(nil, event.spin)
+
+    -- Against the floor with one corner in front filled it is a small one, unless it took the
+    -- farthest kick to get there
+    local mini = { "#.........", "...#######" }
+    game, state = fallingGame(mini, "T")
+    event = fallingPlay(game, state, "0.1.21t")
+    equal("mini", event.spin)
+    equal(200, event.gained)
+    game, state = fallingGame(mini, "T")
+    event = fallingPlay(game, state, "0.1.21tk")
+    equal("full", event.spin)
+    equal(800, event.gained)
+    -- A spin that clears nothing still scores
+    game, state = fallingGame({ "#.........", "...######." }, "T")
+    event = fallingPlay(game, state, "0.1.21t")
+    equal("mini", event.spin)
+    equal(0, #event.rows)
+    equal(100, event.gained)
+    -- Only a T spins
+    game, state = fallingGame({ "..........", "...######." }, "J")
+    event = fallingPlay(game, state, "0.1.21t")
+    equal(nil, event.spin)
+  end
+
+  function tests.BlockfallTakesOnlyPiecesThatFitAndLieOnSomething()
+    local game, state = fallingGame({ "#########." }, "O")
+    equal(true, (game.validate(state, 1, "0.4.20")), "on the bottom row")
+    equal(true, (game.validate(state, 1, "3.4.20")), "turned any way, an O is an O")
+    equal(true, (game.validate(state, 1, "0.4.20s3d12tk")))
+    for _, move in ipairs({ "0.4.19", "0.4.21", "0.9.20", "0.-1.20", "", "0.4", "4.4.20", "0.4.20s99", "0.4.20tt",
+      "0.4.20x", "0.4.20s", "0.4.20t1", "h1", "e", "0.4.20.", "a.4.20" }) do
+      local ok, err = game.validate(state, 1, move)
+      equal(false, ok, move)
+      equal("invalid_move", err, move)
+    end
+    equal("not_your_turn", select(2, game.validate(state, 2, "0.4.20")))
+    -- An I stood on end can have its box over the edge of the well
+    game, state = fallingGame({}, "I")
+    equal(true, (game.validate(state, 1, "1.-1.19")))
+    equal(true, (game.validate(state, 1, "3.8.19")))
+    equal(false, (game.validate(state, 1, "1.-2.19")))
+
+    -- Every move it lists is one of those, dropped from where the piece comes in
+    for _, kind in ipairs({ "I", "O", "T", "S", "Z", "J", "L" }) do
+      game, state = fallingGame({ "##..###..#" }, kind)
+      local list = game.moves(state, 1)
+      local placements = 0
+      for _, move in ipairs(list) do
+        assert(game.validate(state, 1, move), kind .. " " .. move)
+        placements = placements + (move:find(".", 1, true) and 1 or 0)
+      end
+      -- Turned either of two ways, an I, an S and a Z can fill the same squares: listed once
+      local expected = ({ I = 17, O = 9, T = 34, S = 17, Z = 17, J = 34, L = 34 })[kind]
+      equal(expected, placements, kind)
+      equal("h", list[#list], "and putting it aside")
+    end
+  end
+
+  function tests.BlockfallHoldsAPieceOnceAPiece()
+    local game, state = fallingGame({})
+    local first, coming = state.current, state.queue[1]
+    local event = fallingPlay(game, state, "h")
+    equal("hold", event.action)
+    equal(first, state.hold)
+    equal(coming, state.current, "nothing was put aside yet: the next piece comes in")
+    equal(true, state.held)
+    equal(false, (game.validate(state, 1, "h")), "not twice for the same piece")
+    local list = game.moves(state, 1)
+    equal(false, list[#list] == "h")
+
+    -- Once that one is down there is a swap
+    local now = state.current
+    fallingPlay(game, state, list[1])
+    equal(false, state.held)
+    local next = state.current
+    fallingPlay(game, state, "h")
+    equal(first, state.current, "the piece put aside comes back")
+    equal(next, state.hold)
+    assert(now ~= nil)
+  end
+
+  function tests.BlockfallDealsTheSamePiecesHoweverTheyArePlayed()
+    local private = loadEngine()
+    local game = private.Games.Get("blockfall")
+    --- The first pieces of a game, played one way or another
+    local function dealt(seed, side)
+      local state = game.newState(1, private.Random.New(seed))
+      local kinds = { state.current }
+      for turn = 1, 13 do
+        local list = game.moves(state, 1)
+        local pick = (side == "left" and turn <= 3) and list[1] or fallingMove(game, state)
+        game.apply(state, 1, pick)
+        assert(not state.over)
+        kinds[#kinds + 1] = state.current
+      end
+      return kinds
+    end
+    local left, right = dealt(7, "left"), dealt(7, "right")
+    equal(table.concat(left, ","), table.concat(right, ","), "the bag isn't stirred by the moves")
+    -- Every seven is all seven
+    for bag = 0, 1 do
+      local seen = {}
+      for index = 1, 7 do
+        seen[left[bag * 7 + index]] = true
+      end
+      for kind = 1, 7 do
+        equal(true, seen[kind] == true, "bag " .. bag .. " has piece " .. kind)
+      end
+    end
+    assert(table.concat(dealt(8, "left"), ",") ~= table.concat(left, ","), "another game, other pieces")
+  end
+
+  function tests.BlockfallEndsWhenAPieceHasNoRoom()
+    -- The next piece can't come in
+    local game, state = fallingGame({}, "O")
+    state.cells[10 + 5] = 5
+    local event = fallingPlay(game, state, "0.4.21")
+    equal(true, event.over)
+    equal(true, state.blocked)
+    equal(0, game.result(state).winner)
+    equal(false, (game.validate(state, 1, "h")))
+    equal(0, #game.moves(state, 1))
+
+    -- A piece that comes to rest wholly above the well
+    game, state = fallingGame({}, "O")
+    for row = 3, 22 do
+      state.cells[(row - 1) * 10 + 1], state.cells[(row - 1) * 10 + 2] = 5, 5
+    end
+    event = fallingPlay(game, state, "0.0.1")
+    equal(true, event.over)
+    equal(true, state.blocked)
+
+    -- Nor can one that was put aside
+    game, state = fallingGame({}, "O")
+    state.cells[10 + 5] = 5
+    event = fallingPlay(game, state, "h")
+    equal(true, event.over)
+    equal(nil, game.result(fallingGame({})))
+  end
+
+  function tests.BlockfallIsPlayedThreeWays()
+    local private = loadEngine()
+    local Games, Race, game = private.Games, private.Race, private.Games.Get("blockfall")
+    equal("marathon", Games.Rules(game.options).mode)
+    equal(1, Games.Rules(game.options).level)
+    equal(2, #Games.OptionsFor(game, Games.Rules(game.options, { mode = "ultra" })))
+    equal(1, #Games.OptionsFor(game, Games.Rules(game.options, { mode = "sprint" })), "a sprint is played from the first level")
+    equal("mode=sprint", Games.EncodeOptions(game, { mode = "sprint" }))
+    equal("blockfall_mode_ultra", Games.OptionLabel(game.options[1], "ultra"))
+
+    -- A marathon goes up a level every ten lines, and is won at 150
+    local game_, state = fallingGame({ "#.........", "###....###" }, "I")
+    state.lines = 9
+    local event = fallingPlay(game_, state, "0.4.21")
+    equal(2, event.level)
+    equal(2, state.level)
+    game_, state = fallingGame({ "#.........", "###....###" }, "I", { mode = "marathon", level = 15 })
+    state.lines = 149
+    event = fallingPlay(game_, state, "0.4.21")
+    equal(true, event.won)
+    equal(1, game.result(state).winner)
+    equal(20, state.level, "as high as the levels go")
+    equal("marathon15", game.record(state, 300)[1].key)
+    equal(state.score, game.record(state, 300)[1].value)
+    equal("blockfall_progress_marathon", game.progress(state))
+
+    -- A sprint stays at the first level, and only forty lines have a time
+    game_, state = fallingGame({ "#.........", "###....###" }, "I", { mode = "sprint", level = 10 })
+    equal(1, state.level)
+    state.lines = 39
+    equal(nil, game.record(state, 50))
+    event = fallingPlay(game_, state, "0.4.21")
+    equal(1, state.level)
+    equal(true, state.won)
+    equal(1, game.result(state).winner)
+    local record = game.record(state, 61.5)[1]
+    equal("sprint", record.key)
+    equal(61.5, record.value)
+    equal(true, record.lower)
+    equal("blockfall_progress_sprint", game.progress(state))
+
+    -- Two minutes end when the view says so, and nowhere else
+    game_, state = fallingGame({}, nil, { mode = "ultra" })
+    equal("e", game.moves(state, 1)[#game.moves(state, 1)])
+    event = fallingPlay(game_, state, "e")
+    equal("time", event.action)
+    equal(1, game.result(state).winner)
+    equal("ultra1", game.record(state, 120)[1].key)
+    for _, mode in ipairs({ "marathon", "sprint" }) do
+      game_, state = fallingGame({}, nil, { mode = mode })
+      equal(false, (game.validate(state, 1, "e")), mode)
+    end
+
+    -- A sprint is raced on its time, the others on their points
+    equal(true, Race.Higher(game))
+    equal(true, Race.Higher(game, { mode = "ultra" }))
+    equal(false, Race.Higher(game, { mode = "sprint" }))
+    game_, state = fallingGame({ "#.........", "###....###" }, "I", { mode = "sprint" })
+    state.lines = 39
+    fallingPlay(game_, state, "0.4.21")
+    equal(6150, Race.Time(game, state, 61.5, { winner = 1 }, { mode = "sprint" }))
+    game_, state = fallingGame({}, nil, { mode = "ultra" })
+    state.score = 4321
+    fallingPlay(game_, state, "e")
+    equal(432100, Race.Time(game, state, 120, { winner = 1 }, { mode = "ultra" }))
+    equal("blockfall_points", Race.Show(game, 432100, { mode = "ultra" }))
+    equal(nil, Race.Show(game, 6150, { mode = "sprint" }), "a time is shown by the window")
+    equal("won", Race.Outcome({ run = { "500" }, heard = { "400" }, told = 1 }, game, { mode = "ultra" }))
+    equal("lost", Race.Outcome({ run = { "500" }, heard = { "400" }, told = 1 }, game, { mode = "sprint" }))
+  end
+
+  function tests.BlockfallComesOutTheSameFromTheSameLog()
+    local world = World.New()
+    local alice = world:AddPlayer("Alice-Realm")
+    local Match, game = alice.private.Match, alice.private.Games.Get("blockfall")
+    local match = assert(alice.session:Invite({}, "blockfall"))
+    for turn = 1, 60 do
+      local state = Match.State(match)
+      local move = (turn % 9 == 0 and not state.held) and "h" or fallingMove(game, state)
+      assert(alice.session:Move(match.id, move))
+    end
+    local state = Match.State(match)
+    assert(state.lines >= 10, "a game that looks ahead clears rows, got " .. state.lines)
+    equal(nil, Match.Result(match))
+    local other = World.New():AddPlayer("Alice-Realm", { [match.id] = copy(match) })
+    local again = other.private.Match.State(other.matches[match.id])
+    equal(fallingRows(state, 22), fallingRows(again, 22))
+    equal(state.score, again.score)
+    equal(table.concat(state.queue, ","), table.concat(again.queue, ","))
+    equal(false, game.undo == true, "nothing is taken back")
+  end
+
+  -----------------------------
+  -- Blockfall on screen
+  -----------------------------
+
+  --- Opens a game of Blockfall in the window
+  --- @param options table?
+  --- @return table player, string id, table MainFrame
+  local function fallingOnScreen(options)
+    local world = World.New()
+    world.seed = 1
+    local player = world:AddPlayer("Alice-Realm")
+    local MainFrame = openWindow(player)
+    local match = assert(player.session:Invite({}, "blockfall", { options = options }))
+    MainFrame.Open(match.id)
+    return player, match.id, MainFrame
+  end
+
+  --- What takes the keys for the game on screen
+  --- @return table
+  local function fallingKeys()
+    local found = Client.Find(function(widget)
+      return widget.scripts.OnKeyDown ~= nil and widget.scripts.OnKeyUp ~= nil and widget:IsVisible()
+    end)
+    equal(1, #found, "what takes the keys")
+    return found[1]
+  end
+
+  --- Presses a key, wherever the cursor is
+  --- @param key string
+  --- @return boolean Whether the game kept it to itself
+  local function fallingKey(key)
+    local keys = fallingKeys()
+    keys:Fire("OnKeyDown", key)
+    return keys.propagates == false
+  end
+
+  --- @param key string
+  local function fallingKeyUp(key)
+    fallingKeys():Fire("OnKeyUp", key)
+  end
+
+  --- Lets time pass for everything on screen, the window's clock included
+  --- @param seconds number
+  local function fallingTime(seconds)
+    local ticking = Client.Find(function(widget)
+      return widget.scripts.OnUpdate ~= nil and widget:IsVisible()
+    end)
+    for _ = 1, math.floor(seconds / 0.02 + 0.5) do
+      for _, widget in ipairs(ticking) do
+        widget:Fire("OnUpdate", 0.02)
+      end
+    end
+  end
+
+  --- Whether a sound was played since a point in the list of them
+  --- @param name string
+  --- @param since number
+  --- @return boolean
+  local function heardSince(name, since)
+    for index = since + 1, #Client.sounds do
+      if Client.sounds[index] == name then
+        return true
+      end
+    end
+    return false
+  end
+
+  function tests.WindowPlaysBlockfallWithTheKeys()
+    local player, id = fallingOnScreen()
+    local match = player.matches[id]
+    equal(true, says("game_blockfall"))
+    equal(true, says("blockfall_hold") and says("blockfall_next"))
+    equal(true, says("stat_score") and says("blockfall_stat_level") and says("blockfall_stat_lines") and says("stat_time"))
+    equal(true, says("blockfall_hint"))
+
+    -- It counts in first: the keys are the game's, but nothing moves and the clock doesn't run
+    equal(true, says("blockfall_ready"))
+    equal(true, fallingKey("SPACE"))
+    fallingKeyUp("SPACE")
+    fallingTime(0.3)
+    equal(0, #match.log)
+    equal(0, player.session:Elapsed(match))
+    fallingTime(0.3)
+    equal(true, says("blockfall_go"))
+    fallingTime(0.2)
+    assert(player.session:Elapsed(match) > 0, "the clock runs once it is played")
+
+    -- Space drops the piece all the way
+    local heard = #Client.sounds
+    equal(true, fallingKey("SPACE"))
+    fallingKeyUp("SPACE")
+    equal(1, #match.log)
+    assert(match.log[1]:match("d%d+$"), "dropped: " .. match.log[1])
+    equal(true, heardSince("blockfallDrop", heard))
+
+    -- Left moves it a square, a turn turns it
+    fallingTime(0.2)
+    heard = #Client.sounds
+    equal(true, fallingKey("LEFT"))
+    fallingKeyUp("LEFT")
+    equal(true, heardSince("blockfallMove", heard))
+    fallingKey("SPACE")
+    fallingKeyUp("SPACE")
+    equal(2, #match.log)
+    assert(match.log[2]:match("^0%.3%."), "a square to the left: " .. match.log[2])
+    fallingTime(0.2)
+    fallingKey("UP")
+    fallingKeyUp("UP")
+    fallingKey("SPACE")
+    fallingKeyUp("SPACE")
+    assert(match.log[3]:match("^1%."), "turned once: " .. match.log[3])
+
+    -- C puts the piece aside, once
+    fallingTime(0.2)
+    heard = #Client.sounds
+    fallingKey("C")
+    equal("h", match.log[4])
+    equal(true, heardSince("blockfallHold", heard))
+    fallingTime(0.1)
+    fallingKey("C")
+    equal(4, #match.log)
+
+    -- Held, a move key takes the piece to the wall
+    fallingTime(0.2)
+    fallingKey("RIGHT")
+    fallingTime(0.6)
+    fallingKeyUp("RIGHT")
+    fallingKey("SPACE")
+    fallingKeyUp("SPACE")
+    local column = tonumber(match.log[5]:match("^%d%.(%-?%d+)%."))
+    assert(column >= 7, "at the right wall: " .. match.log[5])
+
+    -- Held down it goes faster, and that scores
+    fallingTime(0.2)
+    fallingKey("DOWN")
+    fallingTime(0.3)
+    fallingKeyUp("DOWN")
+    fallingKey("SPACE")
+    fallingKeyUp("SPACE")
+    assert(match.log[6]:match("s%d+"), "pushed down: " .. match.log[6])
+
+    -- Left alone, it falls and stays where it lands
+    fallingTime(25)
+    assert(#match.log >= 7, "the piece came to rest by itself")
+    assert(not match.log[7]:match("d%d"), "not dropped: " .. match.log[7])
+
+    -- Keys that aren't the game's go on to the character
+    equal(false, fallingKey("M"))
+    equal(false, fallingKey("ENTER"))
+  end
+
+  function tests.WindowPausesBlockfall()
+    local player, id = fallingOnScreen()
+    local match = player.matches[id]
+    fallingTime(1.5)
+    local log = #match.log
+
+    -- P covers the well and stops the clock, and the other keys go back to the character
+    equal(true, fallingKey("P"))
+    equal(true, says("blockfall_paused"))
+    equal(true, says("blockfall_paused_how"))
+    local time = player.session:Elapsed(match)
+    fallingTime(3)
+    equal(time, player.session:Elapsed(match))
+    equal(false, fallingKey("SPACE"))
+    equal(false, fallingKey("LEFT"))
+    equal(false, fallingKey("ESCAPE"), "Escape closes the window, as ever")
+    equal(log, #match.log)
+
+    -- P again counts back in
+    equal(true, fallingKey("P"))
+    equal(false, says("blockfall_paused"))
+    equal(true, says("3"))
+    fallingTime(0.6)
+    equal(true, says("2"))
+    equal(time, player.session:Elapsed(match), "still holding still while it counts")
+    fallingTime(1)
+    assert(player.session:Elapsed(match) > time, "and then the clock runs again")
+    equal(true, fallingKey("SPACE"))
+    equal(log + 1, #match.log)
+
+    -- Escape pauses too, and a click on the well plays on
+    equal(true, fallingKey("ESCAPE"))
+    equal(true, says("blockfall_paused"))
+    local stage = fallingKeys().parent
+    local cover = Client.Find(function(widget)
+      return widget.scripts.OnMouseDown ~= nil and widget.mouse and widget:IsVisible() and widget.parent.parent == stage
+    end)
+    equal(1, #cover)
+    cover[1]:Fire("OnMouseDown", "LeftButton")
+    equal(false, says("blockfall_paused"))
+
+    -- A fight pauses it
+    fallingTime(2)
+    local watch = Client.Find(function(widget)
+      return widget.scripts.OnEvent ~= nil and widget.scripts.OnKeyDown == nil and widget.parent == fallingKeys().parent
+    end)
+    equal(1, #watch)
+    watch[1]:Fire("OnEvent", "PLAYER_REGEN_DISABLED")
+    equal(true, says("blockfall_paused"))
+  end
+
+  function tests.WindowShowsBlockfallRowsClearedAndTheEnd()
+    local player, id = fallingOnScreen()
+    local match = player.matches[id]
+    local Match, game = player.private.Match, player.private.Games.Get("blockfall")
+    fallingTime(1)
+    -- Played well, rows are cleared: what they scored drifts up, and the well is drawn as it is
+    local cleared, heard = 0, #Client.sounds
+    for _ = 1, 40 do
+      local before = Match.State(match).lines
+      assert(player.session:Move(id, fallingMove(game, Match.State(match))))
+      if Match.State(match).lines > before then
+        cleared = cleared + 1
+        fallingTime(0.1)
+        local score = Match.Events(match)[#match.log].gained
+        equal(true, says("+" .. score))
+      end
+      fallingTime(0.6)
+    end
+    assert(cleared >= 3, "rows were cleared, " .. cleared .. " times")
+    equal(true, heardSince("blockfallClear", heard))
+    local filled = 0
+    for _, value in ipairs(Match.State(match).cells) do
+      filled = filled + (value ~= 0 and 1 or 0)
+    end
+    local drawn = #Client.Find(function(widget)
+      return widget.kind == "Texture" and (widget.texture or ""):find("Blockfall\\block") ~= nil and widget:IsVisible()
+    end)
+    assert(drawn >= filled, "every filled square is drawn, " .. drawn .. " of " .. filled)
+
+    -- Dropped in the middle, the stack soon reaches the top: it greys, and the game is over
+    heard = #Client.sounds
+    for _ = 1, 40 do
+      if Match.Result(match) then
+        break
+      end
+      fallingKey("SPACE")
+      fallingKeyUp("SPACE")
+      fallingTime(0.6)
+    end
+    equal(0, Match.Result(match).winner)
+    equal(true, heardSince("blockfallOver", heard))
+    fallingTime(1.5)
+    equal(true, says("blockfall_over"))
+    equal(false, fallingKey("SPACE"), "the keys are the character's again")
+  end
+
+  function tests.WindowEndsBlockfallsTwoMinutes()
+    local player, id = fallingOnScreen({ mode = "ultra" })
+    local match = player.matches[id]
+    fallingTime(1)
+    equal(true, says("2:00") or says("1:59"))
+    match.played = 119.9
+    fallingTime(0.3)
+    equal("e", match.log[#match.log])
+    equal(1, player.private.Match.Result(match).winner)
+    fallingTime(1)
+    equal(true, says("blockfall_time_up"))
+  end
 end
 
 -----------------------------
