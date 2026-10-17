@@ -490,6 +490,29 @@ local function rematch(match)
   MainFrame.Select(newMatch.id)
 end
 
+--- Sending the run that set the player's best to somebody to race, offered once a game whose
+--- every run is the same course is over and there is a best by its rules (Session:BestToRace).
+--- It opens the new game wizard on the game and its rules, for the player to pick who
+--- @param match Match
+--- @return { text: string, onClick: fun(), tip: string, detailOnly: boolean }?
+local function raceBestAction(match)
+  local best = private.session:BestToRace(match.game, match.options)
+  if not best then
+    return nil
+  end
+  local hundredths = math.floor(best * 100 + 0.5)
+  local time = L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)
+  return {
+    text = L["race_best"],
+    tip = L["race_best_tip"]:format(time),
+    -- There is no room for it on the front page, and nothing to pick there
+    detailOnly = true,
+    onClick = function()
+      MainFrame.NewGame(match.game, match.options)
+    end,
+  }
+end
+
 -- For a game played alone: `data` is what giving it up is followed by
 StaticPopupDialogs["FOREVERGAMES_GIVE_UP"] = {
   text = "%s",
@@ -566,7 +589,7 @@ local function soloActionsFor(match)
   end
 
   if match.status ~= "active" then
-    return { { text = L["play_again"], onClick = again }, { text = L["remove"], onClick = forget } }
+    return { { text = L["play_again"], onClick = again }, { text = L["remove"], onClick = forget }, raceBestAction(match) }
   end
   local actions = {
     { text = L["give_up"], onClick = afterAsking("give_up_confirm", forget) },
@@ -625,6 +648,7 @@ local function raceActionsFor(match)
         end,
       },
       { text = L["remove"], onClick = forget },
+      raceBestAction(match),
     }
   end
   local actions = {
@@ -946,7 +970,13 @@ local function listActionsFor(match)
   if match.status == "active" then
     return {}
   end
-  return actionsFor(match)
+  local actions = {}
+  for _, action in ipairs(actionsFor(match)) do
+    if not action.detailOnly then
+      actions[#actions + 1] = action
+    end
+  end
+  return actions
 end
 
 --- @param content Frame
@@ -2621,7 +2651,9 @@ function MainFrame.Open(id)
 end
 
 --- Opens the window on the new game wizard
-function MainFrame.NewGame()
+--- @param gameId string? A game chosen already, see Wizard.Open
+--- @param rules table<string, any>? How its rules are set
+function MainFrame.NewGame(gameId, rules)
   if not frame then
     create()
   end
@@ -2631,7 +2663,7 @@ function MainFrame.NewGame()
   if private.Party then
     private.Party.Hide()
   end
-  Wizard.Open()
+  Wizard.Open(gameId, rules)
   MainFrame.Refresh()
 end
 

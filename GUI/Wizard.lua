@@ -112,10 +112,11 @@ local chosenSeat
 -- What went wrong with what the player just did, for the next refresh to say, as a locale key
 --- @type string?
 local problem
+-- In a race whose game can send the run that set the player's best as it is, whether that is what
+-- is raced rather than a new run each (Session:BestToRace). Only where there is a best to send
+local racingBest = true
 
 local refresh
---- @type fun(best: number?, rival: string?)
-local showBest
 --- @type fun(): WizardPlayer[], string?
 local listing
 
@@ -189,6 +190,30 @@ end
 --- @return boolean
 local function raceable()
   return chosenGame ~= nil and Games.IsSolo(chosenGame) and Race.Has(chosenGame)
+end
+
+--- How long the run that set the player's best by the rules as they are set took, for a race whose
+--- game can send that run to be raced as it is (GameGhost.course)
+--- @return number? seconds nil for no best by these rules
+--- @return boolean sendable Whether the game can send a best at all
+local function bestToRace()
+  if not raceable() or not (chosenGame.ghost and chosenGame.ghost.course) then
+    return nil, false
+  end
+  return private.session:BestToRace(chosenGame.id, Games.ForPlayers(chosenGame, chosenRules, 1)), true
+end
+
+--- @return boolean Whether a race sent now would be against the player's best rather than a new run
+local function sendingBest()
+  return racingBest and bestToRace() ~= nil
+end
+
+--- A race's time, to the hundredth: "1:23.45"
+--- @param seconds number
+--- @return string
+local function raceTime(seconds)
+  local hundredths = math.floor(seconds * 100 + 0.5)
+  return L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)
 end
 
 --- How many can sit at the table of the chosen game: a race is the player and their rival, or
@@ -354,13 +379,12 @@ local function whoIsAt(seats)
   return names, levels
 end
 
---- @param best boolean? Race the run that set the player's best by these rules, see InviteSetup.best
-local function send(best)
+local function send()
   local seats, size = sitting()
   local names, levels = whoIsAt(seats)
   -- A race is played alone on both sides
   local players = raceable() and 1 or size
-  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, players), seat = (size == 2 and not raceable()) and chosenSeat or nil, best = best }
+  local setup = { options = Games.ForPlayers(chosenGame, chosenRules, players), seat = (size == 2 and not raceable()) and chosenSeat or nil, best = sendingBest() or nil }
   if #levels > 0 then
     setup.computer = { levels = levels }
   end
@@ -393,7 +417,8 @@ end
 --- The game was chosen. One that is played alone begins there and then unless it has rules to
 --- set, anything else goes on to who it is played with and how
 --- @param game GameDefinition|PartyGame
-local function pick(game)
+--- @param rules table<string, any>? How its rules are set, rather than the way they were last time
+local function pick(game, rules)
   -- A game for a room isn't set up here at all: it has a window of its own, where a room of it
   -- is opened or joined
   if Rooms.Game(game.id) == game then
@@ -407,8 +432,8 @@ local function pick(game)
     return
   end
   chosenGame = game
-  chosenGroup, chosenSeat = nil, nil
-  chosenRules = Games.Rules(game.options, remembered()[game.id])
+  chosenGroup, chosenSeat, racingBest = nil, nil, true
+  chosenRules = Games.Rules(game.options, rules or remembered()[game.id])
   atTable, wanted = {}, Games.SeatCounts(game)[1]
   -- The computer at the table again if it sat there last time, where it sat and as good
   local last = rememberedComputer()[game.id] or {}
@@ -1058,6 +1083,10 @@ local function createChoice(parent)
     end
   end)
   choice:SetScript("OnLeave", GameTooltip_Hide)
+  -- One that can't be chosen still says why
+  if choice.SetMotionScriptsWhileDisabled then
+    choice:SetMotionScriptsWhileDisabled(true)
+  end
   return choice
 end
 
@@ -1066,11 +1095,16 @@ end
 --- @param on boolean Whether it is what is chosen
 --- @param pick fun()
 --- @param tip string? What it means, for the tooltip
-local function fillChoice(choice, text, on, pick, tip)
+--- @param disabled boolean? It can't be chosen as things are, the tooltip saying why
+local function fillChoice(choice, text, on, pick, tip, disabled)
   choice.pick, choice.picked, choice.tip = pick, on, tip
   choice.label:SetText(text)
   choice:SetSize(choice.label:GetStringWidth() + CHOICE_PADDING, FILTER_HEIGHT)
+  choice:SetEnabled(not disabled)
   paint(choice, on)
+  if disabled then
+    choice.label:SetTextColor(unpack(Widgets.GREY))
+  end
 end
 
 --- A line of the rules: what it is about, and what it can be set to next to that
@@ -1118,6 +1152,35 @@ local function seatLine()
   for seat = 1, 2 do
     offer(named and chosenGame.seatLabel(seat, 2) or L["wizard_turn_" .. seat], seat)
   end
+  return line
+end
+
+--- What a race is run against, for a game that can send the player's best as it is: that run, or
+--- a new one each. Without a best by these rules there is only the new run, and the line says so
+--- @param best number? Seconds the best by these rules took
+--- @return { name: string, tip: string?, choices: { text: string, on: boolean, pick: fun(), tip: string?, disabled: boolean? }[] } A line of the rules, see refreshRules
+local function raceLine(best)
+  local line = { name = L["wizard_race_against"], tip = L["wizard_race_against_tip"], choices = {} }
+  if best then
+    line.choices[1] = {
+      text = L["wizard_race_mine"]:format(raceTime(best)),
+      on = racingBest,
+      pick = function()
+        racingBest = true
+      end,
+      tip = L["wizard_race_mine_tip"],
+    }
+  else
+    line.choices[1] = { text = L["wizard_race_no_best"], on = false, pick = function() end, tip = L["wizard_race_no_best_tip"], disabled = true }
+  end
+  line.choices[2] = {
+    text = L["wizard_race_new"],
+    on = not best or not racingBest,
+    pick = function()
+      racingBest = false
+    end,
+    tip = L["wizard_race_new_tip"],
+  }
   return line
 end
 
@@ -1196,7 +1259,7 @@ local function fillSeatCard(card, seat, index)
     card.note:SetText(L["wizard_seat_you"])
   elseif seat and seat.name then
     card.name:SetText(Transport.DisplayName(seat.name))
-    card.note:SetText(L[(seat.typed and "wizard_seat_typed") or (raceable() and "wizard_seat_racing") or "wizard_seat_challenged"])
+    card.note:SetText(L[(seat.typed and "wizard_seat_typed") or (sendingBest() and "wizard_seat_racing_best") or (raceable() and "wizard_seat_racing") or "wizard_seat_challenged"])
   elseif seat then
     -- Clicked, it plays better, and from the hardest round to the easiest again
     card.name:SetText(L["computer"])
@@ -1250,7 +1313,8 @@ local function refreshTable()
   bar.seats:ClearAllPoints()
   bar.seats:SetPoint("RIGHT", bar, "TOPLEFT", x - 8, -FILTER_HEIGHT / 2)
   -- Who goes first is drawn, unless it is asked for between two
-  bar.note:SetText((size > 2 and L["wizard_table_drawn"]) or ((raceable() and size == 2) and L["wizard_table_race"]) or "")
+  local race = raceable() and size == 2 and (sendingBest() and "wizard_table_race_best" or "wizard_table_race")
+  bar.note:SetText((size > 2 and L["wizard_table_drawn"]) or (race and L[race]) or "")
 
   local width = widthOf(bar, 800)
   local cardWidth = math.min(SEAT_MOST_WIDTH, math.floor((width - (size - 1) * SEAT_GAP) / size))
@@ -1303,6 +1367,11 @@ local function refreshRules()
     end
     lines[#lines + 1] = line
   end
+  -- Under the rules it depends on: what set the best is for these rules alone
+  local best, sendable = bestToRace()
+  if sendable then
+    lines[#lines + 1] = raceLine(best)
+  end
 
   -- Every line of the rules under the one before, as tall as it takes for its choices to fit
   -- across: whatever doesn't fit next to the others goes on underneath them. A line of many
@@ -1331,7 +1400,7 @@ local function refreshRules()
           row.choices[position] = choice
         end
         if spec then
-          fillChoice(choice, spec.text, spec.on, spec.pick, spec.tip)
+          fillChoice(choice, spec.text, spec.on, spec.pick, spec.tip, spec.disabled)
           if x > first and x + choice:GetWidth() > room then
             x, y = first, y + FILTER_HEIGHT + FILTER_GAP
           end
@@ -1583,30 +1652,12 @@ end
 -- Shell
 -----------------------------
 
---- Offers the run that set the player's best by the rules as they are set, next to the challenge,
---- for a race whose game can send one as it is (Session:BestToRace)
---- @param best number? Seconds it took, nil for no best to send
---- @param rival string? Who it would go to
-showBest = function(best, rival)
-  local button = panel.bestButton
-  button:SetShown(best ~= nil)
-  button.rival = rival
-  panel.summary:ClearAllPoints()
-  panel.summary:SetPoint("RIGHT", best and button or panel.sendButton, "LEFT", -12, 0)
-  if best then
-    -- To the hundredth, as a race's times are
-    local hundredths = math.floor(best * 100 + 0.5)
-    button:SetText(L["wizard_race_best"]:format(L["race_time"]:format(Widgets.Time(math.floor(hundredths / 100)), hundredths % 100)))
-  end
-end
-
 refresh = function()
   local choosingOpponent = chosenGame ~= nil
   panel.gameStep:SetShown(not choosingOpponent)
   panel.opponentStep:SetShown(choosingOpponent)
   panel.backButton:SetShown(choosingOpponent)
   panel.sendButton:SetShown(choosingOpponent)
-  showBest(nil)
   panel.error:SetText(problem and L[problem] or "")
   problem = nil
 
@@ -1651,15 +1702,19 @@ refresh = function()
   elseif raceable() then
     panel.sendButton:SetText(L["wizard_race"])
   end
-  if raceable() and #names == 1 and open == 0 then
-    showBest(private.session:BestToRace(chosenGame.id, Games.ForPlayers(chosenGame, chosenRules, 1)), names[1])
-  end
+  local best = sendingBest() and raceTime(bestToRace())
   local summary
   if open > 0 then
     summary = L[open == 1 and "wizard_seat_open_one" or "wizard_seats_open"]:format(open)
   elseif #levels == 0 and #names == 0 then
     -- Nobody picked, and the game doesn't need anyone
-    summary = L[raceable() and "wizard_summary_race_alone" or "wizard_summary_alone"]:format(chosenGame.name)
+    if best then
+      summary = L["wizard_summary_race_best_alone"]:format(chosenGame.name, best)
+    else
+      summary = L[raceable() and "wizard_summary_race_alone" or "wizard_summary_alone"]:format(chosenGame.name)
+    end
+  elseif best then
+    summary = L["wizard_summary_race_best"]:format(chosenGame.name, best, listed(names))
   elseif raceable() then
     summary = L["wizard_summary_race"]:format(chosenGame.name, listed(names))
   elseif #names == 0 then
@@ -1713,18 +1768,6 @@ function Wizard.Init(parent, closed)
     send()
   end)
 
-  panel.bestButton = Widgets.Button(panel, "", 170, 28)
-  panel.bestButton:SetPoint("RIGHT", panel.sendButton, "LEFT", -6, 0)
-  panel.bestButton:SetScript("OnClick", function()
-    send(true)
-  end)
-  panel.bestButton:SetScript("OnEnter", function(button)
-    GameTooltip:SetOwner(button, "ANCHOR_TOP")
-    GameTooltip:SetText(L["wizard_race_best_tip"]:format(Transport.DisplayName(button.rival or "")), 1, 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  panel.bestButton:SetScript("OnLeave", GameTooltip_Hide)
-
   local cancelButton = Widgets.Button(panel, CANCEL, 90, 28)
   cancelButton:SetPoint("BOTTOMLEFT", 4, 4)
   cancelButton:SetScript("OnClick", function()
@@ -1752,7 +1795,9 @@ function Wizard.IsOpen()
   return panel ~= nil and panel:IsShown()
 end
 
-function Wizard.Open()
+--- @param gameId string? A game to begin on, chosen already: where its best is to be sent to somebody, say
+--- @param rules table<string, any>? How its rules are set, the way they were last time if left out
+function Wizard.Open(gameId, rules)
   chosenGame, chosenGroup, chosenSeat, problem = nil, nil, nil, nil
   atTable, wanted = {}, 2
   chosenGenre, chosenSeats, favouritesOnly = nil, nil, false
@@ -1765,6 +1810,10 @@ function Wizard.Open()
   local today = private.session:Today()
   if private.daily and today then
     private.daily:Ask(today)
+  end
+  local game = gameId and Games.Get(gameId)
+  if game then
+    pick(game, rules)
   end
 end
 

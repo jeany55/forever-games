@@ -21941,22 +21941,35 @@ do
     alice.session.env.ghosts.freedoom = { run = "abc+def" }
     openWizard(alice)
     pickGame("freedoom")
-    local function bestShown()
-      return #Client.Find(function(widget)
-        return widget.kind == "Button" and widget.text == "wizard_race_best" and widget:IsVisible()
-      end) == 1
-    end
-    equal(false, bestShown(), "nobody to send it to yet")
+    -- What is raced is offered before anybody is picked, the best first
+    local choices, on = ruleChoices("wizard_race_against")
+    equal("wizard_race_mine", on, "the best, there being one on the Run")
+    assert(choices["wizard_race_new"], "or a new run")
+    equal(true, says("wizard_summary_race_best_alone"))
     local box = Client.Find(function(widget)
       return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
     end)[1]
     box:SetText("Bob-Realm")
     box:Fire("OnTextChanged", true)
-    equal(true, bestShown(), "the best on the Run")
+    equal(true, says("wizard_summary_race_best"))
+    equal(true, says("wizard_table_race_best"))
+    box:Fire("OnEnterPressed")
+    equal(true, says("wizard_seat_racing_best"), "Bob is told what he races once he is picked")
+
     ruleChoices("freedoom_option_skill")["freedoom_skill_hard"]:Fire("OnClick")
-    equal(false, bestShown(), "a best without a ghost isn't sent")
+    choices, on = ruleChoices("wizard_race_against")
+    equal("wizard_race_new", on, "a best without a ghost isn't sent")
+    equal(false, choices["wizard_race_no_best"].enabled, "and says there is none")
+    equal(true, says("wizard_summary_race"))
+    equal(true, says("wizard_table_race"))
+
+    -- A new run asked for stays asked for
     ruleChoices("freedoom_option_skill")["freedoom_skill_medium"]:Fire("OnClick")
-    Client.Button("wizard_race_best"):Fire("OnClick")
+    ruleChoices("wizard_race_against")["wizard_race_new"]:Fire("OnClick")
+    equal("wizard_race_new", select(2, ruleChoices("wizard_race_against")))
+    equal(true, says("wizard_summary_race"))
+    ruleChoices("wizard_race_against")["wizard_race_mine"]:Fire("OnClick")
+    Client.Button("wizard_race"):Fire("OnClick")
     world:Deliver()
     local mine, theirs
     for _, match in pairs(alice.matches) do
@@ -21972,6 +21985,77 @@ do
     world:Deliver()
     equal(4250, Race.Theirs(theirs.race))
     equal("abc+def", table.concat(Race.Ghost(theirs.race), "+"))
+  end
+
+  function tests.WizardRacesANewRunWhenAskedEvenWithABest()
+    local world = World.New()
+    local alice, bob = world:AddPlayer("Alice-Realm"), world:AddPlayer("Bob-Realm")
+    alice.session.env.records.freedoom = { run = 42.5 }
+    alice.session.env.ghosts.freedoom = { run = "abc+def" }
+    openWizard(alice)
+    pickGame("freedoom")
+    local box = Client.Find(function(widget)
+      return widget.kind == "EditBox" and widget.scripts.OnEnterPressed and widget:IsVisible()
+    end)[1]
+    box:SetText("Bob-Realm")
+    box:Fire("OnTextChanged", true)
+    ruleChoices("wizard_race_against")["wizard_race_new"]:Fire("OnClick")
+    Client.Button("wizard_race"):Fire("OnClick")
+    world:Deliver()
+    local mine
+    for _, match in pairs(alice.matches) do
+      mine = match
+    end
+    equal("active", mine.status, "Alice has her run to play")
+    equal(nil, mine.race.best)
+  end
+
+  function tests.WizardOffersNoChoiceOfWhatIsRacedWhereRunsDiffer()
+    local world = World.New()
+    local alice = world:AddPlayer("Alice-Realm")
+    openWizard(alice)
+    pickGame("minesweeper")
+    equal(false, says("wizard_race_against"), "every deal of mines is its own")
+  end
+
+  function tests.FinishedRunOffersItsBestToRace()
+    local opened
+    local world = World.New()
+    world.prepare = function(private)
+      registerDash(private, {})
+    end
+    local alice = world:AddPlayer("Alice-Realm")
+    local MainFrame = openWindow(alice)
+    alice.private.Wizard.Open = function(gameId, rules)
+      opened = { gameId, rules }
+    end
+    local solo = assert(alice.session:Invite({}, "dash"))
+    alice.session:Spend(solo.id, 3)
+    assert(alice.session:Move(solo.id, "x"))
+    MainFrame.Open(solo.id)
+    equal(false, says("race_best"), "a run that didn't finish set no best")
+
+    local other = assert(alice.session:Invite({}, "dash"))
+    alice.session:Spend(other.id, 3)
+    alice.session:Sample(other.id, "a0")
+    assert(alice.session:Move(other.id, "w"))
+    MainFrame.Open(other.id)
+    equal(true, says("play_again"))
+    local button = Client.Button("race_best")
+    equal("race_best_tip", button.tip)
+    -- The run that didn't finish can send the best all the same, the best being by its rules
+    MainFrame.Open(solo.id)
+    equal(true, says("race_best"))
+
+    MainFrame.Home()
+    equal(0, #Client.Find(function(widget)
+      return widget.kind == "Button" and widget.text == "race_best" and widget:IsVisible()
+    end), "nothing to pick on the front page")
+    equal(true, says("play_again"), "playing again is still offered there")
+
+    MainFrame.Open(other.id)
+    Client.Button("race_best"):Fire("OnClick")
+    equal("dash", opened[1], "the wizard opens on the game, to pick who")
   end
 
   function tests.BestSentToSomebodyWithoutTheGameSaysWhy()
