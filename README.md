@@ -71,6 +71,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/battleship.png" width="32"> | Battleship | 2 | Hide your fleet, then hunt for theirs. |
 | <img src=".github/readme/icons/backgammon.png" width="32"> | Backgammon | 2 | Race your checkers home by the roll of the dice. |
 | <img src=".github/readme/icons/chinesecheckers.png" width="32"> | Chinese Checkers | 2, 3, 4 or 6 | Hop your marbles across the star. |
+| <img src=".github/readme/icons/realms.png" width="32"> | CarcassonneWoW | 2 to 5 | Lay tiles to build Elwynn Forest, and put footmen on its towns, roads, abbeys and fields to score them. |
 | <img src=".github/readme/icons/crazyeights.png" width="32"> | Crazy Eights | 2 to 6 | Match the suit or the rank. Eights are wild. |
 | <img src=".github/readme/icons/words.png" width="32"> | Words with Warcraft | 2 to 4 | A Scrabble-style word game where Azeroth's names count, and score extra. |
 | <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | 1 to 4 | Five dice, three rolls, thirteen boxes to fill. |
@@ -247,6 +248,18 @@ unless the game says otherwise.
   hops it takes.
 - Your corner is always at the bottom. The list beside the board shows who is which colour and
   whose turn it is.
+
+</details>
+
+<details>
+<summary><b>CarcassonneWoW</b></summary>
+
+- The squares your tile fits on glow. Point at one to see the tile there, right-click or press R
+  to turn it to the next way it fits (E turns it back), and click to lay it.
+- Then click one of the rings on it to put a footman there, or don't, and press Done or Enter.
+  Point at a ring to see what it would score. Escape picks the tile back up.
+- The mouse wheel zooms and dragging moves the map. Footmen in fields can be turned off when you
+  set the game up, for a simpler game.
 
 </details>
 
