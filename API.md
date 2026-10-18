@@ -7,8 +7,9 @@ turns that wait while a player is offline, rematches, How to play, and, if the g
 them, the computer, races and the day's challenge. Nobody has to change Forever Games or tell it
 about your game.
 
-Freedoom and Where in Azeroth are written this way. Their code is in `ForeverGames_Freedoom` and
-`ForeverGames_Where`, and uses only what this page describes. There is a smaller example in
+Freedoom, Pinball and Where in Azeroth are written this way. Their code is in
+`ForeverGames_Freedoom`, `ForeverGames_Pinball` and `ForeverGames_Where`, and uses only what this
+page describes. There is a smaller example in
 [`Examples/ForeverGames_Pig`](Examples/ForeverGames_Pig): Pig, a dice game for two to four
 players with a computer opponent, in about 240 lines. This guide goes through it file by file.
 
@@ -518,6 +519,8 @@ an addon written for the version before.
 | `Lexicon` | Word lists, for word games |
 | `SectorMap`, `Actors`, `Course` | Doom-style maps, the things that move in them, and race courses |
 | `Places` | Places in Azeroth: distances, scoring a guess, and packs of places (`AddPack`, `Catalogue`) |
+| `Physics` | Balls rolling on a table: walls, posts, sensors, flippers, and wires through the air that a ball rides, at a fixed tick that plays back exactly. Pinball is played on it |
+| `LightShow` | Lamps and the shows played over them: flashes, chases, sweeps, ripples, and bulbs that warm up and cool down |
 | `Widgets` | Buttons, labels, dropdowns, lists, sounds, animation |
 | `Lettering` | Text drawn as pictures, in fonts the client doesn't have |
 | `Effects` | Glows, bursts and other short effects |
@@ -529,6 +532,7 @@ an addon written for the version before.
 | `Viewport`, `Drag` | Zooming, panning and dragging |
 | `Canvas` | Drawing lines, for Sketch |
 | `Strips`, `SectorView` | A screen drawn a frame at a time, and the Doom-style view of a sector map |
+| `DotMatrix` | A pinball machine's dot-matrix display: words, boxes and little pictures in glowing dots |
 | `PanoView`, `MapView`, `MapOverlays`, `TerrainView` | Panoramas and maps of the world |
 
 Each part is documented at the top of its file in [`Engine/`](Engine) or [`GUI/`](GUI). Parts that

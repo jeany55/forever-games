@@ -40,9 +40,10 @@ puzzles and solo games with a new challenge for your guild every day.
    [latest release](https://github.com/jeany55/forever-games/releases/latest).
 2. Unzip it into `Interface\AddOns`, inside the folder for the version of the game you play in your
    World of Warcraft folder. Create the `AddOns` folder if it isn't there.
-3. You should now have five folders there: `ForeverGames`, `ForeverGames_Freedoom`,
-   `ForeverGames_Freedoom_Maps`, `ForeverGames_Where` and `ForeverGames_Where_Places`. Keep all five.
-   Freedoom and Where in Azeroth are addons of their own. `ForeverGames_Freedoom_Maps` holds
+3. You should now have six folders there: `ForeverGames`, `ForeverGames_Freedoom`,
+   `ForeverGames_Freedoom_Maps`, `ForeverGames_Pinball`, `ForeverGames_Where` and
+   `ForeverGames_Where_Places`. Keep all six. Freedoom, Pinball and Where in Azeroth are addons of
+   their own. `ForeverGames_Freedoom_Maps` holds
    Freedoom's maps and `ForeverGames_Where_Places` the places of Where in Azeroth, which is why
    the download is large. The maps are only loaded when you play Freedoom, and a place's pictures
    only when you are taken there.
@@ -90,6 +91,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/blockfall.png" width="32"> | Tetris | Yes | Yes | Marathon, 40-line Sprint, or two minutes for points. |
 | <img src=".github/readme/icons/warcraftstein.png" width="32"> | Warcraftstein 3D | Yes | Yes | Fight through the Scarlet Monastery in first person, as your own class. |
 | <img src=".github/readme/icons/freedoom.png" width="32"> | Freedoom | | Yes | The free version of Doom, drawn inside WoW. Race the ghost of your best run. |
+| <img src=".github/readme/icons/pinball.png" width="32"> | Pinball: Moonglade | | Yes | A pinball machine with a ramp onto a winding wire, a corkscrew and two class spells. Three balls for your best score. |
 | <img src=".github/readme/icons/fourtiles.png" width="32"> | Fourtiles | Yes | | A word puzzle. A friend can join in and solve it with you, no turns. |
 | <img src=".github/readme/icons/wordle.png" width="32"> | Wordle | Yes | Yes | Find the hidden word in six guesses. 4 to 7 letters, everyday words or Azeroth's. |
 | <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | | | Fill the card alone. 200 points is a win. |
@@ -496,6 +498,25 @@ unless the game says otherwise.
 - Ctrl, F or left-click fires. 1 to 7 switches weapons. Space opens doors and presses switches,
   Shift runs. Movement uses the same keys as Warcraftstein.
 - F5 switches to low detail if it's running slowly. Tab shows how long each frame takes to draw.
+
+</details>
+
+<details>
+<summary><b>Pinball: Moonglade</b></summary>
+
+- A whole pinball machine, cabinet and backbox, built in 3D: the score and the news are on the
+  dot-matrix display in the backbox, and the lamps and flashers go with what you make.
+- The ramp takes the ball up onto a wire that arches over the bumpers and winds down a corkscrew
+  to your left flipper. The Moonwell in the middle shoots it up a glass tube onto a wire of its
+  own, round to the right flipper.
+- Knock down the targets to light a quest at the Moonwell. Three quests light the raid on Onyxia,
+  a three-ball multiball with jackpots on the ramp.
+- Two class spells, on 1 and 2 or the buttons beside the machine: Frost Nova freezes every ball
+  where it is for a moment, and Shield Wall raises a post between the flippers for ten seconds.
+- Shift, Z and / or the arrow keys work the flippers. Hold Space or Down to pull the plunger, and
+  X, . and Up nudge the table, but not too often or it tilts. V shows the whole machine or comes
+  in closer on the table.
+- Your best score is kept. Race a friend and the higher score wins.
 
 </details>
 

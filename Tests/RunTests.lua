@@ -68,6 +68,8 @@ local ENGINE_FILES = {
   "Engine/SectorMap.lua",
   "Engine/Actors.lua",
   "Engine/Course.lua",
+  "Engine/Physics.lua",
+  "Engine/LightShow.lua",
   "Games/Wormcraft.lua",
   "Engine/Places.lua",
   "Engine/API.lua",
@@ -2949,8 +2951,8 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  -- The games of plugins come after Forever Games' own: Freedoom, Where in Azeroth, and Pig of Examples/
-  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,where"
+  -- The games of plugins come after Forever Games' own: Freedoom, Pinball, Where in Azeroth, and Pig of Examples/
+  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,pinball,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("realms,chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -24101,6 +24103,405 @@ for _, plugin in ipairs(PLUGINS) do
     assert(loadfile(plugin.folder .. "/Tests.lua"))()(tests, loadEngine, {
       equal = equal, near = near, World = World, Client = Client, openWindow = openWindow,
     })
+  end
+end
+
+-----------------------------
+-- Physics
+-----------------------------
+do
+  local function newWorld(options)
+    local private = {}
+    assert(loadfile("Engine/Physics.lua"))(ADDON_NAME, private)
+    local world = private.Physics.New(options or { width = 400, height = 400 })
+    return world, private.Physics
+  end
+
+  local function within(expected, actual, by, label)
+    if math.abs(expected - actual) > by then
+      error(("%s: expected %s, got %s"):format(label, tostring(expected), tostring(actual)), 2)
+    end
+  end
+
+  local function run(world, ticks)
+    for _ = 1, ticks do
+      world:Tick()
+    end
+  end
+
+  function tests.PhysicsSinesAreCloseToTheClients()
+    local _, Physics = newWorld()
+    for a = -20, 20, 0.0137 do
+      within(math.sin(a), Physics.Sin(a), 1e-9, "sine of " .. a)
+      within(math.cos(a), Physics.Cos(a), 1e-9, "cosine of " .. a)
+    end
+  end
+
+  function tests.PhysicsBallFallsWithGravity()
+    local world = newWorld({ width = 1000, height = 2000, gravity = 1000 })
+    local ball = world:AddBall(500, 100, 10)
+    run(world, 1000)
+    within(1000, ball.vy, 1e-6, "speed after a second")
+    within(600.5, ball.y, 1e-6, "where after a second")
+  end
+
+  function tests.PhysicsBallKeepsWhatAWallsBounceLeavesIt()
+    local world = newWorld({ width = 400, height = 400 })
+    world:Segment(0, 300, 400, 300, { bounce = 0.5, friction = 0 })
+    local ball = world:AddBall(200, 200, 10)
+    world:Launch(ball, 0, 1000)
+    local hits = {}
+    world.onEvent = function(kind, _, _, speed)
+      hits[#hits + 1] = kind .. ":" .. math.floor(speed + 0.5)
+    end
+    run(world, 200)
+    equal("hit:1000", hits[1], "what the floor said")
+    within(-500, ball.vy, 1e-6, "back up at half")
+  end
+
+  function tests.PhysicsFastBallDoesntGoThroughAThinWall()
+    local world = newWorld({ width = 400, height = 400, hz = 100 })
+    world:Segment(0, 300, 400, 300, { bounce = 1, friction = 0 })
+    local ball = world:AddBall(200, 280, 5)
+    world:Launch(ball, 0, 20000)
+    run(world, 20)
+    equal(true, ball.y < 300, "still above it")
+    equal(true, ball.vy < 0, "going back up")
+  end
+
+  function tests.PhysicsOneWayWallLetsBallsThroughFromBehindOnly()
+    local world = newWorld({ width = 400, height = 400 })
+    -- From left to right: its front is up, y down
+    world:Segment(100, 200, 300, 200, { oneWay = true, bounce = 0.5 })
+    local up = world:AddBall(150, 260, 10)
+    world:Launch(up, 0, -1000)
+    local down = world:AddBall(250, 140, 10)
+    world:Launch(down, 0, 1000)
+    run(world, 150)
+    equal(true, up.y < 150, "through from below")
+    equal(true, down.y < 200, "kept above")
+    equal(true, down.vy < 0, "and sent back")
+  end
+
+  function tests.PhysicsHeldPaddleSendsTheBallItIsUnderUpHard()
+    local world = newWorld({ width = 600, height = 1000, gravity = 1500 })
+    -- A left flipper: turning on its left end, lying 30 degrees down to the right, flipping 55 up
+    local rad = math.pi / 180
+    local paddle = world:Paddle(160, 900, { length = 76, base = 12, tip = 6, rest = 30 * rad, up = -25 * rad,
+      speed = 40, accel = 3000, bounce = 0.6, friction = 0.3 })
+    local ball = world:AddBall(160 + 60 * math.cos(30 * rad) - 13.5 * math.sin(30 * rad),
+      900 + 60 * math.sin(30 * rad) - 8 - 13.5 * math.cos(30 * rad), 13.5)
+    run(world, 30)
+    within(0, ball.vx * ball.vx + ball.vy * ball.vy, 400 * 400, "settled on it, slowly")
+    world:Hold(paddle, true)
+    local fastest = 0
+    for _ = 1, 60 do
+      world:Tick()
+      fastest = math.max(fastest, -ball.vy)
+    end
+    within(-25 * rad, paddle.angle, 1e-9, "up at its stop")
+    equal(true, fastest > 1500, "sent up fast: " .. fastest)
+    world:Hold(paddle, false)
+    run(world, 200)
+    within(30 * rad, paddle.angle, 1e-9, "back down")
+  end
+
+  function tests.PhysicsSensorsLayersAndLines()
+    local world = newWorld({ width = 400, height = 400 })
+    local said = {}
+    world.onEvent = function(kind, made, ball, extra)
+      said[#said + 1] = kind .. ":" .. (made and made.name or "-") .. (kind == "cross" and ":" .. extra or "")
+    end
+    world:Circle(200, 100, 20, { name = "rollover", sensor = true, layers = 3 })
+    -- Crossing this going up puts the ball on the ramp, coming back down off it
+    world:Segment(150, 200, 250, 200, { name = "mouth", sensor = true, front = 2, back = 1, layers = 3 })
+    world:Segment(150, 50, 250, 50, { name = "playfield", layers = 1 })
+    local ball = world:AddBall(200, 300, 10)
+    world:Launch(ball, 0, -1000)
+    run(world, 400)
+    equal("cross:mouth:1", said[1], "first")
+    equal(2, ball.layer, "on the ramp")
+    equal("enter:rollover", said[2], "then")
+    equal("leave:rollover", said[3], "and")
+    equal(true, ball.y < 0, "over the playfield's wall, not into it")
+    equal(nil, said[4], "nothing else")
+  end
+
+  function tests.PhysicsHoleHoldsOnlyASlowBall()
+    local world = newWorld({ width = 400, height = 400 })
+    local hole = world:Circle(200, 200, 12, { name = "saucer", sensor = true, hole = 600 })
+    local fast = world:AddBall(200, 300, 10)
+    world:Launch(fast, 0, -2000)
+    local slow = world:AddBall(100, 200, 10)
+    world:Launch(slow, 400, 0)
+    run(world, 400)
+    equal(nil, fast.held, "too fast to hold")
+    equal(hole, slow.held, "held")
+    equal(200, slow.x, "in the middle")
+    world:Launch(slow, 0, -1500)
+    run(world, 50)
+    equal(true, slow.y < 150, "kicked out")
+  end
+
+  function tests.PhysicsBumperKicksOnlyWhenHitHardEnough()
+    local world = newWorld({ width = 400, height = 400 })
+    world:Circle(200, 200, 20, { kick = 1000, trigger = 300, bounce = 0.5, friction = 0 })
+    local hard = world:AddBall(200, 300, 10)
+    world:Launch(hard, 0, -800)
+    local soft = world:AddBall(100, 200, 10)
+    world:Launch(soft, 200, 0)
+    run(world, 600)
+    within(400 + 1000, hard.vy, 1e-6, "hard: bounced and kicked")
+    within(-100, soft.vx, 1e-6, "soft: only bounced")
+  end
+
+  function tests.PhysicsBallsOfTheSameWeightTradeSpeeds()
+    local world = newWorld({ width = 400, height = 400 })
+    local one = world:AddBall(100, 200, 10)
+    local other = world:AddBall(300, 200, 10)
+    world:Launch(one, 500, 0)
+    run(world, 600)
+    within(0, one.vx, 1e-9, "the one stops")
+    within(500, other.vx, 1e-9, "the other goes on")
+  end
+
+  function tests.PhysicsTheSameMovesAtTheSameTicksComeOutTheSame()
+    local function play(frames)
+      local world = newWorld({ width = 500, height = 1000, gravity = 1500 })
+      world:Line({ 10, 990, 10, 10, 490, 10, 490, 990 }, { bounce = 0.7 })
+      world:Circle(250, 400, 25, { kick = 1200, trigger = 100 })
+      local paddle = world:Paddle(180, 900, { length = 76, base = 12, tip = 6, rest = 0.5, up = -0.45, speed = 40, accel = 3000, bounce = 0.6 })
+      local ball = world:AddBall(120, 300, 13.5)
+      world:Launch(ball, 900, 200)
+      for _, seconds in ipairs(frames) do
+        world:Advance(seconds, function(tick)
+          if tick % 700 == 0 then
+            world:Hold(paddle, tick % 1400 == 0)
+          end
+        end)
+      end
+      return world.tick, ball.x, ball.y, ball.vx, ball.vy
+    end
+    local smooth, uneven = {}, {}
+    for index = 1, 300 do
+      smooth[index] = 1 / 60
+    end
+    local left = 5
+    while left > 0.0001 do
+      local seconds = math.min(left, 0.003 + (#uneven * 7 % 13) / 400)
+      uneven[#uneven + 1] = seconds
+      left = left - seconds
+    end
+    local a = { play(smooth) }
+    local b = { play(uneven) }
+    equal(a[1], b[1], "ticks")
+    for index = 2, 5 do
+      equal(a[index], b[index], "the same, exactly, " .. index)
+    end
+  end
+
+  --- A corkscrew: a turn and a half round a post, falling as it goes, from z0 to z1
+  local function corkscrew(z0, z1)
+    local points = {}
+    for step = 0, 48 do
+      local a = step / 48 * 3 * math.pi
+      points[#points + 1] = 200 + 50 * math.cos(a)
+      points[#points + 1] = 200 + 50 * math.sin(a)
+      points[#points + 1] = z0 + (z1 - z0) * step / 48
+    end
+    return points
+  end
+
+  function tests.PhysicsBallRidesARailAndGetsOffAtItsEnd()
+    local world = newWorld({ width = 400, height = 400, gravity = 1000, lift = 9000 })
+    local rail = world:Rail(corkscrew(100, 0), { name = "corkscrew", layer = 2 })
+    local ball = world:AddBall(0, 0, 10)
+    local said = {}
+    world.onEvent = function(kind, made, _, extra)
+      said[#said + 1] = kind .. ":" .. tostring(made and made.name) .. ":" .. tostring(extra)
+    end
+    world:Ride(ball, rail, 200)
+    equal(250, ball.x, "on at its start")
+    equal(100, ball.z, "as high as it starts")
+    local highest = 0
+    for _ = 1, 3000 do
+      world:Tick()
+      if ball.rail then
+        highest = math.max(highest, ball.speed)
+        equal(true, ball.z <= 100 and ball.z >= 0, "between its ends' heights")
+      end
+    end
+    equal(nil, ball.rail, "off it")
+    equal("board:corkscrew:200", said[1], "got on")
+    equal("off:corkscrew:1", said[2], "got off at the end")
+    equal(2, ball.layer, "on the layer for its end")
+    equal(true, highest > 1000, "faster for falling a long way")
+    equal(true, ball.x < 160, "off where the corkscrew ends, and rolled on")
+  end
+
+  function tests.PhysicsBallTooSlowForARailRollsBackOffItsStart()
+    local world = newWorld({ width = 400, height = 400, gravity = 0, lift = 9000 })
+    local rail = world:Rail({ 100, 200, 0, 300, 200, 100 }, { back = 1, layer = 4 })
+    local ball = world:AddBall(0, 0, 10)
+    -- Up 100 takes sqrt(2 * 9000 * 100 * (200^2 + 100^2) / 100^2) or so; well short of that
+    rail.marks = { 20, 200 }
+    world:Ride(ball, rail, 600)
+    local ends
+    local passed = {}
+    world.onEvent = function(kind, _, _, extra)
+      if kind == "off" then
+        ends = extra
+      elseif kind == "pass" then
+        passed[#passed + 1] = extra
+      end
+    end
+    run(world, 2000)
+    equal(1, #passed, "past the first mark only, once, though it came back past it")
+    equal(-1, ends, "back off its start")
+    equal(1, ball.layer, "on the layer for its start")
+    equal(true, ball.vx < 0, "going back the way it came")
+    equal(true, ball.x < 100, "and away from the rail")
+  end
+
+  function tests.PhysicsLineSensorPutsABallOnARail()
+    local world = newWorld({ width = 400, height = 400, gravity = 0, lift = 9000 })
+    local rail = world:Rail({ 200, 100, 30, 200, 50, 20, 350, 50, 0 }, { name = "wire" })
+    -- Across the way up: its front is up, y down
+    world:Segment(150, 100, 250, 100, { sensor = true, front = 2, back = 1, rail = rail })
+    local ball = world:AddBall(200, 160, 10)
+    world:Launch(ball, 0, -1500)
+    local boarded
+    world.onEvent = function(kind, made, _, speed)
+      if kind == "board" then
+        boarded = speed
+      end
+    end
+    run(world, 60)
+    equal(true, boarded and boarded > 1400, "on it at about the speed it came")
+    equal(rail, ball.rail, "riding it")
+    run(world, 1000)
+    equal(nil, ball.rail, "and off at the end")
+    equal(true, ball.vx > 0, "going the way its end goes")
+  end
+
+  function tests.PhysicsRailRidesComeOutTheSameEveryTime()
+    local function play()
+      local world = newWorld({ width = 400, height = 400, gravity = 1500, lift = 9000 })
+      local rail = world:Rail(corkscrew(90, 10), { drag = 0.2 })
+      local ball = world:AddBall(0, 0, 10)
+      world:Ride(ball, rail, 777)
+      run(world, 700)
+      return ball.x, ball.y, ball.z, ball.speed or ball.vx
+    end
+    local a, b = { play() }, { play() }
+    for index = 1, 4 do
+      equal(a[index], b[index], "the same, exactly, " .. index)
+    end
+  end
+end
+
+-----------------------------
+-- Dot-matrix display
+-----------------------------
+do
+  function tests.DotMatrixBitmapLightsEachRunOfARowAsOneBox()
+    local private = {}
+    assert(loadfile("GUI/DotMatrix.lua"))(ADDON_NAME, private)
+    local boxes = {}
+    local display = setmetatable({}, { __index = private.DotMatrix })
+    function display:Box(x, y, across, down, brightness)
+      boxes[#boxes + 1] = ("%d,%d %dx%d %s"):format(x, y, across, down, tostring(brightness))
+    end
+    display:Bitmap({ "##. #", "  ##", "" }, 10, 4, 0.5)
+    equal(3, #boxes, "three runs")
+    equal("10,4 2x1 0.5", boxes[1], "the first row's first run")
+    equal("14,4 1x1 0.5", boxes[2], "and its second, after the unlit dots")
+    equal("12,5 2x1 0.5", boxes[3], "the second row's, after its spaces")
+  end
+end
+
+-----------------------------
+-- Light shows
+-----------------------------
+do
+  local function newShow()
+    local private = {}
+    assert(loadfile("Engine/LightShow.lua"))(ADDON_NAME, private)
+    local LightShow = private.LightShow
+    -- Three lamps in a column, 10 apart, and one off to the side
+    return LightShow.New({ { name = "a", x = 0, y = 0 }, { name = "b", x = 0, y = 10 }, { name = "c", x = 0, y = 20 },
+      { name = "side", x = 50, y = 10 } }), LightShow
+  end
+
+  function tests.LightShowLampsKeepTheirOwnState()
+    local show = newShow()
+    show:Set("a", true)
+    show:Set("b", "blink", 1, 0)
+    show:Set("c", "pulse", 2, 0)
+    equal(1, show:Brightness("a", 5), "on")
+    equal(1, show:Brightness("b", 0.25), "blinking, lit in the first half")
+    equal(0, show:Brightness("b", 0.75), "and out in the second")
+    equal(0, show:Brightness("c", 0), "a pulse starts out")
+    equal(1, show:Brightness("c", 1), "and is brightest halfway")
+    equal(0, show:Brightness("side", 3), "off")
+    equal(0, show:Brightness("nothing", 3), "no such lamp")
+  end
+
+  function tests.LightShowTheHighestShowHasItsWayAndEnds()
+    local show, LightShow = newShow()
+    show:Set("a", true)
+    show:Play(LightShow.Shows.Dark(), 10, 2, 1)
+    local flash = show:Play(LightShow.Shows.Flash({ "a" }, 1), 10, 1, 5)
+    equal(1, show:Brightness("a", 10.2), "the flash, lit")
+    equal(0, show:Brightness("a", 10.7), "the flash, out")
+    equal(0, show:Brightness("a", 11.5), "the flash over, the dark under it")
+    equal(1, show:Brightness("a", 12.5), "both over: its own state again")
+    equal(false, show:Playing(flash, 11.5), "the flash has ended")
+    show:Tidy(12.5)
+    equal(0, #show.shows, "and both are let go")
+  end
+
+  function tests.LightShowSweepCrossesTheLampsInOrder()
+    local show, LightShow = newShow()
+    -- Up the column, from c at the bottom (y = 20) to a at the top, in a second, a band 5 deep
+    show:Play(LightShow.Shows.Sweep(show.lamps, "up", 1, 5, { "a", "b", "c" }), 0, 1)
+    local first = {}
+    for step = 0, 99 do
+      local t = step / 100
+      for _, name in ipairs({ "a", "b", "c" }) do
+        if not first[name] and show:Brightness(name, t) == 1 then
+          first[name] = t
+        end
+      end
+    end
+    equal(true, first.c < first.b and first.b < first.a, "c, then b, then a")
+    equal(0, show:Brightness("side", 0.5), "a lamp it doesn't use keeps its own state")
+  end
+
+  function tests.LightShowChaseLightsOneAtATime()
+    local show, LightShow = newShow()
+    show:Play(LightShow.Shows.Chase({ "a", "b", "c" }, 3), 0)
+    for step = 0, 8 do
+      local t = step / 3 + 0.01
+      local lit = 0
+      for _, name in ipairs({ "a", "b", "c" }) do
+        lit = lit + show:Brightness(name, t)
+      end
+      equal(1, lit, "one lit at " .. t)
+    end
+    equal(1, show:Brightness("b", 1 / 3 + 0.01), "the second, a third of a second in")
+  end
+
+  function tests.LightShowBulbsWarmAndCool()
+    local show = newShow()
+    show:Set("a", true)
+    local first = show:Glow("a", 0, 0.01)
+    equal(true, first > 0 and first < 1, "lighting, not lit yet")
+    local later = show:Glow("a", 0.2, 0.2)
+    equal(1, later, "lit")
+    show:Set("a", false)
+    local cooling = show:Glow("a", 0.21, 0.01)
+    equal(true, cooling > 0.5 and cooling < 1, "going out slower than it lit")
   end
 end
 

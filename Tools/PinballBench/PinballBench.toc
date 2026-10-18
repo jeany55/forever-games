@@ -1,0 +1,19 @@
+## Interface: 16001
+## Title: Pinball Bench
+## Notes: Tries out Forever Games' pinball on its own. A tool for Forever Games, not part of it
+## Author: Jeany
+## Version: 0.3.0
+## SavedVariables: PinballBenchDB
+
+Engine\Physics.lua
+Engine\LightShow.lua
+GUI\DotMatrix.lua
+Bench.lua
+Locales\enUS.lua
+Images\Table.lua
+Images\Art.lua
+Build.lua
+Rules.lua
+Sounds.lua
+Machine.lua
+PinballBench.lua

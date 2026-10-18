@@ -1,0 +1,18 @@
+## Interface: 16001
+## Title: Forever Games: Pinball
+## Notes: Moonglade, a pinball machine, as a game of Forever Games: three balls for the best score, raced against friends
+## Author: Jeany
+## Version: 0.1.0
+## Dependencies: ForeverGames
+## Group: ForeverGames
+## IconTexture: Interface\AddOns\ForeverGames_Pinball\Images\icon
+
+Locales\enUS.lua
+Init.lua
+Images\Table.lua
+Images\Art.lua
+Build.lua
+Rules.lua
+Sounds.lua
+Machine.lua
+Pinball.lua
