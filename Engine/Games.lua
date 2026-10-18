@@ -41,6 +41,9 @@
 -- match, and the game is handed all of it when the state is made: see Games/Words.lua. Only what
 -- isn't the default is ever sent or kept, so a game without any is a game by the usual rules.
 --
+-- A game against others that is played for points can say what everyone has (`tally`), and the
+-- window shows the score with whose turn it is, for a game of several hands as much as for one.
+--
 -- A game for two or more can be played against the computer (`computer`), which takes the seats
 -- of everyone but the player: see Engine/Computer.lua. Given nothing but the moves there are, it
 -- plays the game, and the more the game tells it the better it plays.
@@ -135,6 +138,7 @@ local _, private = ...
 --- @field seatLabel (fun(seat: number, seats: number): string)? Short label for a seat in a game of this many players, e.g. "X"
 --- @field undo boolean? For a game for one: the player may take moves back, as many as they like. The window has the button, and the view is shown the position before with `changed` set
 --- @field progress (fun(state: table): string?)? For a game for one or one played together: how it is going in a few words, e.g. "120 points in 34 moves". Shown where a game against someone says whose turn it is
+--- @field tally (fun(state: table): number[]?)? For a game against others that is played for points: what each seat has so far, by seat, nil before there is anything to count. Shown with whose turn it is and how it ended, the player's own first: a game played over several hands to a target (Games/Dominoes.lua) needs nothing else for the score to be seen
 --- @field clock ("open"|"move")? For a game for one: the engine keeps the time it is played for, while it is on screen and not over. From when it is first looked at, or only once the first move is made
 --- @field record (fun(state: table, seconds: number, result: MatchResult?): GameRecord[]?)? For a game for one: what of this position is worth remembering if it is the best the player ever did. Asked after every move, with how long the game has been played for and how it ended if it has
 --- @field computer GameComputer? The game can be played against the computer, and this is what it knows about playing it (Engine/Computer.lua). `{}` will do for a game with `moves`
@@ -405,6 +409,7 @@ function Games.Register(definition)
   end
   assert(definition.together or type(definition.turn) == "function", "Game " .. definition.id .. " is missing turn")
   assert(definition.moves == nil or type(definition.moves) == "function", "Game " .. definition.id .. " has moves that aren't a function")
+  assert(definition.tally == nil or type(definition.tally) == "function", "Game " .. definition.id .. " has a tally that isn't a function")
   assert(definition.plugin == nil or type(definition.plugin) == "string", "Game " .. definition.id .. " comes in an addon that isn't named")
   local problem = private.Computer.Problem(definition)
   assert(not problem, "Game " .. definition.id .. " " .. tostring(problem))

@@ -23,10 +23,10 @@ local _, private = ...
 local PARTS = {}
 for _, name in ipairs({
   -- The rules side (Engine/), none of which touches the game client
-  "Games", "Rooms", "Codec", "Random", "Tables", "Grid", "Deck", "Phases", "Computer", "Race", "Lexicon",
+  "Games", "Rooms", "Codec", "Random", "Tables", "Grid", "Deck", "Bones", "Phases", "Computer", "Race", "Lexicon",
   "SectorMap", "Actors", "Course", "Places",
   -- The view side (GUI/): widgets, and what boards, cards and maps are drawn with
-  "Widgets", "Lettering", "Effects", "Dice", "SlideGrid", "NumberGrid", "Board", "Heaps", "Cards", "CardTable", "Felt",
+  "Widgets", "Lettering", "Effects", "Dice", "SlideGrid", "NumberGrid", "Board", "Heaps", "Cards", "CardTable", "Dominoes", "Felt",
   "Viewport", "Drag", "Tiles", "Canvas", "Strips", "SectorView", "PanoView", "MapOverlays", "MapView", "TerrainView",
   -- The locale, the log and the addon's icon
   "L", "Log", "ICON",

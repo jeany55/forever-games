@@ -291,10 +291,43 @@ local function describeRace(match, game)
   return progress and L["status_race_progress"]:format(progress, note) or note
 end
 
---- One line summary of where a match stands
+--- The points of a game played for them (GameDefinition.tally), the player's own first: "45-30"
+--- @param match Match
+--- @param game GameDefinition
+--- @return string? nil for a game that isn't, or one alone
+local function tallyOf(match, game)
+  if not game.tally or Match.IsSolo(match) or not Match.Started(match) then
+    return nil
+  end
+  local state = Match.State(match)
+  local points = state and game.tally(state)
+  if not points then
+    return nil
+  end
+  local parts = { tostring(points[match.me] or 0) }
+  for seat = 1, #match.players do
+    if seat ~= match.me then
+      parts[#parts + 1] = tostring(points[seat] or 0)
+    end
+  end
+  return table.concat(parts, "-")
+end
+
+local describe
+
+--- One line summary of where a match stands, with the score of a game played for points
 --- @param match Match
 --- @return string
 function MainFrame.Describe(match)
+  local text = describe(match)
+  local game = Games.Get(match.game)
+  local tally = game and (match.status == "active" or match.status == "finished") and not match.race and tallyOf(match, game)
+  return tally and L["status_with_tally"]:format(text, tally) or text
+end
+
+--- @param match Match
+--- @return string
+function describe(match)
   local opponent = MainFrame.Names(match)
   local crowd = #match.players > 2
   local game = Games.Get(match.game)

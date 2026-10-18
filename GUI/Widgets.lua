@@ -25,6 +25,8 @@ local SOUNDS = {
   nimClack = 4,
   -- CarcassonneWoW's, made by Tools/make_realms.py
   realmsLay = 3, realmsFootman = 3, realmsScore = 1,
+  -- Dominoes', made by Tools/make_dominoes.py
+  dominoesClack = 4, dominoesSlide = 3, dominoesWash = 2, dominoesKnock = 2, dominoesWin = 1,
 }
 
 Widgets.GREEN = { 0.3, 0.9, 0.3 }

@@ -2,8 +2,8 @@
 --  Options
 --------------------------
 -- The addon's page in the game's own settings window: how the player is told it is their turn,
--- what they hear, who may challenge them, how the window is drawn and what the cards, the felt
--- and the dice look like. How a game is played is not in here, that is set for each game in the
+-- what they hear, who may challenge them, how the window is drawn and what the cards, the felt,
+-- the dice and the dominoes look like. How a game is played is not in here, that is set for each game in the
 -- new game wizard.
 --
 -- Everything on the page is a setting the client keeps for as long as the window is open and
@@ -17,6 +17,7 @@ local MainFrame = private.MainFrame
 local Cards = private.Cards
 local Felt = private.Felt
 local Dice = private.Dice
+local Dominoes = private.Dominoes
 
 --- @class Options
 local Options = {}
@@ -38,6 +39,8 @@ local DIE_SIDE = CARD_WIDTH
 -- How much of its picture a die fills (Tools/convert_kenney.py), how big the die is drawn, which
 -- is bigger than its place for the room round it to hang over, and the face it shows
 local DIE_FILL, DIE_BODY, DIE_FACE = 88 / 128, 34, 5
+-- A domino stands in its picture this many pixels wide, showing these pips
+local DOMINO_UNIT, DOMINO_HEIGHT, DOMINO_TILE = 24, 56, "36"
 -- How tall the card lying on a swatch of felt is, for the swatch's height
 local FELT_CARD = 0.6
 -- The swatch for each game's own felt is half the one colour games have and half the other
@@ -293,7 +296,8 @@ local function paintFelt(button, colour)
   button.card:SetTexture(Cards.BackTexture(Cards.Back()))
 end
 
---- What the table is covered with, and the colour of the dice on it that stand for nobody
+--- What the table is covered with, the colour of the dice on it that stand for nobody, and what
+--- the dominoes are made of
 --- @param layout table
 local function tableLooks(layout)
   section(layout, L["options_table"])
@@ -330,7 +334,30 @@ local function tableLooks(layout)
       inset = (DIE_SIDE - DIE_BODY) / 2,
       overhang = (DIE_BODY / DIE_FILL - DIE_SIDE) / 2,
     },
-  }, L["options_feltColour"], L["options_diceColour"], L["options_table"])
+    {
+      label = L["options_dominoStyle"],
+      setting = stored("dominoStyle", function(value)
+        Dominoes.SetStyle(value)
+        refreshPickers()
+      end),
+      choices = Dominoes.STYLES,
+      chosen = Dominoes.Style,
+      paint = function(button, choice)
+        if not button.domino then
+          -- Standing in the middle of its place, made of what it would be
+          button.domino = Dominoes.New(button)
+          button.domino.frame:EnableMouse(false)
+        end
+        button.domino:Set(DOMINO_TILE, choice)
+        button.domino:Place(CARD_WIDTH / 2, DOMINO_HEIGHT / 2, DOMINO_UNIT, math.pi / 2)
+      end,
+      name = function(choice)
+        return L["options_dominoStyle_" .. choice]
+      end,
+      width = CARD_WIDTH,
+      height = DOMINO_HEIGHT,
+    },
+  }, L["options_feltColour"], L["options_diceColour"], L["options_dominoStyle"], L["options_table"])
 end
 
 --- Builds the page. Does nothing on a client that has no settings window to put it in

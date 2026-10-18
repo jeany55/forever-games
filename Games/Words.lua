@@ -2853,6 +2853,9 @@ private.Games.Register({
   validate = validate,
   apply = apply,
   moves = moves,
+  tally = function(state)
+    return state.scores
+  end,
   result = function(state)
     return state.outcome
   end,

@@ -232,6 +232,10 @@ engine.Games.Register({
   apply = apply,
   moves = moves,
   result = result,
+  -- The points banked, for the window to show with whose turn it is
+  tally = function(state)
+    return state.scores
+  end,
   drop = drop,
   computer = COMPUTER,
   createView = createView,

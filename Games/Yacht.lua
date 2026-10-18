@@ -1310,6 +1310,13 @@ private.Games.Register({
   moves = moves,
   drop = drop,
   result = result,
+  tally = function(state)
+    local totals = {}
+    for seat = 1, state.seats do
+      totals[seat] = totalOf(state, seat)
+    end
+    return totals
+  end,
   progress = function(state)
     if state.over then
       return L["yacht_final"]:format(totalOf(state, 1))

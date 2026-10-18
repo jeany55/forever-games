@@ -67,6 +67,7 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/mancala.png" width="32"> | Mancala | 2 | Sow seeds round the board, land in your store to go again. |
 | <img src=".github/readme/icons/connectfour.png" width="32"> | Connect Four | 2 | Four in a row: across, up or diagonal. |
 | <img src=".github/readme/icons/nim.png" width="32"> | Nim | 2 | Take stones from one row a turn, and take the last. |
+| <img src=".github/readme/icons/dominoes.png" width="32"> | Dominoes | 2 | The classic Block game, to 100 over several hands, or the Draw game. |
 | <img src=".github/readme/icons/tictactoe.png" width="32"> | Tic Tac Toe | 2 | Over in a minute. |
 | <img src=".github/readme/icons/battleship.png" width="32"> | Battleship | 2 | Hide your fleet, then hunt for theirs. |
 | <img src=".github/readme/icons/backgammon.png" width="32"> | Backgammon | 2 | Race your checkers home by the roll of the dice. |
@@ -238,6 +239,20 @@ unless the game says otherwise.
 - Point at a stone: it and every stone to its right in its row lift up. Click to take them.
 - The rows can be laid out 1-3-5-7, 3-4-5 or dealt at random, and the last stone can be set to
   lose instead of win.
+
+</details>
+
+<details>
+<summary><b>Dominoes</b></summary>
+
+- The tiles you can lay stand up out of your hand. Point at one to see where it would go, and
+  click it to lay it there. A tile that fits both ends waits for you to click the end, or drag it
+  where you want it.
+- Nobody has to say they pass: when nothing of yours fits, the game passes for you.
+- At the end of a hand your opponent's tiles are turned over and counted, and the summary waits
+  for you to start the next hand.
+- Play to 50, 100, 150 or 200, or a single hand. The Draw game has you draw from the boneyard
+  (click it) until a tile fits.
 
 </details>
 
@@ -557,8 +572,9 @@ In the options (also under AddOns in the game's settings) you can choose:
 - whether the games make their own sounds
 - whether anyone can challenge you, or only friends and guildies
 - whether the minimap button is shown, and how big the window is
-- the back of the cards, five designs in six colours, the felt every table is covered with, and
-  the colour of the dice (Backgammon keeps its white and red, which tell the players apart)
+- the back of the cards, five designs in six colours, the felt every table is covered with, the
+  colour of the dice (Backgammon keeps its white and red, which tell the players apart), and what
+  the dominoes are made of: ivory, ebony, jade, sapphire, or ivory with coloured pips
 
 ## Good to know
 

@@ -5,6 +5,6 @@
     <Size x="320" y="134"/>
   </Frame>
   <Frame name="ForeverGamesTableTemplate" mixin="ForeverGamesPickerMixin" virtual="true">
-    <Size x="320" y="106"/>
+    <Size x="320" y="172"/>
   </Frame>
 </Ui>

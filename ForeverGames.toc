@@ -17,6 +17,7 @@ Engine\Random.lua
 Engine\Tables.lua
 Engine\Grid.lua
 Engine\Deck.lua
+Engine\Bones.lua
 Engine\Games.lua
 Engine\Daily.lua
 Engine\Race.lua
@@ -48,6 +49,7 @@ GUI\CardTable.lua
 GUI\Viewport.lua
 GUI\Drag.lua
 GUI\Tiles.lua
+GUI\Dominoes.lua
 GUI\Canvas.lua
 GUI\Strips.lua
 GUI\SectorView.lua
@@ -67,6 +69,7 @@ Games\ConnectFour.lua
 Games\Reversi.lua
 Games\Mancala.lua
 Games\Nim.lua
+Games\Dominoes.lua
 Games\Realms.lua
 Games\Checkers.lua
 Games\ChineseCheckers.lua

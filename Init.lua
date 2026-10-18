@@ -34,6 +34,8 @@ local _, private = ...
 --- @field Cards Cards
 --- @field CardTable CardTable
 --- @field Tiles Tiles
+--- @field Bones Bones
+--- @field Dominoes Dominoes
 --- @field Lexicon Lexicon
 --- @field Sudoku Sudoku What makes and solves the puzzles of Games/Sudoku.lua
 --- @field Wizard Wizard

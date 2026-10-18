@@ -760,6 +760,9 @@ private.Games.Register({
   result = function(state)
     return state.outcome
   end,
+  tally = function(state)
+    return { state.holes[storeOf(1)], state.holes[storeOf(2)] }
+  end,
   computer = COMPUTER,
   createView = createView,
   -- Not the engine's business: for the tests and the view

@@ -7,7 +7,7 @@
 local ADDON_NAME = "ForeverGames"
 -- What the window needs on top of the engine, in load order. Only the tests that click through
 -- the window load these, on top of the fake client in Tests/FakeClient.lua.
-local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Felt.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
+local GUI_FILES = { "GUI/Widgets.lua", "GUI/LetteringGlyphs.lua", "GUI/Lettering.lua", "GUI/Effects.lua", "GUI/Dice.lua", "GUI/SlideGrid.lua", "GUI/NumberGrid.lua", "GUI/Board.lua", "GUI/Heaps.lua", "GUI/Cards.lua", "GUI/CardTable.lua", "GUI/Felt.lua", "GUI/Viewport.lua", "GUI/Drag.lua", "GUI/Tiles.lua", "GUI/Dominoes.lua", "GUI/HowTo.lua", "GUI/MainFrame.lua" }
 local Client = dofile("Tests/FakeClient.lua")
 
 -- A fresh copy of the engine, and the plugins loaded into it with the files their English may be
@@ -21,6 +21,7 @@ local ENGINE_FILES = {
   "Engine/Tables.lua",
   "Engine/Grid.lua",
   "Engine/Deck.lua",
+  "Engine/Bones.lua",
   "Engine/Games.lua",
   "Engine/Daily.lua",
   "Engine/Race.lua",
@@ -41,6 +42,7 @@ local ENGINE_FILES = {
   "Games/Reversi.lua",
   "Games/Mancala.lua",
   "Games/Nim.lua",
+  "Games/Dominoes.lua",
   "Games/Realms.lua",
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
@@ -1264,6 +1266,314 @@ do
   end
 end
 
+-----------------------------
+-- Dominoes
+-----------------------------
+do
+  --- A game of Dominoes to try the rules on
+  --- @param chosen table? Options, the usual rules where left out
+  --- @param seed number?
+  --- @return table state, table game, table private
+  local function dominoes(chosen, seed)
+    local private = loadEngine()
+    local game = private.Games.Get("dominoes")
+    return game.newState(2, private.Random.New(seed or 1), private.Games.Rules(game.options, chosen)), game, private
+  end
+
+  --- A hand some way into it: the line, each hand and the boneyard, the first player to move
+  --- @param first string The tile the line began with, as it lies
+  --- @param mine string[]
+  --- @param theirs string[]
+  --- @param yard string[]?
+  --- @param chosen table?
+  --- @return table state, table game, table private
+  local function dominoesAt(first, mine, theirs, yard, chosen)
+    local state, game, private = dominoes(chosen)
+    state.line = { first = first, left = {}, right = {} }
+    state.hands, state.yard, state.turn, state.leader, state.lead = { mine, theirs }, yard or {}, 1, 1, nil
+    return state, game, private
+  end
+
+  function tests.BonesSetsAreWholeAndWrittenTheUsualWay()
+    local Bones = loadEngine().Bones
+    equal(28, #Bones.Set())
+    equal(55, #Bones.Set(9))
+    equal(91, #Bones.Set(12))
+    equal("00,01,02", table.concat({ unpack(Bones.Set(), 1, 3) }, ","), "from the double blank up")
+    equal("35", Bones.Tile(5, 3), "the fewer pips first")
+    equal("AC", Bones.Tile(12, 10), "ten and up as letters")
+    equal(true, Bones.IsTile("35"))
+    equal(false, Bones.IsTile("53"), "not the usual way round")
+    equal(false, Bones.IsTile("37"), "no sevens in a double-six set")
+    equal(true, Bones.IsTile("37", 9))
+    equal(true, Bones.IsDouble("44"))
+    equal(13, Bones.Count({ "66", "01" }))
+    equal(6, Bones.Other("16", 1))
+    equal("66,56,46,06,55", table.concat(Bones.Sort({ "06", "55", "46", "66", "56" }), ","), "by the bigger end, the most first")
+
+    -- The biggest double goes down first, or with no doubles at all the tile with the most pips
+    local seat, tile = Bones.Opener({ { "12", "33" }, { "55", "46" } })
+    equal(2, seat)
+    equal("55", tile)
+    seat, tile = Bones.Opener({ { "12", "36" }, { "45", "02" } })
+    equal(1, seat)
+    equal("36", tile, "nine pips, and a six beats the four-five's five")
+
+    -- What a player hasn't seen: neither their own tiles nor the line's, however they lie
+    local unseen = Bones.Unseen(nil, { "66", "05" }, { "53", "31" })
+    equal(24, #unseen)
+    equal(nil, Bones.Find(unseen, "35"))
+    equal(nil, Bones.Find(unseen, "13"))
+  end
+
+  function tests.BonesLineGrowsAtBothEnds()
+    local Bones = loadEngine().Bones
+    local line = Bones.NewLine()
+    equal(nil, (Bones.LineEnds(line)))
+    equal(true, (Bones.Fits(line, "12")), "anything begins a line")
+    equal("36", Bones.Lay(line, "36"))
+    equal("65", Bones.Lay(line, "56", Bones.RIGHT), "laid with its six against the six")
+    equal("31", Bones.Lay(line, "13", Bones.LEFT))
+    local left, right = Bones.LineEnds(line)
+    equal(1, left)
+    equal(5, right)
+    local onLeft, onRight = Bones.Fits(line, "15")
+    equal(true, onLeft)
+    equal(true, onRight)
+    equal(false, (Bones.Fits(line, "22")))
+    equal(true, Bones.AnyFits(line, { "22", "04", "45" }))
+    equal(false, Bones.AnyFits(line, { "22", "04" }))
+    equal("31,36,65", table.concat(Bones.LineTiles(line), ","))
+    equal(3, Bones.LineLength(line))
+    local copy = Bones.CopyLine(line)
+    Bones.Lay(copy, "55", Bones.RIGHT)
+    equal(3, Bones.LineLength(line), "a copy is laid on alone")
+  end
+
+  function tests.DominoesBeginsWithTheBiggestDouble()
+    local state, game, private = dominoes()
+    local Bones = private.Bones
+    equal(7, #state.hands[1])
+    equal(7, #state.hands[2])
+    equal(14, #state.yard)
+    local seat, tile = Bones.Opener(state.hands)
+    equal(seat, game.turn(state))
+    equal(tile, state.lead)
+    equal(tile, table.concat(game.moves(state, seat), ","), "only it can begin the first hand")
+    for _, other in ipairs(state.hands[seat]) do
+      if other ~= tile then
+        local ok, err = game.validate(state, seat, other)
+        equal(false, ok)
+        equal("dominoes_lead", err)
+        break
+      end
+    end
+    equal("not_your_turn", select(2, game.validate(state, 3 - seat, state.hands[3 - seat][1])))
+    local event = game.apply(state, seat, tile)
+    equal(tile, state.line.first)
+    equal(nil, state.lead)
+    local a, b = Bones.Ends(tile)
+    equal(a .. "|" .. b, event.notation)
+  end
+
+  function tests.DominoesLaysTilesOnTheEndsTheyMatch()
+    local state, game, private = dominoesAt("35", { "55", "15", "16", "13" }, { "02", "36", "44" })
+    equal("55r,15r,13l", table.concat(game.moves(state, 1), ","), "a five on the right, a three on the left")
+    equal("dominoes_doesnt_fit", select(2, game.validate(state, 1, "16l")))
+    equal("dominoes_doesnt_fit", select(2, game.validate(state, 1, "15l")))
+    equal("invalid_move", select(2, game.validate(state, 1, "55")), "it has to say which end")
+    for _, move in ipairs({ "51l", "55x", "77r", "", "d", "55rr" }) do
+      equal(false, (game.validate(state, 1, move)), move)
+    end
+    local event = game.apply(state, 1, "13l", private.Random.New(1))
+    equal("31", event.laid, "its three against the line's")
+    equal("dominoes_notation_l, dominoes_notation_pass", event.notation, "the tests' locale has no tile in it")
+    equal("2", table.concat(event.knocked, ","), "a one and a five: nothing of theirs fits now")
+    equal(1, game.turn(state))
+  end
+
+  function tests.DominoesPassesForWhoeverCantLayATile()
+    local state, game, private = dominoesAt("35", { "55", "15" }, { "02", "14" })
+    local event = game.apply(state, 1, "55r", private.Random.New(1))
+    equal("2", table.concat(event.knocked, ","), "nothing of theirs has a three or a five")
+    equal(1, game.turn(state), "and it is the first player's turn again")
+    equal(true, state.void[2][3])
+    equal(true, state.void[2][5])
+    equal(nil, event.ended)
+  end
+
+  function tests.DominoesBlockedHandGoesToFewerPips()
+    local state, game, private = dominoesAt("35", { "55", "01" }, { "02", "14" })
+    local event = game.apply(state, 1, "55r", private.Random.New(1))
+    equal("2,1", table.concat(event.knocked, ","), "neither can go on")
+    local ending = event.ended
+    equal("blocked", ending.reason)
+    equal(1, ending.winner, "one pip against seven")
+    equal(7, ending.points)
+    equal("1,7", table.concat(ending.pips, ","))
+    equal("02,14", table.concat(ending.hands[2], ","), "both hands laid open")
+    equal("35", ending.line.first)
+    equal("7,0", table.concat(state.scores, ","))
+    equal(true, event.dealt)
+    equal(2, state.hand)
+    equal(1, game.turn(state), "who won the hand begins the next")
+    equal(nil, state.lead, "with any tile")
+    equal(7, #game.moves(state, 1))
+    equal(nil, state.line.first)
+    equal(7, #state.hands[2])
+
+    -- As many pips each, and nobody scores: the other player begins
+    state, game, private = dominoesAt("35", { "55", "02" }, { "01", "01" })
+    state.hands[2] = { "11" }
+    event = game.apply(state, 1, "55r", private.Random.New(1))
+    equal(0, event.ended.winner)
+    equal("0,0", table.concat(state.scores, ","))
+    equal(2, state.leader, "the one who didn't begin the last")
+    equal(2, game.turn(state))
+  end
+
+  function tests.DominoesIsWonByLayingTheLastTile()
+    local state, game, private = dominoesAt("35", { "55" }, { "02", "14" }, nil, { target = 0 })
+    local event = game.apply(state, 1, "55r", private.Random.New(1))
+    equal("domino", event.ended.reason)
+    equal(7, event.ended.points)
+    equal(nil, event.dealt, "a game of one hand is over")
+    equal(1, game.result(state).winner)
+    equal("dominoes_notation_r, dominoes_notation_domino", event.notation)
+
+    -- To a hundred: the points that get there win it
+    state, game, private = dominoesAt("35", { "55" }, { "66", "56" })
+    state.scores = { 90, 95 }
+    event = game.apply(state, 1, "55r", private.Random.New(1))
+    equal(23, event.ended.points)
+    equal(nil, event.dealt)
+    equal(1, game.result(state).winner)
+    equal("113,95", table.concat(state.scores, ","))
+    equal("113,95", table.concat(game.tally(state), ","))
+  end
+
+  function tests.DominoesDrawGameDrawsUntilATileFits()
+    local state, game, private = dominoesAt("35", { "01", "66" }, { "44" }, { "26", "25", "02" }, { draw = true })
+    state.void[1][4] = true
+    equal("d", table.concat(game.moves(state, 1), ","))
+    equal("dominoes_can_lay", select(2, game.validate(dominoesAt("35", { "55" }, { "44" }, { "01" }, { draw = true }), 1, "d")))
+    local event = game.apply(state, 1, "d", private.Random.New(1))
+    equal(2, event.drew, "the two-nought, then the two-five, which fits")
+    equal("01,66,02,25", table.concat(state.hands[1], ","))
+    equal("26", table.concat(state.yard, ","))
+    equal(1, game.turn(state), "and then lays it")
+    equal(nil, state.void[1][4], "they may hold anything now")
+    equal("dominoes_notation_drew", event.notation)
+
+    -- With the boneyard empty and still nothing, they pass
+    state, game, private = dominoesAt("35", { "01", "66" }, { "34" }, { "26" }, { draw = true })
+    event = game.apply(state, 1, "d", private.Random.New(1))
+    equal(1, event.drew)
+    equal("1", table.concat(event.knocked, ","))
+    equal(2, game.turn(state))
+
+    -- The Block game has nothing to draw
+    state, game, private = dominoesAt("35", { "01" }, { "34" }, { "26" })
+    equal("dominoes_cant_draw", select(2, game.validate(state, 1, "d")))
+  end
+
+  function tests.DominoesShowsNobodyTheOtherHandOrTheBoneyard()
+    local state, game, private = dominoes({ draw = true })
+    local seen = game.visible(state, 1)
+    equal(table.concat(state.hands[1], ","), table.concat(seen.hands[1], ","))
+    equal("?,?,?,?,?,?,?", table.concat(seen.hands[2], ","))
+    equal(14, #seen.yard)
+    equal("?", seen.yard[1])
+    equal(7, #state.hands[2], "the position itself is untouched")
+
+    -- What the computer makes up for what it can't see keeps to what it knows: no tile with a
+    -- number the other player passed on
+    state = dominoesAt("35", { "55", "15" }, { "02", "14", "22" }, { "00", "11", "12", "13", "16", "26" })
+    state.void[2][3], state.void[2][5] = true, true
+    seen = game.visible(state, 1)
+    for seed = 1, 10 do
+      local world = game.computer.guess(seen, 1, private.Random.New(seed))
+      for _, tile in ipairs(world.hands[2]) do
+        local a, b = private.Bones.Ends(tile)
+        assert(a ~= 3 and a ~= 5 and b ~= 3 and b ~= 5, "guessed they hold " .. tile)
+      end
+      equal(3, #world.hands[2])
+      equal(6, #world.yard)
+    end
+  end
+
+  function tests.DominoesComputerAtItsEasiestIsABeginner()
+    local state, game, private = dominoesAt("35", { "55", "15", "16", "13" }, { "02", "36", "44" })
+    local Computer = private.Computer
+    local first = 0
+    for seed = 1, 40 do
+      local move = Computer.Think(game, game.visible(state, 1), 1, "easy", seed):Finish()
+      assert(game.validate(state, 1, move), move)
+      first = first + (move == "55r" and 1 or 0)
+    end
+    assert(first >= 20 and first < 40, "the first that fits, more often than not: " .. first)
+  end
+
+  function tests.DominoesLineSnakesAcrossTheTableWithoutOverlapping()
+    local private = loadEngine()
+    for _, file in ipairs({ "GUI/Widgets.lua", "GUI/Dominoes.lua" }) do
+      assert(loadfile(file))(ADDON_NAME, private)
+    end
+    local Bones, Dominoes = private.Bones, private.Dominoes
+    -- Every tile of a set laid in one line, at random, as far as it goes
+    for seed = 1, 20 do
+      local random = private.Random.New(seed)
+      local left = Bones.Shuffled(random)
+      local line = Bones.NewLine()
+      Bones.Lay(line, table.remove(left))
+      local laid = true
+      while laid do
+        laid = false
+        for index, tile in ipairs(left) do
+          local onLeft, onRight = Bones.Fits(line, tile)
+          if onLeft or onRight then
+            Bones.Lay(line, tile, (onRight and (not onLeft or random:Roll(2) == 1)) and Bones.RIGHT or Bones.LEFT)
+            table.remove(left, index)
+            laid = true
+            break
+          end
+        end
+      end
+      local across = 8 + seed % 6
+      local snake = Dominoes.Snake(line, across)
+      local spots = { snake.first }
+      for _, arm in ipairs({ snake.left, snake.right }) do
+        for _, spot in ipairs(arm) do
+          spots[#spots + 1] = spot
+        end
+      end
+      equal(Bones.LineLength(line), #spots)
+      local boxes = {}
+      for index, spot in ipairs(spots) do
+        local lying = math.abs(math.cos(spot.angle)) > 0.5
+        local reachX, reachY = lying and 1 or 0.5, lying and 0.5 or 1
+        boxes[index] = { spot.x - reachX, spot.y - reachY, spot.x + reachX, spot.y + reachY }
+        assert(math.abs(spot.x) <= across / 2 + 1.5, "seed " .. seed .. ": off the table at " .. spot.x)
+        for other = 1, index - 1 do
+          local a, b = boxes[index], boxes[other]
+          local overlap = math.min(a[3], b[3]) - math.max(a[1], b[1]) > 1e-6 and math.min(a[4], b[4]) - math.max(a[2], b[2]) > 1e-6
+          assert(not overlap, string.format("seed %d: %s and %s lie on each other", seed, spot.tile, spots[other].tile))
+        end
+      end
+      -- Each tile touches the one before it in its arm with the end of the same number
+      for _, arm in ipairs({ snake.left, snake.right }) do
+        for index, spot in ipairs(arm) do
+          local before = arm[index - 1] or snake.first
+          local distance = math.abs(spot.x - before.x) + math.abs(spot.y - before.y)
+          assert(distance <= 2.01, "seed " .. seed .. ": " .. spot.tile .. " is apart from the tile before it")
+        end
+      end
+      local bounds = snake.bounds
+      assert(bounds[3] - bounds[1] <= across + 3, "seed " .. seed .. ": as wide as the table, or about")
+    end
+  end
+end
+
 --- @param state table Checkers position
 --- @return string[]
 local function checkersMoves(state)
@@ -2161,6 +2471,161 @@ function tests.WindowPlaysMancalaByClickingPits()
   equal("3,6,1,2", logOf(alice, id))
 end
 
+function tests.WindowPlaysDominoesByLayingTiles()
+  local world, alice, bob, id = gameOnScreen("dominoes")
+  local Match, Bones = alice.private.Match, alice.private.Bones
+  local game = alice.private.Games.Get("dominoes")
+  --- Lets everything on screen run on for a while
+  local function tick(times)
+    for _ = 1, times or 80 do
+      local running = Client.Find(function(widget)
+        return widget.scripts.OnUpdate ~= nil and widget:IsVisible()
+      end)
+      for _, widget in ipairs(running) do
+        widget:Fire("OnUpdate", 0.05)
+      end
+    end
+  end
+  --- The tiles on the table, by name
+  local function onTable()
+    local found = {}
+    for _, widget in ipairs(Client.Find(function(widget)
+      return widget.domino ~= nil and widget.domino.name ~= nil and widget:IsVisible()
+    end)) do
+      found[widget.domino.name] = widget
+    end
+    return found
+  end
+  local function count(set)
+    local total = 0
+    for _ in pairs(set) do
+      total = total + 1
+    end
+    return total
+  end
+  local function click(frame)
+    Client.mouseDown = true
+    frame:Fire("OnMouseDown", "LeftButton")
+    Client.mouseDown = false
+    frame:Fire("OnMouseUp", "LeftButton")
+  end
+  local function state()
+    return Match.State(alice.session:Get(id))
+  end
+  local function says(text)
+    return #Client.Find(function(widget)
+      return widget.text == text and widget:IsVisible()
+    end) > 0
+  end
+  --- Bob's move: the first he has
+  local function bobMoves()
+    world:Deliver()
+    assert(bob.session:Move(id, game.moves(state(), 2)[1]))
+    world:Deliver()
+    tick()
+  end
+
+  -- The tiles are washed and dealt: all twenty-eight are on the table, seven in each hand
+  tick()
+  local tiles = onTable()
+  equal(28, count(tiles))
+  local mine, theirs, yard = 0, 0, 0
+  for name in pairs(tiles) do
+    mine, theirs, yard = mine + (name:sub(1, 1) == "m" and 1 or 0), theirs + (name:sub(1, 1) == "t" and 1 or 0), yard + (name:sub(1, 1) == "y" and 1 or 0)
+  end
+  equal("7,7,14", mine .. "," .. theirs .. "," .. yard)
+  local held = state().hands[1]
+  assert(tiles["m" .. held[1]].domino.tile == held[1], "the player's own tiles face up")
+  local back = next(tiles)
+  for name, widget in pairs(tiles) do
+    if name:sub(1, 1) == "t" then
+      back = widget
+    end
+  end
+  equal(Bones.HIDDEN, back.domino.tile, "the other's face down")
+
+  -- Whoever holds the biggest double begins with it
+  local lead = state().lead
+  if game.turn(state()) == 1 then
+    assert(says("dominoes_lead_yours"))
+    for _, tile in ipairs(held) do
+      if tile ~= lead then
+        click(onTable()["m" .. tile])
+        equal("", logOf(alice, id), "only the double will do")
+        break
+      end
+    end
+    click(onTable()["m" .. lead])
+    equal(lead, logOf(alice, id))
+    tick()
+  else
+    bobMoves()
+  end
+  assert(onTable()["l" .. lead], "the first tile lies in the line")
+
+  -- Then tiles are laid by clicking them until the hand is over: on the one end they fit, or on
+  -- the end clicked after them where they fit both
+  local laid, chosen = 0, 0
+  for _ = 1, 40 do
+    local now = state()
+    if now.hand > 1 or game.result(now) then
+      break
+    end
+    if game.turn(now) == 2 then
+      bobMoves()
+    else
+      local list = game.moves(now, 1)
+      local move = list[1]
+      local tile = move:sub(1, 2)
+      local before = #alice.session:Get(id).log
+      local widget = onTable()["m" .. tile]
+      assert(widget, "the tile to lay is in the hand")
+      click(widget)
+      local ends = 0
+      for _, each in ipairs(list) do
+        ends = ends + (each:sub(1, 2) == tile and 1 or 0)
+      end
+      if ends == 2 then
+        assert(says("dominoes_choose_end"), "a tile for either end waits for the end")
+        equal(before, #alice.session:Get(id).log)
+        local ghosts = Client.Find(function(widget)
+          return widget.domino ~= nil and widget.domino.name == nil and widget:IsVisible() and widget:GetAlpha() < 1 and widget:IsMouseEnabled()
+        end)
+        equal(2, #ghosts, "where it would go at each end")
+        ghosts[1]:Fire("OnClick")
+        chosen = chosen + 1
+      end
+      equal(before + 1, #alice.session:Get(id).log)
+      local played = alice.session:Get(id).log[before + 1]
+      equal(tile, played:sub(1, 2))
+      laid = laid + 1
+      tick()
+      if state().hand == 1 then
+        assert(onTable()["l" .. tile], "it lies in the line now")
+      end
+    end
+  end
+  assert(laid > 0, "the player laid tiles")
+
+  -- At the end of the hand the other's tiles are laid open and the hand summed up, until the
+  -- player goes on
+  if state().hand == 2 then
+    assert(says("dominoes_next_hand"), "the summary waits for the next hand")
+    local opened = 0
+    for name, widget in pairs(onTable()) do
+      if name:sub(1, 1) == "t" and widget.domino.tile ~= Bones.HIDDEN then
+        opened = opened + 1
+      end
+    end
+    equal(#Match.Events(alice.session:Get(id))[#alice.session:Get(id).log].ended.hands[2], opened, "every tile of theirs turned over")
+    Client.Button("dominoes_next_hand"):Fire("OnClick")
+    tick()
+    assert(not says("dominoes_next_hand"))
+    equal(28, count(onTable()), "washed and dealt again")
+    equal(7, #state().hands[1])
+  end
+end
+
 function tests.WindowPlaysNimByPickingStones()
   local world, alice, bob, id = gameOnScreen("nim")
   local board = shownBoard()
@@ -2476,7 +2941,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,mancala,realms,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,mancala,dominoes,realms,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour,nim", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
@@ -8310,7 +8775,7 @@ function tests.EveryCardBackHasAPicture()
   equal(count, #Cards.BACK_DESIGNS * #Cards.BACK_COLOURS)
 end
 
-function tests.OptionsPickHowCardsFeltAndDiceLook()
+function tests.OptionsPickHowCardsFeltDiceAndDominoesLook()
   --- The game's settings window, as much of it as the options page uses: what is put on the page
   --- is kept in order, and a setting is the two functions it was given
   --- @return table[] initializers
@@ -8370,12 +8835,12 @@ function tests.OptionsPickHowCardsFeltAndDiceLook()
     end,
   })
   private.MainFrame, private.Toast = {}, {}
-  for _, file in ipairs({ "GUI/Felt.lua", "GUI/Dice.lua" }) do
+  for _, file in ipairs({ "Engine/Bones.lua", "GUI/Felt.lua", "GUI/Dice.lua", "GUI/Dominoes.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
   ForeverGames.db.defaults = { profile = {
     toasts = true, alert = true, combat = false, quiet = false, sound = true, challenges = "anyone", wisp = true,
-    window = { scale = 100 }, cardBack = "suits_blue", feltColour = "own", diceColour = "white",
+    window = { scale = 100 }, cardBack = "suits_blue", feltColour = "own", diceColour = "white", dominoStyle = "ivory",
   } }
   ForeverGames.db.profile.window = { scale = 100 }
   local initializers = fakeSettings()
@@ -8394,7 +8859,7 @@ function tests.OptionsPickHowCardsFeltAndDiceLook()
   equal("options_cards,options_table", table.concat(pickers, ","))
   local backs, looks = pickers.ForeverGamesCardBackTemplate, pickers.ForeverGamesTableTemplate
   equal(134, backs:GetExtent(), "as tall as GUI/Options.xml has it")
-  equal(106, looks:GetExtent(), "as tall as GUI/Options.xml has it")
+  equal(172, looks:GetExtent(), "as tall as GUI/Options.xml has it")
   -- No row reaches past the width GUI/Options.xml gives it, into the window's scroll bar
   for _, each in ipairs({ backs, looks }) do
     for _, row in ipairs(each:GetData().rows) do
@@ -8463,6 +8928,23 @@ function tests.OptionsPickHowCardsFeltAndDiceLook()
   equal("pink", private.Dice.Colour())
   equal(true, dice[6].chosen:IsShown())
 
+  -- Dominoes: ivory to begin with, each picture a tile made of what it would be, and a tile on
+  -- the table changes as soon as another is chosen
+  local styles = tableLooks.buttons[3]
+  equal(5, #styles)
+  equal(true, styles[1].chosen:IsShown())
+  assert(styles[2].domino.body.texture:find("ebonyFaceV"), "ebony, standing")
+  equal("options_dominoStyle_jade", styles[3].name)
+  local lying = private.Dominoes.New(frame)
+  lying:Set("35")
+  lying:Place(50, 50, 20, 0)
+  assert(lying.body.texture:find("ivoryFaceH"), "ivory, lying down")
+  styles[3]:Fire("OnClick")
+  equal("jade", ForeverGames.db.profile.dominoStyle)
+  assert(lying.body.texture:find("jadeFaceH"), "jade now")
+  assert(styles[2].domino.body.texture:find("ebonyFaceV"), "a picture to choose from stays what it is")
+  equal(true, styles[3].chosen:IsShown())
+
   -- The window's Defaults button puts the usual looks on everything again
   for _, each in ipairs({ backs, looks }) do
     for _, row in ipairs(each:GetData().rows) do
@@ -8475,6 +8957,8 @@ function tests.OptionsPickHowCardsFeltAndDiceLook()
   equal("0.06,0.24,0.15,0.85", table.concat(cloth.fill, ","))
   equal(true, felts[1].chosen:IsShown())
   equal(true, dice[1].chosen:IsShown())
+  equal(true, styles[1].chosen:IsShown())
+  assert(lying.body.texture:find("ivoryFaceH"))
   Settings = nil
 end
 

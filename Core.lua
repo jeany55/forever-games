@@ -63,6 +63,8 @@ local defaults = {
     -- colour of the dice that stand for nobody in particular (GUI/Felt.lua, GUI/Dice.lua)
     feltColour = "own",
     diceColour = "white",
+    -- What dominoes are made of, one of the looks in GUI/Dominoes.lua
+    dominoStyle = "ivory",
     -- The scale is in hundredths of the window's usual size
     window = { width = 920, height = 680, scale = 100 },
     -- Ids of the games the player starred in the new game wizard

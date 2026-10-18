@@ -292,6 +292,9 @@ engine.Games.Register({
   apply = apply,
   moves = moves,
   result = result,
+  tally = function(state)
+    return state.scores
+  end,
   drop = drop,
   computer = COMPUTER,
   createView = createView,
@@ -306,6 +309,10 @@ engine.Games.Register({
   folder they need.
 - `version` must go up whenever the rules or the format of a move change. Two players whose
   versions differ can't play each other, and the challenge says so.
+- `tally` says how many points each seat has, for a game played for points. The window shows the
+  score with whose turn it is and how the game ended, the player's own first ("Your turn (45-30)"),
+  in the list of games and over the board, so a game played over several hands or rounds needs
+  nothing of its own for the score to be seen.
 - `icon` is the path of a square texture, for example
   `"Interface\\AddOns\\ForeverGames_Pig\\Images\\icon"`. If you leave it out, the addon's icon is
   used.
@@ -504,6 +511,7 @@ an addon written for the version before.
 | `Tables` | Copying positions |
 | `Grid` | Boards of squares: names like `"e4"`, steps, lines, neighbours |
 | `Deck` | Playing cards: decks, hands, trick-taking |
+| `Bones` | Dominoes: sets up to double twelve, hands, the boneyard and the line of play |
 | `Phases` | The phases of a party game |
 | `Computer` | The computer's search, for a game with its own `think` |
 | `Race` | Races between two players on the same deal |
@@ -515,6 +523,7 @@ an addon written for the version before.
 | `Effects` | Glows, bursts and other short effects |
 | `Board`, `Heaps`, `SlideGrid`, `NumberGrid`, `Tiles` | Boards and pieces |
 | `Cards`, `CardTable` | Cards and a table to play them on |
+| `Dominoes` | Domino tiles that turn, flip and fly in the look the player chose, and the line of play laid out on a table |
 | `Felt` | The cloth a table is covered with, in the colour the player chose |
 | `Dice` | Dice that are thrown across the table |
 | `Viewport`, `Drag` | Zooming, panning and dragging |
@@ -533,14 +542,16 @@ aren't in `ForeverGamesAPI`. A game shouldn't need them.
 - Keep your own things in the table the client passes your addon (`local ADDON, own = ...`), not
   in `ForeverGamesAPI` or in globals. Writing to `ForeverGamesAPI` is an error.
 - In the rules, use only `random` for chance, and never the clock.
-- The player chooses in the options what card backs, the felt of a table and dice look like, and
-  what is on screen changes as soon as they do. Let your game go along with it:
+- The player chooses in the options what card backs, the felt of a table, dice and dominoes look
+  like, and what is on screen changes as soon as they do. Let your game go along with it:
   - Draw a card you put on a texture of your own with `Cards.Paint(texture, card)`, not by
     setting `Cards.Texture(card)` on it.
   - Cover a table with `Felt.Paint(texture, own)`, `own` being your colour for it (red, green,
     blue and how opaque). It is used unless the player chose one colour for every table.
   - Leave out `color` from a roll of `Dice` unless the colour tells players apart, as
     Backgammon's do. Dice with no colour of their own are the one the player chose.
+  - Draw dominoes with `Dominoes.New`, and leave out the tile's own `style` unless it is a picture
+    of one look in particular: tiles are made of whatever the player chose.
 - Raise `version` whenever the rules or the format of a move change.
 - Put every string the players read in the locale, under keys that start with your game's id.
 - Give the game an `id` no other game uses.

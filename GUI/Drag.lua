@@ -265,6 +265,13 @@ function Drag:Carrying()
   return self.item
 end
 
+--- Whether what is in hand has been dragged since it was picked up, rather than only clicked: a
+--- game that does something else with a click asks when the button comes up
+--- @return boolean
+function Drag:Dragged()
+  return self.item ~= nil and self.moved == true
+end
+
 --- Puts what is in hand back where it came from
 --- @param instant boolean? Without showing it going there
 function Drag:Cancel(instant)
