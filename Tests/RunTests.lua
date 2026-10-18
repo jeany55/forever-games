@@ -41,6 +41,7 @@ local ENGINE_FILES = {
   "Games/Reversi.lua",
   "Games/Mancala.lua",
   "Games/Nim.lua",
+  "Games/Realms.lua",
   "Games/Checkers.lua",
   "Games/ChineseCheckers.lua",
   "Games/Backgammon.lua",
@@ -2214,6 +2215,120 @@ function tests.WindowPlaysNimByPickingStones()
   equal("D3,C5,A1", logOf(alice, id))
 end
 
+function tests.WindowPlaysRealmsByLayingTiles()
+  local world, alice, bob, id = gameOnScreen("realms")
+  local private = alice.private
+  local game, Match = private.Games.Get("realms"), private.Match
+  local rules = game.rules
+  local map = Client.Find(function(widget)
+    return widget.scripts.OnMouseUp and widget.scripts.OnMouseDown and widget.scripts.OnUpdate and widget:IsVisible()
+  end)
+  equal(1, #map, "one map on screen")
+  map = map[1]
+  local function settle()
+    for _ = 1, 150 do
+      for _, widget in ipairs(Client.Find(function(widget)
+        return widget.scripts.OnUpdate ~= nil and widget:IsVisible()
+      end)) do
+        widget:Fire("OnUpdate", 0.02)
+      end
+    end
+  end
+  local function says(text)
+    return #Client.Find(function(widget)
+      return type(widget.text) == "string" and widget.text:find(text, 1, true) and widget:IsVisible()
+    end) > 0
+  end
+  local function button(text)
+    return Client.Find(function(widget)
+      return widget.kind == "Button" and widget.text == text and widget:IsVisible()
+    end)[1]
+  end
+  --- Where the map has a square, and a point on it, with the start tile alone down: a square of
+  --- room and a quarter more round it
+  local function pointAt(x, y, across, down)
+    local cell = map.width / 3.5
+    local left, top = (x + 1.25 + (across or 0.5)) * cell, (y + 1.25 + (down or 0.5)) * cell
+    Client.cursor = { left, map.height - top }
+    map:Fire("OnUpdate", 0.02)
+  end
+  local function click(button)
+    Client.mouseDown = true
+    map:Fire("OnMouseDown", button or "LeftButton")
+    Client.mouseDown = false
+    map:Fire("OnMouseUp", button or "LeftButton")
+  end
+  settle()
+
+  local state = Match.State(alice.matches[id])
+  assert(says("realms_hint_lay"), "what to do")
+  assert(says("realms_your_tile"))
+  local place = rules.placings(state, state.tile)[1]
+  -- Pointing at a square the tile fits on, then laying it there: nothing is sent yet
+  pointAt(place.x, place.y)
+  click()
+  equal("", logOf(alice, id), "laid for now, not sent")
+  assert(says("realms_hint_"), "what to do next")
+  equal("realmsLay", Client.sounds[#Client.sounds])
+
+  -- A footman on the first thing of it that may take one, by clicking its ring
+  local outlook = rules.preview(state, state.tile, place.x, place.y, place.turn)
+  local feature
+  for number, entry in ipairs(outlook) do
+    if not entry.taken and not feature then
+      feature = number
+    end
+  end
+  local at = rules.TILES[state.tile].features[feature].at
+  local fx, fy = rules.turnedPoint(at[1], at[2], place.turn)
+  pointAt(place.x, place.y, fx, fy)
+  click()
+  equal("realmsFootman", Client.sounds[#Client.sounds])
+  equal("", logOf(alice, id))
+  button("realms_done"):Fire("OnClick")
+  equal(rules.moveOf(place.x, place.y, place.turn, feature), logOf(alice, id))
+  settle()
+
+  -- Not on Bob's turn
+  state = Match.State(alice.matches[id])
+  assert(says("realms_their_tile"))
+  local before = logOf(alice, id)
+  pointAt(0, -1)
+  click()
+  equal(before, logOf(alice, id))
+  world:Deliver()
+  local theirs = Match.State(bob.matches[id])
+  assert(bob.session:Move(id, game.moves(theirs, 2)[1]))
+  world:Deliver()
+  settle()
+  assert(says("realms_laid"), "what Bob did")
+
+  -- Escape picks a tile laid for now back up, and Enter sends it. The map has grown by now:
+  -- found again by where the tiles are
+  state = Match.State(alice.matches[id])
+  place = rules.placings(state, state.tile)[1]
+  local keys = Client.Find(function(widget)
+    return widget.scripts.OnKeyDown ~= nil and widget:IsVisible()
+  end)[1]
+  local minX, maxX, minY, maxY = 0, 0, 0, 0
+  for _, tile in ipairs(state.tiles) do
+    minX, maxX = math.min(minX, tile.x), math.max(maxX, tile.x)
+    minY, maxY = math.min(minY, tile.y), math.max(maxY, tile.y)
+  end
+  local cell = math.min(map.width / (maxX - minX + 3.5), map.height / (maxY - minY + 3.5))
+  Client.cursor = { (place.x - minX + 1.75) * cell, map.height - (place.y - minY + 1.75) * cell }
+  map:Fire("OnUpdate", 0.02)
+  click()
+  keys:Fire("OnKeyDown", "ESCAPE")
+  keys:Fire("OnKeyDown", "ENTER")
+  equal(before, logOf(alice, id):sub(1, #before), "picked up again, nothing to send")
+  equal(2, #alice.matches[id].log)
+  click()
+  keys:Fire("OnKeyDown", "ENTER")
+  equal(3, #alice.matches[id].log, "sent")
+  equal(place.x .. "." .. place.y, alice.matches[id].log[3]:match("^(%-?%d+%.%-?%d+)"), "where it was laid")
+end
+
 --- Clicks the square checkers players know by a number, on a board with red at the bottom
 --- @param board table
 --- @param number number 1 to 32
@@ -2361,7 +2476,7 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("chess", idsOf(Games.Search("CHESS")), "in any case")
   equal("chess", idsOf(Games.Search("description chess")), "every word has to be there, wherever")
   equal("", idsOf(Games.Search("chess reversi")))
-  equal("chess,reversi,mancala,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
+  equal("chess,reversi,mancala,realms,checkers,chinesecheckers,battleship,wormcraft", idsOf(Games.Search("strategy")), "a genre's name finds its games")
   equal("tictactoe,connectfour,nim", idsOf(Games.Search(nil, "casual")))
   equal("connectfour", idsOf(Games.Search("four", "casual")))
   equal("", idsOf(Games.Search("chess", "casual")))
@@ -2373,9 +2488,9 @@ function tests.GamesAreFoundByWordAndGenre()
   local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
-  equal("chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
+  equal("realms,chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
   equal("backgammon,yacht,pig", idsOf(Games.Search(nil, "dice", 2)), "a game played alone or around a table is found either way")
-  equal("chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
+  equal("realms,chinesecheckers,wormcraft", idsOf(Games.Search(nil, "strategy", 3)))
   equal("", idsOf(Games.Search(nil, "solo", 2)))
 
   for _, game in ipairs(Games.List()) do
@@ -23487,6 +23602,8 @@ end
 dofile("Tests/EveryGame.lua")(tests, loadEngine, PLUGINS.english)
 -- Where in Azeroth, and the places, races and views it is built on
 dofile("Tests/Where.lua")(tests, loadEngine)
+-- CarcassonneWoW: its tiles, scoring and computer
+dofile("Tests/Realms.lua")(tests, loadEngine)
 -- FreeCell and Microsoft's deals
 dofile("Tests/FreeCell.lua")(tests, loadEngine)
 -- Wordle, its words, and the game in the window

@@ -23,6 +23,8 @@ local SOUNDS = {
   mancalaSow = 4, mancalaPour = 2, mancalaAgain = 1,
   -- Nim's, made by Tools/make_nim.py
   nimClack = 4,
+  -- CarcassonneWoW's, made by Tools/make_realms.py
+  realmsLay = 3, realmsFootman = 3, realmsScore = 1,
 }
 
 Widgets.GREEN = { 0.3, 0.9, 0.3 }
