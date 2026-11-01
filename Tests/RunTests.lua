@@ -2951,8 +2951,8 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  -- The games of plugins come after Forever Games' own: Freedoom, Pinball, Where in Azeroth, and Pig of Examples/
-  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,pinball,where"
+  -- The games of plugins come after Forever Games' own: Freedoom, Pinball, Starfall, Where in Azeroth, and Pig of Examples/
+  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,pinball,starfall,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("realms,chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
