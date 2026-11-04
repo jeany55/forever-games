@@ -4,7 +4,7 @@
 -- Moonglade, a pinball machine: three balls for the best score you can make, on a table with a
 -- ramp onto a wire that winds over the bumpers and down a corkscrew, the Moonwell that shoots the
 -- ball up a glass tube onto a wire of its own, quests, a raid on Onyxia and two class spells. The
--- table, its rules and the machine it is shown on are this addon's other files: Images/Table.lua
+-- table, its rules and the machine it is shown on are the game's other files: Images/Pinball/Table.lua
 -- and Build.lua (what the ball meets), Rules.lua (a game played on it, by the engine's physics)
 -- and Machine.lua (everything seen and heard).
 --
@@ -14,14 +14,13 @@
 -- kept, and can be raced, the higher winning. It isn't the day's challenge: the table is the same
 -- every day, and the engine's day is a different deal each day.
 --
--- Pinball is an addon of its own, not a part of Forever Games: it knows the engine only by what
--- ForeverGamesAPI has (Engine/API.lua), as any other addon that brings a game would. Its strings
--- are in Locales/enUS.lua, its pictures and sounds in Images/ and Sounds/, made by the tools in
--- the repository's Tools/ (make_pinball.py, make_pinball_fx.py, make_pinball_sounds.py).
+-- Its strings are in Locales/Pinball.lua, its pictures and sounds in Images/Pinball/ and
+-- Sounds/Pinball/ (its icon in Images/Icons/), made by the tools in the repository's Tools/
+-- (make_pinball.py, make_pinball_fx.py, make_pinball_sounds.py).
 
---- @type string, table
-local ADDON, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+local own = private.Pinball
+local engine = private
 local L = engine.L
 local Machine = own.Machine
 
@@ -164,8 +163,7 @@ engine.Games.Register({
   name = L["game_pinball"],
   description = L["game_pinball_description"],
   genre = "solo",
-  icon = "Interface\\AddOns\\ForeverGames_Pinball\\Images\\icon",
-  plugin = ADDON,
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\pinball",
   version = 1,
   seats = 1,
   howto = {

@@ -1,0 +1,14 @@
+## Interface: 120105
+## Title: Forever Games: Freedoom
+## Notes: Freedoom, the free Doom, as a game of Forever Games: race to the exit, or race a friend's ghost
+## Author: Jeany
+## Version: 0.2.0
+## Dependencies: ForeverGames
+## Group: ForeverGames
+## IconTexture: Interface\AddOns\ForeverGames_Freedoom\Images\icon
+
+Locales\enUS.lua
+Hud.lua
+Carry.lua
+World.lua
+Freedoom.lua

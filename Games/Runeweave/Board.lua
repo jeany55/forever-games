@@ -25,7 +25,9 @@
 -- made where the player moved a rune to, if that is in the line, and otherwise where the lines
 -- cross or in the middle of the longest of them.
 
-local _, own = ...
+local _, private = ...
+private.Runeweave = private.Runeweave or {}
+local own = private.Runeweave
 
 local Board = {}
 own.Board = Board

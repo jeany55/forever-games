@@ -20,8 +20,10 @@
 --   wisps          two to a night: a wisp that is hit flies off as a second falling star
 -- A stone a star touches lights up, and every stone lit by a shot is gone once the shot is over.
 
-local _, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+private.Starfall = private.Starfall or {}
+local own = private.Starfall
+local engine = private
 local Physics = engine.Physics
 
 local Board = {}

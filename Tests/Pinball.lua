@@ -1,15 +1,14 @@
--- Pinball's own tests, run with Forever Games' (lua Tests/RunTests.lua Pinball). The checks every
+-- Pinball's own tests, run with the rest (lua Tests/RunTests.lua Pinball). The checks every
 -- game is put through (Tests/EveryGame.lua) are run on it as well, EveryGame_pinball.
 --
--- Handed the tests to add to, the engine to load, and what Forever Games' tests are written with.
--- Not listed in the .toc, so the game client never loads it.
+-- Handed the tests to add to, the engine to load, and what the tests in RunTests.lua are written with.
 return function(tests, loadEngine, helpers)
   local equal = helpers.equal
 
   --- The game's own table (what the client gives the addon), with the settings the table plays with
   local function pinball()
     local private = loadEngine()
-    local own = private.plugins.ForeverGames_Pinball
+    local own = private.Pinball
     local tune = {}
     for key, value in pairs(own.DEFAULTS) do
       tune[key] = value

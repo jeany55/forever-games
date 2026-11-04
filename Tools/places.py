@@ -59,7 +59,9 @@ def use_pack(name):
     LUA = FOLDER / "Places.lua"
 
 
-TOC = """## Interface: 16001
+# The pack's toc for the Forever client, and the same for retail as <addon>_Standard.toc
+INTERFACES = {"": "16001", "_Standard": "120105"}
+TOC = """## Interface: {interface}
 ## Title: Forever Games: Where in Azeroth, {name}
 ## Notes: Places for Where in Azeroth to take you, and their panoramas
 ## Version: 1.0.0
@@ -98,10 +100,11 @@ def for_game(places):
 
 def write(places):
     LUA.parent.mkdir(parents=True, exist_ok=True)
-    toc = FOLDER / f"{ADDON}.toc"
-    if not toc.exists():
-        toc.write_text(TOC.format(name=NAME), newline="\n")
-        print(toc)
+    for suffix, interface in INTERFACES.items():
+        toc = FOLDER / f"{ADDON}{suffix}.toc"
+        if not toc.exists():
+            toc.write_text(TOC.format(name=NAME, interface=interface), newline="\n")
+            print(toc)
     with open(LUA, "w", newline="\n") as out:
         out.write(f"-- The places of {ADDON} for Where in Azeroth to deal, in the order they were added:\n")
         out.write(f"-- written by Tools/places.py from Tools/{CATALOGUE.name}, run that again rather than change\n")

@@ -7,9 +7,8 @@ turns that wait while a player is offline, rematches, How to play, and, if the g
 them, the computer, races and the day's challenge. Nobody has to change Forever Games or tell it
 about your game.
 
-Freedoom, Pinball, Runeweave, Starfall and Where in Azeroth are written this way. Their code is in
-`ForeverGames_Freedoom`, `ForeverGames_Pinball`, `ForeverGames_Runeweave`, `ForeverGames_Starfall`
-and `ForeverGames_Where`, and uses only what this page describes. There is a smaller example in
+Freedoom and Where in Azeroth are written this way. Their code is in `ForeverGames_Freedoom` and
+`ForeverGames_Where`, and uses only what this page describes. There is a smaller example in
 [`Examples/ForeverGames_Pig`](Examples/ForeverGames_Pig): Pig, a dice game for two to four
 players with a computer opponent, in about 240 lines. This guide goes through it file by file.
 
@@ -56,6 +55,7 @@ matches, resigning, rematches and the list of games.
 ```
 ForeverGames_Pig/
   ForeverGames_Pig.toc
+  ForeverGames_Pig_Standard.toc
   Locales/enUS.lua
   Pig.lua
   Tests.lua
@@ -78,6 +78,11 @@ The folder and the `.toc` must have the same name. Calling it `ForeverGames_<Nam
 Locales\enUS.lua
 Pig.lua
 ```
+
+That one is for WoW Forever. For retail, copy it as `ForeverGames_Pig_Standard.toc` and change
+only the Interface, to retail's (`## Interface: 120105`). Retail picks the `_Standard.toc` first,
+and every other client falls back on the plain one. Keep the two the same apart from that: the
+tests check they are, for every addon in this repository.
 
 Don't make the addon `LoadOnDemand`. Its game has to be registered at login to show up. If the
 game needs a lot of data, put that data in a second addon that is loaded on demand (see
@@ -456,6 +461,8 @@ A pack is two things. Its `.toc` depends on Where in Azeroth:
 Places.lua
 ```
 
+with the same again as `ForeverGames_Where_Bob_Standard.toc` for retail, `## Interface: 120105`.
+
 And its `Places.lua` hands its places to the engine:
 
 ```lua
@@ -476,7 +483,7 @@ screenshots and `stitch.py` joins them into a panorama. Then
 Tools/GeoBench/python.sh ../places.py --pack Bob add <panorama> bobsfarm
 ```
 
-makes `ForeverGames_Where_Bob`, with its `.toc`, its `Places.lua` and its pictures, the first time
+makes `ForeverGames_Where_Bob`, with its two `.toc`s, its `Places.lua` and its pictures, the first time
 it is run, and adds to it after that. Without `--pack`, places go into `ForeverGames_Where_Places`.
 
 The packs are put together in the order of their names, each in its own order. A place whose id
@@ -519,7 +526,7 @@ an addon written for the version before.
 | `Lexicon` | Word lists, for word games |
 | `SectorMap`, `Actors`, `Course` | Doom-style maps, the things that move in them, and race courses |
 | `Places` | Places in Azeroth: distances, scoring a guess, and packs of places (`AddPack`, `Catalogue`) |
-| `Physics` | Balls rolling on a table: walls, posts, sensors, flippers, and wires through the air that a ball rides, at a fixed tick that plays back exactly. Pinball is played on it, and Starfall's rules fly every shot on it |
+| `Physics` | Balls rolling on a table: walls, posts, sensors, flippers, and wires through the air that a ball rides, at a fixed tick that plays back exactly. Pinball is played on it, and Peg Shooter's rules fly every shot on it |
 | `LightShow` | Lamps and the shows played over them: flashes, chases, sweeps, ripples, and bulbs that warm up and cool down |
 | `Widgets` | Buttons, labels, dropdowns, lists, sounds, animation |
 | `Lettering` | Text drawn as pictures, in fonts the client doesn't have |

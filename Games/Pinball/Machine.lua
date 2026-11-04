@@ -30,13 +30,14 @@
 --   onView       called with "cabinet" or "close" when the player switches what is shown
 --   dotImages    where the display's letters are, if not where the engine keeps them
 
-local ADDON, ns = ...
+local ADDON, private = ...
+local ns = private.Pinball
 local Rules, LightShow = ns.Rules, ns.LightShow
 local Shows = LightShow.Shows
 -- The display, a part of the view side, looked for when the machine is made
 local DotMatrix
 
-local IMAGES = "Interface\\AddOns\\" .. ADDON .. "\\Images\\"
+local IMAGES = "Interface\\AddOns\\" .. ADDON .. "\\Images\\Pinball\\"
 local FX = IMAGES .. "FX\\"
 
 local floor, min, max, abs, sqrt, pi = math.floor, math.min, math.max, math.abs, math.sqrt, math.pi

@@ -12,8 +12,8 @@ has to be on the PATH as `blender`, over the playfield's print (Tools/pinball_ar
 pictures, and <folder>/Art.lua saying where everything in them goes. That takes several minutes, so
 what it made is kept in the cache folder with a key
 made from all it was made from, and only made again when that changes. --quick renders with fewer
-samples, to look; --no-art leaves the pictures alone. The folder is ForeverGames_Pinball/Images,
-the game's own; the cache is Tools/PinballBench/RenderCache unless --cache says.
+samples, to look; --no-art leaves the pictures alone. The folder is Images/Pinball, the
+game's own in Forever Games (its icon goes beside it, in Images/Icons/pinball.tga); the cache is Tools/PinballBench/RenderCache unless --cache says.
 Only the standard library is used here; Blender has its own Python.
 """
 import math
@@ -60,7 +60,8 @@ def write_table(folder):
     table["flashers"] = pinball_table.flashers()
     table["rails"] = pinball_table.rails()
     text = ("-- Made by Tools/make_pinball.py from Tools/pinball_table.py: change those, not this\n"
-            "local _, ns = ...\n"
+            "local _, private = ...\n"
+            "local ns = private.Pinball\n"
             "ns.Table = " + lua(table) + "\n")
     path = Path(folder) / "Table.lua"
     path.write_text(text)
@@ -149,7 +150,10 @@ def read_tga(path):
 
 def make_icon(folder, tilt, png=None, size=64):
     """The game's icon: the top of the table, the wire over the bumpers and the corkscrew, as
-    rendered, made small. Written as <folder>/icon.tga, and as a PNG too where `png` says"""
+    rendered, made small. Written as pinball.tga in the Icons folder beside <folder>, and as a PNG
+    too where `png` says"""
+    icon = Path(folder).parent / "Icons" / "pinball.tga"
+    icon.parent.mkdir(parents=True, exist_ok=True)
     p = tilt["camera"]
 
     def to_pixel(x, y, z):
@@ -177,10 +181,10 @@ def make_icon(folder, tilt, png=None, size=64):
     header = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, size, size, 32, 8)
     body = b"".join(bytes((out[(y * size + x) * 3 + 2], out[(y * size + x) * 3 + 1], out[(y * size + x) * 3], 255))
                     for y in range(size - 1, -1, -1) for x in range(size))
-    (Path(folder) / "icon.tga").write_bytes(header + body)
+    icon.write_bytes(header + body)
     if png:
         write_png(png, size, size, out)
-    print(Path(folder) / "icon.tga")
+    print(icon)
 
 
 def write_png(path, width, height, pixels):
@@ -272,7 +276,8 @@ def main():
         make_icon(folder, tilt, Path(__file__).resolve().parent.parent / ".github" / "readme" / "icons" / "pinball.png")
         path = folder / "Art.lua"
         path.write_text("-- Made by Tools/make_pinball.py with Tools/pinball_art.py: change those, not this\n"
-                        "local _, ns = ...\n"
+                        "local _, private = ...\n"
+                        "local ns = private.Pinball\n"
                         "ns.Art = " + lua(art) + "\n")
         print(path)
 

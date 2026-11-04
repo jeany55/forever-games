@@ -6,6 +6,7 @@
   <a href="https://github.com/jeany55/forever-games/releases/latest"><img src="https://img.shields.io/github/v/release/jeany55/forever-games?label=download&color=c8a24a" alt="Latest release"></a>
   <a href="https://github.com/jeany55/forever-games/releases"><img src="https://img.shields.io/github/downloads/jeany55/forever-games/total?color=c8a24a" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-1f6feb" alt="For World of Warcraft Forever">
+  <img src="https://img.shields.io/badge/World%20of%20Warcraft-Retail-1f6feb" alt="For World of Warcraft retail">
   <a href="https://github.com/jeany55/forever-games/actions/workflows/tests.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/jeany55/forever-games/actions/workflows/release.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/release.yml/badge.svg" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/jeany55/forever-games" alt="MIT licence"></a>
@@ -39,11 +40,13 @@ puzzles and solo games with a new challenge for your guild every day.
 1. Download `ForeverGames-<version>.zip` from the
    [latest release](https://github.com/jeany55/forever-games/releases/latest).
 2. Unzip it into `Interface\AddOns`, inside the folder for the version of the game you play in your
-   World of Warcraft folder. Create the `AddOns` folder if it isn't there.
-3. You should now have eight folders there: `ForeverGames`, `ForeverGames_Freedoom`,
-   `ForeverGames_Freedoom_Maps`, `ForeverGames_Pinball`, `ForeverGames_Runeweave`,
-   `ForeverGames_Starfall`, `ForeverGames_Where` and `ForeverGames_Where_Places`. Keep all eight.
-   Freedoom, Pinball, Runeweave, Starfall and Where in Azeroth are addons of their own. `ForeverGames_Freedoom_Maps` holds
+   World of Warcraft folder. Create the `AddOns` folder if it isn't there. The same download is for
+   WoW Forever (`_forever_`) and for retail (`_retail_`): each picks the files that are its own.
+3. You should now have five folders there: `ForeverGames`, `ForeverGames_Freedoom`,
+   `ForeverGames_Freedoom_Maps`, `ForeverGames_Where` and `ForeverGames_Where_Places`. Keep all
+   five. Freedoom and Where in Azeroth are addons of their own. If you had `ForeverGames_Pinball`,
+   `ForeverGames_Runeweave` or `ForeverGames_Starfall` from before, delete them: those games are
+   part of `ForeverGames` now. `ForeverGames_Freedoom_Maps` holds
    Freedoom's maps and `ForeverGames_Where_Places` the places of Where in Azeroth, which is why
    the download is large. The maps are only loaded when you play Freedoom, and a place's pictures
    only when you are taken there.
@@ -92,8 +95,8 @@ differ, the challenge tells you.
 | <img src=".github/readme/icons/warcraftstein.png" width="32"> | Warcraftstein 3D | Yes | Yes | Fight through the Scarlet Monastery in first person, as your own class. |
 | <img src=".github/readme/icons/freedoom.png" width="32"> | Freedoom | | Yes | The free version of Doom, drawn inside WoW. Race the ghost of your best run. |
 | <img src=".github/readme/icons/pinball.png" width="32"> | Pinball: Moonglade | | Yes | A pinball machine with a ramp onto a winding wire, a corkscrew and two class spells. Three balls for your best score. |
-| <img src=".github/readme/icons/runeweave.png" width="32"> | Runeweave | Yes | Yes | Swap runes of the six schools of magic to line up three or more. Make runes of power and make your moves last. |
-| <img src=".github/readme/icons/starfall.png" width="32"> | Starfall | Yes | Yes | Fire falling stars into a sky of moonstones and light every constellation before they run out. A new sky every game. |
+| <img src=".github/readme/icons/runeweave.png" width="32"> | Match Three | Yes | Yes | Swap runes of the six schools of magic to line up three or more. Make runes of power and make your moves last. |
+| <img src=".github/readme/icons/starfall.png" width="32"> | Peg Shooter | Yes | Yes | Fire falling stars into a sky of moonstones and light every constellation before they run out. A new sky every game. |
 | <img src=".github/readme/icons/fourtiles.png" width="32"> | Fourtiles | Yes | | A word puzzle. A friend can join in and solve it with you, no turns. |
 | <img src=".github/readme/icons/wordle.png" width="32"> | Wordle | Yes | Yes | Find the hidden word in six guesses. 4 to 7 letters, everyday words or Azeroth's. |
 | <img src=".github/readme/icons/yacht.png" width="32"> | Yacht-Z | | | Fill the card alone. 200 points is a win. |
@@ -523,7 +526,7 @@ unless the game says otherwise.
 </details>
 
 <details>
-<summary><b>Runeweave</b></summary>
+<summary><b>Match Three</b></summary>
 
 - Swap two runes next to each other to line up three or more of the same school, across or
   down. Click one and then the other, drag one onto its neighbour, or use the arrow keys and
@@ -541,7 +544,7 @@ unless the game says otherwise.
 </details>
 
 <details>
-<summary><b>Starfall</b></summary>
+<summary><b>Peg Shooter</b></summary>
 
 - Aim the crescent at the top of the sky with the mouse and click to fire a falling star, or turn
   it with the arrow keys and press Space. A dotted line shows the way the star will go as far as

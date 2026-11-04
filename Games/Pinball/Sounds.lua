@@ -4,7 +4,7 @@
 -- What is heard when something happens on the table, by what happened.
 --
 -- The machine's own noises (the flippers, the bumpers, the ball on steel and rubber) are made by
--- Tools/make_pinball_sounds.py into Sounds\. Where there are several, one is picked at
+-- Tools/make_pinball_sounds.py into Sounds\Pinball\. Where there are several, one is picked at
 -- random each time, so that a sound heard often doesn't sound like a recording.
 --
 -- The big moments are the game's own sounds, played by their SoundKit ids: the level-up ding, a
@@ -21,10 +21,11 @@
 --   kit     the client's SoundKit id, for PlaySound
 --   note    what it is
 
-local ADDON, ns = ...
+local ADDON, private = ...
+local ns = private.Pinball
 
 -- In the folder of whichever addon this is: the game's, or the bench's that tries it out
-ns.SOUND_FOLDER = "Interface\\AddOns\\" .. ADDON .. "\\Sounds\\"
+ns.SOUND_FOLDER = "Interface\\AddOns\\" .. ADDON .. "\\Sounds\\Pinball\\"
 
 ns.Sounds = {
   -- The machine

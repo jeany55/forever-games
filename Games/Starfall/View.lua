@@ -13,16 +13,18 @@
 -- constellations it finished wake, the score counts up and the Moonwell slides to its next place.
 -- A position that wasn't just played (looking back, or a game loaded again) is drawn as it is.
 
-local _, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+private.Starfall = private.Starfall or {}
+local own = private.Starfall
+local engine = private
 local L = engine.L
 local Board = own.Board
 local Physics = engine.Physics
 
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 
-local IMAGES = "Interface\\AddOns\\ForeverGames_Starfall\\Images\\"
-local SOUNDS = "Interface\\AddOns\\ForeverGames_Starfall\\Sounds\\"
+local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Starfall\\"
+local SOUNDS = "Interface\\AddOns\\ForeverGames\\Sounds\\Starfall\\"
 
 local SKY_W, SKY_H = Board.SKY_WIDTH, Board.SKY_HEIGHT
 local LX, LY = Board.LAUNCH_X, Board.LAUNCH_Y

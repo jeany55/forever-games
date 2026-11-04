@@ -7,7 +7,7 @@
 --   lua Tools/PinballBench/report.lua [PinballBench.lua] [games n]
 --
 -- Without a file it looks for the account's own under the game's folder, the same one install.sh
--- installs into (WOW_ADDONS's folder's WTF, or the classic beta's).
+-- installs into (WOW_ADDONS's folder's WTF, or WoW Forever's).
 
 local path = arg[1] ~= "games" and arg[1] or nil
 local showGames = 10
@@ -17,7 +17,7 @@ for index = 1, #arg do
   end
 end
 if not path then
-  local addons = os.getenv("WOW_ADDONS") or "/mnt/c/Program Files (x86)/World of Warcraft/_classic_beta_/Interface/AddOns"
+  local addons = os.getenv("WOW_ADDONS") or "/mnt/c/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns"
   local wtf = addons:gsub("Interface/AddOns/?$", "WTF/Account")
   local found = io.popen('ls -t "' .. wtf .. '"/*/SavedVariables/PinballBench.lua 2>/dev/null')
   path = found and found:read("*l")

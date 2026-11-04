@@ -15,15 +15,17 @@
 -- on to the end, after which the ley meter surges if it is full. A position that wasn't just
 -- played (looking back, or a game loaded again) is drawn as it is.
 
-local _, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+private.Runeweave = private.Runeweave or {}
+local own = private.Runeweave
+local engine = private
 local L = engine.L
 local Board = own.Board
 
 local floor, min, max, abs, sin, pi = math.floor, math.min, math.max, math.abs, math.sin, math.pi
 
-local IMAGES = "Interface\\AddOns\\ForeverGames_Runeweave\\Images\\"
-local SOUNDS = "Interface\\AddOns\\ForeverGames_Runeweave\\Sounds\\"
+local IMAGES = "Interface\\AddOns\\ForeverGames\\Images\\Runeweave\\"
+local SOUNDS = "Interface\\AddOns\\ForeverGames\\Sounds\\Runeweave\\"
 
 local SIZE = Board.SIZE
 local School, Kind = Board.School, Board.Kind

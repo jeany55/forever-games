@@ -1,7 +1,7 @@
 --------------------------
 --  Pinball Bench
 --------------------------
--- Tries out the pinball game of ForeverGames_Pinball on its own, outside Forever Games: a
+-- Tries out Forever Games' pinball (Games/Pinball) on its own, outside Forever Games: a
 -- separate addon like Doom Bench and Kart Bench, installed with its own install.sh, which copies
 -- the game's table, rules and machine (Machine.lua) in beside this file. Here is only what the
 -- bench adds to them: a window of its own as tall as the screen, a machine that keeps its own high

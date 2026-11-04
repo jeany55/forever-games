@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Draws Starfall's pictures and makes its sounds (ForeverGames_Starfall).
+"""Draws Starfall's pictures and makes its sounds, for Forever Games (Games/Starfall).
 
-    python3 Tools/make_starfall.py ForeverGames_Starfall [preview-folder]
+    python3 Tools/make_starfall.py . [preview-folder]
 
-Writes into the addon's Images/:
+Given the addon's folder, writes into its Images/Starfall/ (the icon into Images/Icons/starfall.tga):
   sky.tga         the night the stones hang in, 1024 by 768 in the top of a 1024 square: deep blue
                   going to violet low down, drifts of nebula, a great many small stars, and the
                   dark shapes of hills and trees along the bottom
@@ -17,7 +17,7 @@ Writes into the addon's Images/:
   well, wellGlow  the Moonwell's pool, and the light standing over it
   icon            the game's icon, 64 square, and a PNG copy for the README
                   (.github/readme/icons/starfall.png)
-and into its Sounds/, as Ogg (ffmpeg writes them):
+and into its Sounds/Starfall/, as Ogg (ffmpeg writes them):
   chime1..chime14 a bell for each stone lit in a shot, every one a step up a pentatonic scale
   tick, pop       a stone touched again, and one vanishing
   fire, wisp      a star fired, and a wisp flying off
@@ -407,8 +407,10 @@ def paste(picture, piece, left, top, add=False):
 
 
 def pictures(folder, preview):
-    images = folder / "Images"
+    images = folder / "Images" / "Starfall"
     images.mkdir(parents=True, exist_ok=True)
+    icons = folder / "Images" / "Icons"
+    icons.mkdir(parents=True, exist_ok=True)
     made = {}
     made["stone"] = sphere(64, (0.86, 0.9, 1.0), (0.28, 0.32, 0.46), 0.7, rim=0.4)
     made["stoneLit"] = sphere(64, (0.9, 1.0, 1.0), (0.45, 0.65, 0.9), 1.0, (0.6, 0.85, 1.0), 0.8, rim=0.8)
@@ -425,7 +427,7 @@ def pictures(folder, preview):
     made["wellGlow"] = well_glow()
     made["icon"] = icon()
     for name, picture in made.items():
-        write_tga(images / (name + ".tga"), picture)
+        write_tga(icons / "starfall.tga" if name == "icon" else images / (name + ".tga"), picture)
         if preview:
             write_png(preview / (name + ".png"), picture)
     readme = Path(__file__).resolve().parent.parent / ".github" / "readme" / "icons" / "starfall.png"
@@ -537,7 +539,7 @@ def write_sound(path, samples):
 
 
 def sounds(folder):
-    out_dir = folder / "Sounds"
+    out_dir = folder / "Sounds" / "Starfall"
     out_dir.mkdir(parents=True, exist_ok=True)
     made = {}
     for step in range(14):

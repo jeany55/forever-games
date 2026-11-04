@@ -72,6 +72,20 @@ local ENGINE_FILES = {
   "Engine/LightShow.lua",
   "Games/Wormcraft.lua",
   "Engine/Places.lua",
+  "Games/Runeweave/Board.lua",
+  "Games/Runeweave/View.lua",
+  "Games/Runeweave/Runeweave.lua",
+  "Games/Starfall/Board.lua",
+  "Games/Starfall/View.lua",
+  "Games/Starfall/Starfall.lua",
+  "Games/Pinball/Init.lua",
+  "Images/Pinball/Table.lua",
+  "Images/Pinball/Art.lua",
+  "Games/Pinball/Build.lua",
+  "Games/Pinball/Rules.lua",
+  "Games/Pinball/Sounds.lua",
+  "Games/Pinball/Machine.lua",
+  "Games/Pinball/Pinball.lua",
   "Engine/API.lua",
 }
 
@@ -138,7 +152,7 @@ do
 end
 
 -- Whatever files a plugin brings may have its strings in, so all of them are looked in
-PLUGINS.english = { "Locales/enUS.lua" }
+PLUGINS.english = { "Locales/enUS.lua", "Locales/Pinball.lua" }
 for _, plugin in ipairs(PLUGINS) do
   for _, file in ipairs(plugin.files) do
     PLUGINS.english[#PLUGINS.english + 1] = file
@@ -2951,8 +2965,8 @@ function tests.GamesAreFoundByWordAndGenre()
   equal("", idsOf(Games.Search("%a+")), "what is typed is looked for as it is")
 
   -- By how many are playing
-  -- The games of plugins come after Forever Games' own: Freedoom, Pinball, Runeweave, Starfall, Where in Azeroth, and Pig of Examples/
-  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,freedoom,pinball,runeweave,starfall,where"
+  -- The games of plugins come after Forever Games' own: Freedoom, Where in Azeroth, and Pig of Examples/
+  local alone = "yacht,solitaire,freecell,minesweeper,2048,blockfall,sudoku,fourtiles,wordle,warcraftstein,runeweave,starfall,pinball,freedoom,where"
   equal(alone, idsOf(Games.Search(nil, nil, 1)), "the games for one: the computer's are games for two and more")
   equal("words,fourtiles", idsOf(Games.Search(nil, "words", 2)), "one that is played alone or by two is found either way")
   equal("realms,chinesecheckers,yacht,crazyeights,words,wormcraft,pig", idsOf(Games.Search(nil, nil, 3)), "three stands for any more than two")
@@ -24094,6 +24108,12 @@ dofile("Tests/Realms.lua")(tests, loadEngine)
 dofile("Tests/FreeCell.lua")(tests, loadEngine)
 -- Wordle, its words, and the game in the window
 dofile("Tests/Wordle.lua")(tests, loadEngine, { World = World, Client = Client, openWindow = openWindow })
+-- Match Three (Runeweave), Peg Shooter (Starfall) and Pinball, each played through and in the window
+for _, game in ipairs({ "Runeweave", "Starfall", "Pinball" }) do
+  dofile("Tests/" .. game .. ".lua")(tests, loadEngine, {
+    equal = equal, near = near, World = World, Client = Client, openWindow = openWindow,
+  })
+end
 -- A plugin's own tests, in Tests.lua in its folder: a function that is handed the tests to add
 -- to, the engine to load (with every plugin in it), and what the tests here are written with
 for _, plugin in ipairs(PLUGINS) do
@@ -24502,6 +24522,59 @@ do
     show:Set("a", false)
     local cooling = show:Glow("a", 0.21, 0.01)
     equal(true, cooling > 0.5 and cooling < 1, "going out slower than it lit")
+  end
+end
+
+-----------------------------
+-- The retail tocs
+-----------------------------
+-- Every addon has a toc for the Forever client (<name>.toc, the one a client falls back on) and
+-- one for retail (<name>_Standard.toc, which retail picks first). They list the same files and
+-- say the same things, only the Interface (and the X-GameType) is the client's own.
+
+do
+  local OWN = { Interface = true, ["X-GameType"] = true }
+
+  --- The lines of a toc, with its Interface (and the other lines of the client's own) apart
+  local function readToc(path)
+    local file = io.open(path)
+    if not file then
+      return nil
+    end
+    local shared, own = {}, {}
+    for line in file:lines() do
+      line = line:gsub("%s+$", "")
+      local field, value = line:match("^##%s*([%w%-]+):%s*(.*)$")
+      if field and OWN[field] then
+        own[field] = value
+      else
+        shared[#shared + 1] = line
+      end
+    end
+    file:close()
+    return shared, own
+  end
+
+  function tests.EveryAddonHasARetailTocListingTheSame()
+    local folders = { "." }
+    local listing = io.popen("ls -d ForeverGames_*/ Examples/ForeverGames_*/ 2>/dev/null")
+    for folder in listing:lines() do
+      folders[#folders + 1] = folder:gsub("/$", "")
+    end
+    listing:close()
+    for _, folder in ipairs(folders) do
+      local name = folder == "." and ADDON_NAME or folder:match("([^/]+)$")
+      local forever, foreverOwn = readToc(folder .. "/" .. name .. ".toc")
+      local retail, retailOwn = readToc(folder .. "/" .. name .. "_Standard.toc")
+      assert(forever, "no " .. name .. ".toc")
+      assert(retail, name .. " has no " .. name .. "_Standard.toc for retail: copy its .toc, with the retail Interface")
+      equal("16001", foreverOwn.Interface, name .. ".toc is for the Forever client")
+      assert(tonumber(retailOwn.Interface) and tonumber(retailOwn.Interface) >= 120105,
+        name .. "_Standard.toc is for retail, Interface 120105 or later: " .. tostring(retailOwn.Interface))
+      for i = 1, math.max(#forever, #retail) do
+        equal(forever[i], retail[i], name .. "_Standard.toc line " .. i .. " is as in " .. name .. ".toc")
+      end
+    end
   end
 end
 

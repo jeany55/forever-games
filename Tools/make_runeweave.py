@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Draws Runeweave's pictures and makes its sounds (ForeverGames_Runeweave).
+"""Draws Runeweave's pictures and makes its sounds, for Forever Games (Games/Runeweave).
 
-    python3 Tools/make_runeweave.py ForeverGames_Runeweave [preview-folder]
+    python3 Tools/make_runeweave.py . [preview-folder]
 
-Writes into the addon's Images/:
+Given the addon's folder, writes into its Images/Runeweave/ (the icon into Images/Icons/runeweave.tga):
   rune1..rune6    the runes of the six schools, 64 square, each a cut stone of its own shape and
                   colour with its sign glowing in it, so that no two are told apart by colour
                   alone: fire a flame, frost a hexagon, nature a leaf, arcane a diamond, holy a
@@ -20,7 +20,7 @@ Writes into the addon's Images/:
                   ley light faint in it
   icon            the game's icon, 64 square, and a PNG copy for the README
                   (.github/readme/icons/runeweave.png)
-and into its Sounds/, as Ogg (ffmpeg writes them):
+and into its Sounds/Runeweave/, as Ogg (ffmpeg writes them):
   pick, swap, bad a rune picked up, two swapped, and a swap that does nothing
   match1..match8  a line cleared, a step up a pentatonic scale for each step down the chain
   made, land      a rune of power made, and the runes landing after they fall
@@ -339,8 +339,10 @@ def shrink(picture, size):
 
 
 def pictures(folder, preview):
-    images = folder / "Images"
+    images = folder / "Images" / "Runeweave"
     images.mkdir(parents=True, exist_ok=True)
+    icons = folder / "Images" / "Icons"
+    icons.mkdir(parents=True, exist_ok=True)
     made = {}
     runes = []
     for index, ((name, light, dark, glyph), (shape, sign)) in enumerate(zip(SCHOOLS, outlines())):
@@ -359,7 +361,7 @@ def pictures(folder, preview):
     made["icon"] = icon(runes)
     made["board"] = board()
     for name, picture in made.items():
-        write_tga(images / (name + ".tga"), picture)
+        write_tga(icons / "runeweave.tga" if name == "icon" else images / (name + ".tga"), picture)
         if preview:
             write_png(preview / (name + ".png"), picture)
     readme = Path(__file__).resolve().parent.parent / ".github" / "readme" / "icons" / "runeweave.png"
@@ -383,7 +385,7 @@ def tone(frequency, seconds, loud, fall=0.0, decay=8.0):
 
 
 def sounds(folder):
-    out_dir = folder / "Sounds"
+    out_dir = folder / "Sounds" / "Runeweave"
     out_dir.mkdir(parents=True, exist_ok=True)
     made = {}
     made["pick"] = bell(note(7), 0.18, 0.25, 0.4)

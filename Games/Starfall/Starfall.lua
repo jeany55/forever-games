@@ -11,13 +11,15 @@
 -- every computer, so a match is its aims and nothing else, and the event the move leaves behind
 -- is the whole flight, for the view to play back (View.lua).
 --
--- Starfall is an addon of its own, not a part of Forever Games: it knows the engine only by what
--- ForeverGamesAPI has (Engine/API.lua). Its strings are in Locales/enUS.lua, its pictures and
--- sounds in Images/ and Sounds/, made by Tools/make_starfall.py.
+-- Shown to the players as Peg Shooter (L["game_starfall"]). Its id, which matches are kept under,
+-- is "starfall", so that what it is called can change without losing anyone's games. Its strings
+-- are in Locales/enUS.lua, its pictures and sounds in Images/Starfall/ and Sounds/Starfall/ (its
+-- icon in Images/Icons/), made by Tools/make_starfall.py.
 
---- @type string, table
-local ADDON, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+private.Starfall = private.Starfall or {}
+local own = private.Starfall
+local engine = private
 local L = engine.L
 local Board = own.Board
 
@@ -115,8 +117,7 @@ engine.Games.Register({
   name = L["game_starfall"],
   description = L["game_starfall_description"],
   genre = "solo",
-  icon = "Interface\\AddOns\\ForeverGames_Starfall\\Images\\icon",
-  plugin = ADDON,
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\starfall",
   version = 1,
   seats = 1,
   howto = {

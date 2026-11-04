@@ -13,13 +13,15 @@
 -- for the rune to its right or "d" for the one below it. The rules play the swap out to the
 -- end, and the event it leaves behind is every step of it, for the view to play back (View.lua).
 --
--- Runeweave is an addon of its own, not a part of Forever Games: it knows the engine only by
--- what ForeverGamesAPI has (Engine/API.lua). Its strings are in Locales/enUS.lua, its pictures
--- and sounds in Images/ and Sounds/, made by Tools/make_runeweave.py.
+-- Shown to the players as Match Three (L["game_runeweave"]). Its id, which matches are kept under,
+-- is "runeweave", so that what it is called can change without losing anyone's games. Its
+-- strings are in Locales/enUS.lua, its pictures and sounds in Images/Runeweave/ and
+-- Sounds/Runeweave/ (its icon in Images/Icons/), made by Tools/make_runeweave.py.
 
---- @type string, table
-local ADDON, own = ...
-local engine = ForeverGamesAPI
+local _, private = ...
+private.Runeweave = private.Runeweave or {}
+local own = private.Runeweave
+local engine = private
 local L = engine.L
 local Board = own.Board
 
@@ -101,8 +103,7 @@ engine.Games.Register({
   name = L["game_runeweave"],
   description = L["game_runeweave_description"],
   genre = "solo",
-  icon = "Interface\\AddOns\\ForeverGames_Runeweave\\Images\\icon",
-  plugin = ADDON,
+  icon = "Interface\\AddOns\\ForeverGames\\Images\\Icons\\runeweave",
   version = 1,
   seats = 1,
   howto = {

@@ -70,7 +70,7 @@ local unsaved = {}
 --- the file loads, which is before the addon has read what was saved
 --- @param id string The game's id
 --- @return table
-function API.Settings(id)
+function private.Settings(id)
   local addon = ForeverGames
   local profile = addon and addon.db and addon.db.profile
   if not profile then
@@ -85,10 +85,13 @@ end
 --- Whether the player wants to hear the games, as the addon's options have it. A game that plays
 --- sounds of its own asks before every one
 --- @return boolean
-function API.SoundOn()
+function private.SoundOn()
   local addon = ForeverGames
   return not (addon and addon.db) or addon.db.profile.sound == true
 end
+
+-- The games of Forever Games itself ask the engine for these, and plugins ask the API
+API.Settings, API.SoundOn = private.Settings, private.SoundOn
 
 -- The parts are read through to, and nothing else is to be put in
 setmetatable(API, {

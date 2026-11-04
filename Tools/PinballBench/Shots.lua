@@ -10,14 +10,16 @@
 --
 -- from the repository's folder, after python3 Tools/make_pinball.py <folder>.
 
-local folder = arg[1] or "ForeverGames_Pinball/Images"
+local folder = arg[1] or "Images/Pinball"
+-- The game's files find their table as private.Pinball, which here is the one table
 local ns = {}
+ns.Pinball = ns
 local function load(path)
   assert(loadfile(path))("PinballBench", ns)
 end
 load("Engine/Physics.lua")
 load(folder .. "/Table.lua")
-load("ForeverGames_Pinball/Build.lua")
+load("Games/Pinball/Build.lua")
 
 local tune = {}
 for key, value in pairs(ns.DEFAULTS) do

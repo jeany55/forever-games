@@ -10,8 +10,8 @@ Engine\LightShow.lua
 GUI\DotMatrix.lua
 Bench.lua
 Locales\enUS.lua
-Images\Table.lua
-Images\Art.lua
+Images\Pinball\Table.lua
+Images\Pinball\Art.lua
 Build.lua
 Rules.lua
 Sounds.lua

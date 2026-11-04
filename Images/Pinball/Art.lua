@@ -1,5 +1,6 @@
 -- Made by Tools/make_pinball.py with Tools/pinball_art.py: change those, not this
-local _, ns = ...
+local _, private = ...
+local ns = private.Pinball
 ns.Art = {
   colours = {
     blue = { 0.25, 0.55, 1 },

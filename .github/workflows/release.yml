@@ -34,7 +34,7 @@ jobs:
           sudo apt-get install -y lua5.1
           ./Tests/RunTests.sh
 
-      # Increment version and replace in the toc file
+      # Increment version and replace in the toc files, the Forever client's and retail's
       - name: Update version
         run: |
           VERSION=$(grep '^## Version:' ForeverGames.toc | grep -o '[0-9]*\.[0-9]*\.[0-9]*')
@@ -59,7 +59,7 @@ jobs:
 
           newVersion="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
 
-          sed -i -e "s/^## Version: $VERSION/## Version: $newVersion/" ForeverGames.toc
+          sed -i -e "s/^## Version: $VERSION/## Version: $newVersion/" ForeverGames.toc ForeverGames_Standard.toc
 
           echo "VERSION=$newVersion" >> $GITHUB_ENV
 
@@ -69,8 +69,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-          if ! git diff --quiet ForeverGames.toc; then
-            git add ForeverGames.toc
+          if ! git diff --quiet ForeverGames.toc ForeverGames_Standard.toc; then
+            git add ForeverGames.toc ForeverGames_Standard.toc
             git commit -m "Update to version $VERSION"
             git push
           fi

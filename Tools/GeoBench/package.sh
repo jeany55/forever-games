@@ -24,7 +24,7 @@ cat > "$OUT/HOW TO TAKE PLACES.txt" <<'TXT'
 Taking places for Where in Azeroth
 ==================================
 
-1. Put the GeoBench folder in World of Warcraft\_classic_beta_\Interface\AddOns and restart
+1. Put the GeoBench folder in World of Warcraft\_forever_\Interface\AddOns and restart
    the game. Turn on Geo Bench in the AddOns list if it isn't.
 
 2. Go somewhere worth guessing, outdoors (not in a dungeon or instance), and stand still.
@@ -36,8 +36,8 @@ Taking places for Where in Azeroth
    is written down. Any character, any realm, as long as it's the same Battle.net account.
 
 4. When you're done, send two things:
-   - World of Warcraft\_classic_beta_\WTF\Account\<your account>\SavedVariables\GeoBench.lua
-   - the WoWScrnShot_*.jpg files from World of Warcraft\_classic_beta_\Screenshots taken while
+   - World of Warcraft\_forever_\WTF\Account\<your account>\SavedVariables\GeoBench.lua
+   - the WoWScrnShot_*.jpg files from World of Warcraft\_forever_\Screenshots taken while
      capturing (12 a place; sending the whole folder is fine too)
    Zipped up together, any way you like.
 

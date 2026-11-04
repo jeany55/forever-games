@@ -1,17 +1,16 @@
--- Runeweave's own tests, run with Forever Games' (lua Tests/RunTests.lua Runeweave). The checks
+-- Runeweave's own tests, run with the rest (lua Tests/RunTests.lua Runeweave). The checks
 -- every game is put through (Tests/EveryGame.lua) are run on it as well, EveryGame_runeweave:
 -- the same board from the same seed, every swap replaying the same on another client, the day's
 -- board and races.
 --
--- Handed the tests to add to, the engine to load, and what Forever Games' tests are written with.
--- Not listed in the .toc, so the game client never loads it.
+-- Handed the tests to add to, the engine to load, and what the tests in RunTests.lua are written with.
 return function(tests, loadEngine, helpers)
   local equal = helpers.equal
   local World, Client, openWindow = helpers.World, helpers.Client, helpers.openWindow
 
   local function runeweave()
     local private = loadEngine()
-    return private.plugins.ForeverGames_Runeweave, private.Games.Get("runeweave"), private
+    return private.Runeweave, private.Games.Get("runeweave"), private
   end
 
   --- A game from a seed
@@ -298,7 +297,7 @@ return function(tests, loadEngine, helpers)
     local match = assert(player.session:Invite({}, "runeweave"))
     MainFrame.Open(match.id)
     settle(0.1)
-    local own = player.private.plugins.ForeverGames_Runeweave
+    local own = player.private.Runeweave
     local Board = own.Board
     local state = player.private.Match.State(match)
 
@@ -381,7 +380,7 @@ return function(tests, loadEngine, helpers)
     local match = assert(player.session:Invite({}, "runeweave"))
     MainFrame.Open(match.id)
     settle(0.1)
-    local Board = player.private.plugins.ForeverGames_Runeweave.Board
+    local Board = player.private.Runeweave.Board
     local game = player.private.Games.Get("runeweave")
     local pick = player.private.Random.New(9)
     Client.sounds = {}

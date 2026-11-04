@@ -33,7 +33,8 @@
 -- What happens that is worth showing or hearing is told to ns.Cue(what, ...), which the bench
 -- sets: the rules know nothing of lights, pictures or sounds.
 
-local _, ns = ...
+local _, private = ...
+local ns = private.Pinball
 
 local floor, min, max, abs, pi = math.floor, math.min, math.max, math.abs, math.pi
 

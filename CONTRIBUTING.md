@@ -3,7 +3,13 @@
 This is for anyone changing the addon itself. To play it, see the [README](README.md).
 
 The folder has to be called `ForeverGames` inside `Interface/AddOns`. After changing anything the
-addon ships, `./install.sh` copies it into the game, ready to `/reload`.
+addon ships, `./install.sh` copies it into the game, ready to `/reload`: into WoW Forever (`_forever_`)
+and retail, whichever are installed (or `WOW_ADDONS=<AddOns folder> ./install.sh` for one of your
+choosing).
+
+Every addon has two tocs: `<name>.toc` for WoW Forever (Interface 16001), and `<name>_Standard.toc`
+for retail (Interface 120105 and on), which retail picks first. They list the same files and are
+otherwise the same, which a test checks: a file added to one goes in the other too.
 
 ## Tests
 
@@ -82,7 +88,10 @@ Words after it run only the tests whose names have one of them in:
     weapon in the player's hands
   - `API.lua` `ForeverGamesAPI`, what an addon of its own makes a game with: the parts of the
     engine above and of `GUI/` that games use, and a place for its strings. See [API.md](API.md)
-- `Games/` one file per game: its rules and its view
+- `Games/` one file per game: its rules and its view. The bigger ones have a folder of their own:
+  `Runeweave/` (shown as Match Three) and `Starfall/` (shown as Peg Shooter) each a board, a view
+  and the game, `Pinball/` the table, rules, sounds and machine that the pinball bench
+  (`Tools/PinballBench`) shares, with its strings in `Locales/Pinball.lua` for the same reason
 - `Transport.lua` addon messages, lockdown and online/offline detection
 - `Links.lua` games linked in chat: the text that is sent, and the link it is shown as
 - `GUI/` main window, new game wizard and toast
@@ -123,7 +132,7 @@ Words after it run only the tests whose names have one of them in:
     sky, things as sprites cut off by the walls in front of them, walls that are seen through,
     Doom's light and detail
 - `Core.lua` wires it all together
-- `Sounds/` cards, chips and dice
+- `Sounds/` cards, chips and dice, and in folders of their own Pinball's, Runeweave's and Starfall's
 - `Tools/` scripts that made the textures in `Images/`
 - `ForeverGames_Freedoom/` Freedoom, a game in an addon of its own, written against
   `ForeverGamesAPI` only: its rules and view (`Freedoom.lua`, `Carry.lua`, `World.lua`), its
@@ -144,7 +153,7 @@ Words after it run only the tests whose names have one of them in:
 
 ## Adding a game
 
-Add a file to `Games/`, list it in `ForeverGames.toc` and call `private.Games.Register` with the
+Add a file to `Games/`, list it in `ForeverGames.toc` and `ForeverGames_Standard.toc` and call `private.Games.Register` with the
 functions described at the top of `Engine/Games.lua`. A game can also be an addon of its own,
 which registers it through `ForeverGamesAPI` instead: [API.md](API.md) says how. A game has two
 halves:
@@ -294,7 +303,10 @@ the client won't write in a font an addon brings, so they are pictures.
 The icon of Sudoku is drawn by `Tools/make_sudoku.py`, the walls, floor and
 ceiling of Warcraftstein 3D, everyone and everything in it and its icon by
 `Tools/make_warcraftstein.py`. The squads of Wormcraft, what they throw, its islands and its icon
-are drawn by `Tools/make_wormcraft.py`. The icons of Where in Azeroth, Sketch and Trivia are drawn
+are drawn by `Tools/make_wormcraft.py`. Runeweave's and Starfall's pictures, icons and sounds are
+made by `Tools/make_runeweave.py .` and `Tools/make_starfall.py .`, and Pinball's by
+`Tools/PinballBench/install.sh`, which runs `Tools/make_pinball.py` and the rest into
+`Images/Pinball` and `Sounds/Pinball`. The icons of Where in Azeroth, Sketch and Trivia are drawn
 by `Tools/make_icons.py`. Freedoom's maps, the pictures they are drawn with, the
 sprites of what lies about in them, the status bar and the icon are taken from `freedoom1.wad` by
 `Tools/import_freedoom.sh`, with `Tools/import_wad.py`, which takes any map of a Doom WAD. Run is

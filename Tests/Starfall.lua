@@ -1,16 +1,15 @@
--- Starfall's own tests, run with Forever Games' (lua Tests/RunTests.lua Starfall). The checks every
+-- Starfall's own tests, run with the rest (lua Tests/RunTests.lua Starfall). The checks every
 -- game is put through (Tests/EveryGame.lua) are run on it as well, EveryGame_starfall: the same
 -- sky from the same seed, every shot replaying the same on another client, the day's sky and races.
 --
--- Handed the tests to add to, the engine to load, and what Forever Games' tests are written with.
--- Not listed in the .toc, so the game client never loads it.
+-- Handed the tests to add to, the engine to load, and what the tests in RunTests.lua are written with.
 return function(tests, loadEngine, helpers)
   local equal = helpers.equal
   local World, Client, openWindow = helpers.World, helpers.Client, helpers.openWindow
 
   local function starfall()
     local private = loadEngine()
-    return private.plugins.ForeverGames_Starfall, private.Games.Get("starfall"), private
+    return private.Starfall, private.Games.Get("starfall"), private
   end
 
   --- A night from a seed

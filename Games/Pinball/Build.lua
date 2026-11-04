@@ -5,7 +5,8 @@
 -- game, for the bench that tries it out (Tools/PinballBench), and for Shots.lua there, which tries
 -- shots from the terminal.
 
-local _, ns = ...
+local _, private = ...
+local ns = private.Pinball
 local Physics = ns.Physics
 
 -- What the table plays with, which the bench can change with "set". The materials' bounce and friction

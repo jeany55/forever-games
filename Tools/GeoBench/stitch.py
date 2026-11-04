@@ -17,7 +17,7 @@ whole in Previews/ to look at.
     ./python.sh stitch.py                 every capture not stitched yet
     ./python.sh stitch.py 3 4             those captures, again if they were
     ./python.sh stitch.py --width 2048    narrower (4096 if not said)
-    --game <folder>                       the game's _classic_beta_ folder, if not the usual one
+    --game <folder>                       the game's _forever_ folder, if not the usual one
     --account <name>                      which account's saved variables, if there are several
     --blp                                 the client's own BLP (DXT1) rather than TGA, a fifth of the size
     --from <folder> --tag <name>          somebody else's captures: their GeoBench.lua and their
@@ -56,8 +56,8 @@ def game_folder(given):
     if given:
         return Path(given)
     if os.name == "nt":
-        return Path(r"C:\Program Files (x86)\World of Warcraft\_classic_beta_")
-    return Path("/mnt/c/Program Files (x86)/World of Warcraft/_classic_beta_")
+        return Path(r"C:\Program Files (x86)\World of Warcraft\_forever_")
+    return Path("/mnt/c/Program Files (x86)/World of Warcraft/_forever_")
 
 
 def saved_file(game, account, given):

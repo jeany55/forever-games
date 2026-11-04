@@ -3,10 +3,12 @@
 --   ENGLISH
 --------------------------------
 -- Added to Forever Games' own strings, which is where the engine looks for them. English is
--- what is shown wherever a language has nothing of its own. The bench that tries the game out on
--- its own (Tools/PinballBench) gives a table of its own instead, as `own.L`.
-local _, own = ...
-local L = own.L or ForeverGamesAPI.Locale("enUS", true)
+-- what is shown wherever a language has nothing of its own. Kept apart from Locales/enUS.lua for
+-- the bench that tries the game out on its own (Tools/PinballBench), which gives a table of its own
+-- instead, as `own.L`.
+local _, private = ...
+local own = private.Pinball
+local L = own.L or LibStub("AceLocale-3.0"):NewLocale("ForeverGames", "enUS", true, true)
 
 L["game_pinball"] = "Pinball: Moonglade"
 L["game_pinball_description"] = "A pinball machine under the night sky of Moonglade: a ramp onto a winding wire, a corkscrew and the Moonwell, quests, a raid on Onyxia, and two class spells to cast. Three balls, for the best score you can make."

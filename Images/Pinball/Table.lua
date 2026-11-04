@@ -1,5 +1,6 @@
 -- Made by Tools/make_pinball.py from Tools/pinball_table.py: change those, not this
-local _, ns = ...
+local _, private = ...
+local ns = private.Pinball
 ns.Table = {
   ball = 13.5,
   flashers = {
