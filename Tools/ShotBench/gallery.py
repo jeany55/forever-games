@@ -44,7 +44,7 @@ PICKS = [
 README_WIDTH, README_SCENE_WIDTH = 900, 1400
 BANNER = (1600, 600)
 TAGLINE = "Challenge your guild. Turns wait while you're offline."
-SUBLINE = "32 games inside World of Warcraft"
+SUBLINE = "30+ games inside World of Warcraft"
 
 
 def latest(name):
@@ -131,7 +131,8 @@ def main():
     os.makedirs(GALLERY, exist_ok=True)
     shots = os.path.join(README, "screenshots")
     os.makedirs(shots, exist_ok=True)
-    for old in glob.glob(os.path.join(GALLERY, "*.png")):
+    # Only the numbered pictures it made before: anything else kept there (avatars) stays
+    for old in glob.glob(os.path.join(GALLERY, "[0-9][0-9]-*.png")):
         os.remove(old)
     pictures = {}
     for number, (source, name) in enumerate(PICKS, 1):
