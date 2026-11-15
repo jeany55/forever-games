@@ -1044,6 +1044,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the captured pieces above and below the board
   small = { width = 280, height = 250 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 12 },
   createView = createView,
   seatLabel = function(seat)
     return seat == WHITE and L["chess_white"] or L["chess_black"]

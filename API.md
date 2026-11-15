@@ -305,6 +305,7 @@ engine.Games.Register({
   end,
   drop = drop,
   computer = COMPUTER,
+  showcase = { plies = 6 },
   createView = createView,
 })
 ```
@@ -321,6 +322,12 @@ engine.Games.Register({
   score with whose turn it is and how the game ended, the player's own first ("Your turn (45-30)"),
   in the list of games and over the board, so a game played over several hands or rounds needs
   nothing of its own for the score to be seen.
+- `showcase` says how to set the game up for a screenshot of it, for your addon's page. It holds
+  how many play (`seats`), how many moves to play into it before the picture (`plies`), and
+  `options`. The computer plays every seat, yours included. A game for one plays random moves from
+  `moves` instead, or a `pick(state, seat, ply, random)` of your own. With Forever Games'
+  `Tools/ShotBench` installed, `/shotbench pig` puts the game on screen that way and takes the
+  screenshot. The fields are listed on `GameShowcase` in [`Engine/Games.lua`](Engine/Games.lua).
 - `icon` is the path of a square texture, for example
   `"Interface\\AddOns\\ForeverGames_Pig\\Images\\icon"`. If you leave it out, the addon's icon is
   used.

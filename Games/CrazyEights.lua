@@ -792,5 +792,7 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the pass button and the suits over the hand
   small = { width = 360, height = 330 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { seats = 4, plies = 8 },
   createView = createView,
 })

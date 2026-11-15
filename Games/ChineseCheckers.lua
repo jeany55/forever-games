@@ -621,6 +621,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the legend of seats clear of the star
   small = { width = 430, height = 260 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { seats = 3, plies = 18 },
   createView = createView,
   seatLabel = function(seat, seats)
     return L["chinesecheckers_" .. colorOf(seat, seats)]

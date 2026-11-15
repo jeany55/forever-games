@@ -112,6 +112,17 @@ local _, private = ...
 --- @field value number
 --- @field lower boolean? Less is better, as with a time
 
+--- How a game is set up for a picture of it (Session:Showcase). Every move is played the same
+--- way each time, so the picture can be taken again
+--- @class GameShowcase
+--- @field seats number? How many play it: two if it can be played against the computer, or the fewest it can be played by, if left out
+--- @field options table<string, any>? How the rules are set, by option id
+--- @field plies number? How many log entries are played into it, as it begins if left out. Played on until it is the player's move again
+--- @field level string? How well the computer plays each seat, the player's too. Computer.DEFAULT_LEVEL if left out
+--- @field seed string? Another deal: the match id is made of it
+--- @field seat number? The player's seat, the first if left out
+--- @field pick (fun(state: table, seat: number, ply: number, random: Random): string?)? The move to play into it in a seat, in place of the computer's, or one of `moves` at random for a game it doesn't play. nil to stop there
+
 --- @class GameDefinition
 --- @field id string Unique id sent over the wire, letters and digits only
 --- @field name string Display name
@@ -133,6 +144,7 @@ local _, private = ...
 --- @field beaten (fun(state: table, seat: number): boolean)? For a game for more than two where a player can be put out of it by the others while they play on: whether a seat has been. A game against the computer is over for the player once they are, the computer doesn't play on among itself
 --- @field moves (fun(state: table, seat: number): string[])? The moves a seat could make, each of them legal and none twice. All of them where that is practical; where there are far too many (every word that could be laid) enough of them for a game played with nothing else to get somewhere. Asked only while the game is on, of a seat that may move: the one whose turn it is, or anyone still in a game played together. The tests play every game that has it out at random to see that its rules hold together (Tests/EveryGame.lua)
 --- @field small { width: number, height: number }? The least room its view needs when the game is played in the small window (GUI/MainFrame.lua), for a game that needs more than that is made to give everything. The window can't be made smaller than this while the game is in it, and is made bigger for it
+--- @field showcase GameShowcase? How the game is set up for a picture of it, for the addon's page (Session:Showcase, Tools/ShotBench). Without one it is pictured as it begins, against the computer where it can be played against it
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game

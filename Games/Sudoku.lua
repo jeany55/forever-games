@@ -1349,6 +1349,30 @@ local function moves(state)
   return list
 end
 
+--- How a puzzle is played into for a picture of it (Session:Showcase): the right digit in a
+--- square at random, and a few notes pencilled into others
+--- @param state SudokuState
+--- @param ply number
+--- @param random Random
+--- @return string?
+local function showcasePick(state, _, ply, random)
+  local empty = {}
+  for cell = 1, CELLS do
+    if state.grid[cell] == 0 and not state.given[cell] and not hasNotes(state, cell) then
+      empty[#empty + 1] = cell
+    end
+  end
+  if #empty == 0 then
+    return nil
+  end
+  local cell = empty[random:Roll(#empty)]
+  if ply % 5 == 4 then
+    return "n" .. SQUARES[cell] .. state.solution[cell]
+  end
+  return SQUARES[cell] .. state.solution[cell]
+end
+
+
 --- The squares of a row, a column or a box, by the name moves and events have for it
 --- @param name string "r4" for the fourth row from the top, "c7" for the seventh column, "b2" for the second box, which are counted the way squares are
 --- @return number[]
@@ -2108,5 +2132,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for the grid with the numbers to put in beside it
   small = { width = 300, height = 230 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 16, pick = showcasePick },
   createView = createView,
 })

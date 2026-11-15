@@ -3379,5 +3379,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for the row along the bottom: portrait, bars, abilities, time
   small = { width = 490, height = 300 },
+  -- How it is set up for a picture of it (Session:Showcase): a class picked, in the first room
+  showcase = { plies = 1 },
   createView = createView,
 })

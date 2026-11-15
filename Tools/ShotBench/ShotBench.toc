@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Shot Bench
+## Notes: Takes the screenshots of every game for Forever Games' page. A tool for Forever Games, not part of it
+## Author: Jeany
+## Version: 0.1.0
+## Dependencies: ForeverGames
+## SavedVariables: ShotBenchDB
+
+ShotBench.lua

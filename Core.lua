@@ -151,6 +151,8 @@ function ForeverGames:OnEnable()
       self:Print(L["lacks_addon"]:format(Transport.DisplayName(sender), game.name, game.addon))
     end,
   })
+  -- A game set up for a picture that a /reload came in the middle of
+  private.session:ForgetShowcases()
 
   private.presence = private.Presence.New({
     me = Transport.PlayerName(),
@@ -497,6 +499,60 @@ function ForeverGames:OpenOptions()
 end
 
 --- @param input string
+-- For Tools/ShotBench, which takes the pictures for the addon's page: games set up the way they
+-- are best seen (Session:Showcase), and put on screen the ways a player comes across them
+
+--- Sets a game up the way it is best seen and opens the window on it, whole
+--- @param gameId string
+--- @param setup ShowcaseSetup?
+--- @return Match?, string? error
+function ForeverGames:Showcase(gameId, setup)
+  local match, err = private.session:Showcase(gameId, setup)
+  if match then
+    MainFrame.Open(match.id, true)
+  end
+  return match, err
+end
+
+--- The window's front page with these games on it, and none of the player's own
+--- @param games { game: string, setup: ShowcaseSetup? }[]
+--- @return number How many could be set up
+function ForeverGames:ShowcaseHome(games)
+  private.session:ShowcaseOnly(true)
+  local made = 0
+  for _, entry in ipairs(games) do
+    if private.session:Showcase(entry.game, entry.setup) then
+      made = made + 1
+    end
+  end
+  MainFrame.Open()
+  MainFrame.Home()
+  return made
+end
+
+--- A game set up as it would be after somebody moved in it, and the player told so the way they
+--- would be: the toast that it is their turn, with the window put away
+--- @param gameId string
+--- @param setup ShowcaseSetup?
+--- @return Match?, string? error
+function ForeverGames:ShowcaseToast(gameId, setup)
+  local match, err = private.session:Showcase(gameId, setup)
+  if match then
+    MainFrame.Hide()
+    self:OnMatchEvent("moved", match)
+  end
+  return match, err
+end
+
+--- Clears away every game set up for a picture, and puts the window away on its front page
+function ForeverGames:EndShowcase()
+  private.session:ShowcaseOnly(false)
+  private.session:ForgetShowcases()
+  Toast.Hide()
+  MainFrame.Home()
+  MainFrame.Hide()
+end
+
 function ForeverGames:HandleSlashCommand(input)
   local command, argument = (input or ""):match("^%s*(%S*)%s*(.-)%s*$")
   command = command:lower()
@@ -577,8 +633,15 @@ function ForeverGames:HandleSlashCommand(input)
         local suffix = " " .. label
         if #argument > #suffix and argument:lower():sub(-#suffix) == suffix then
           target, game = argument:sub(1, -#suffix - 1), candidate
+        elseif argument:lower() == label then
+          -- Only the game is named
+          target, game = "", candidate
         end
       end
+    end
+    -- Nobody named: whoever the player has targeted, if that is somebody else
+    if target:match("^%s*$") and UnitIsPlayer("target") and not UnitIsUnit("target", "player") then
+      target = Transport.UnitPlayer("target") or ""
     end
     local match, err = private.session:Invite(Transport.Normalize(target), game and game.id)
     if match then

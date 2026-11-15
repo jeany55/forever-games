@@ -238,5 +238,7 @@ engine.Games.Register({
   end,
   drop = drop,
   computer = COMPUTER,
+  -- A few turns in, for a screenshot of it (Tools/ShotBench)
+  showcase = { plies = 6 },
   createView = createView,
 })

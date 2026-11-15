@@ -764,6 +764,8 @@ private.Games.Register({
     return { state.holes[storeOf(1)], state.holes[storeOf(2)] }
   end,
   computer = COMPUTER,
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 8 },
   createView = createView,
   -- Not the engine's business: for the tests and the view
   rules = { sowing = sowing, outcomeOf = outcomeOf, holeOf = holeOf, storeOf = storeOf, acrossFrom = acrossFrom },

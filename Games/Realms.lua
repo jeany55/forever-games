@@ -2643,6 +2643,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the panel beside the map, with the drawn tile and the buttons
   small = { width = 400, height = 310 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { seats = 3, plies = 12 },
   createView = createView,
   -- Not the engine's business: for the tests and the view
   rules = {

@@ -258,6 +258,33 @@ local function moves(state)
   return list
 end
 
+--- How a game is played into for a picture of it (Session:Showcase): opened in the middle, then
+--- squares beside what is open that are safe, and now and then a flag on a mine beside it, as a
+--- player who knows what they are doing would
+--- @param state MinesweeperState
+--- @param random Random
+--- @return string?
+local function showcasePick(state, _, ply, random)
+  if not state.laid then
+    return REVEAL .. (math.floor(state.rows / 2) * state.columns + math.floor(state.columns / 2))
+  end
+  local safe, mines = {}, {}
+  for square in pairs(state.open) do
+    for _, other in ipairs(around(state, square)) do
+      if canReveal(state, other) then
+        local list = state.mine[other] and mines or safe
+        list[#list + 1] = other
+      end
+    end
+  end
+  table.sort(safe)
+  table.sort(mines)
+  if #mines > 0 and (ply % 3 == 0 or #safe == 0) then
+    return FLAG .. mines[random:Roll(#mines)]
+  end
+  return #safe > 0 and REVEAL .. safe[random:Roll(#safe)] or nil
+end
+
 --- Lays the mines, anywhere but on the square the player began with and the ones touching it
 --- @param state MinesweeperState
 --- @param square number
@@ -1087,5 +1114,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for the expert field
   small = { width = 310, height = 220 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 7, options = { level = "intermediate" }, pick = showcasePick },
   createView = createView,
 })

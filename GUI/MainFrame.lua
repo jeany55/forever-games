@@ -44,6 +44,8 @@ private.MainFrame = MainFrame
 
 local MIN_WIDTH, MIN_HEIGHT = 764, 560
 local ROW_HEIGHT = 46
+-- Who the player is called in a game set up for a picture of it (Session:Showcase)
+local SHOWCASE_NAME = "Elowen"
 -- The games on the front page: no wider than this however wide the window is, and how wide the
 -- buttons a game has there are
 local LIST_WIDTH, ROW_BUTTON_WIDTH = 620, 84
@@ -209,6 +211,10 @@ end
 --- @param seat number
 --- @return string
 function MainFrame.PlayerName(match, seat)
+  if match.showcase and seat == match.me then
+    -- A picture of the game for anyone to see has a name of its own in it, not the player's
+    return SHOWCASE_NAME
+  end
   if not Match.IsComputer(match, seat) then
     return Transport.DisplayName(match.players[seat])
   end

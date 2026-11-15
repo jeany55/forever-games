@@ -618,6 +618,8 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 12 },
   createView = createView,
   seatLabel = function(seat)
     return seat == RED and L["checkers_red"] or L["checkers_white"]

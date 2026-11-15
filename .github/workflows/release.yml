@@ -17,6 +17,10 @@ on:
       changeNotes:
         description: Change notes to attach to release
         default: ""
+      deployToCurse:
+        description: "Deploy to CurseForge"
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -89,3 +93,20 @@ jobs:
           artifacts: .release/ForeverGames-${{ env.VERSION }}.zip
           tag: "v${{ env.VERSION }}"
           body: ${{ inputs.changeNotes }}
+
+      # Upload the same zip to CurseForge. Needs the CURSE_TOKEN secret (an API token from
+      # https://authors.curseforge.com/account/api-tokens) and the CURSEFORGE_PROJECT_ID variable
+      # (the number on the project's page) set on the repository; skipped until both are there.
+      # game_versions: the Forever client (Interface 16001) and retail (ForeverGames_Standard.toc,
+      # Interface 120105). Keep them in step with the tocs.
+      - name: Upload to CurseForge
+        if: ${{ inputs.deployToCurse && vars.CURSEFORGE_PROJECT_ID != '' }}
+        uses: itsmeow/curseforge-upload@v3
+        with:
+          file_path: .release/ForeverGames-${{ env.VERSION }}.zip
+          game_endpoint: "wow"
+          changelog: ${{ inputs.changeNotes }}
+          project_id: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          display_name: ${{ env.VERSION }}
+          token: ${{ secrets.CURSE_TOKEN }}
+          game_versions: "1.60.1,12.1.5"

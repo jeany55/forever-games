@@ -15,6 +15,9 @@ local Toast = {}
 private.Toast = Toast
 
 local DURATION = 8
+-- How wide it is: wide enough for what it says, a game against several people included, within
+-- reason. What is longer still is cut short
+local WIDTH, WIDEST = 320, 560
 
 local frame
 --- @type { text: string, onClick: fun()? }?
@@ -105,6 +108,8 @@ function Toast.Show(text, onClick)
   end
 
   frame.text:SetText(text)
+  -- Room for the icon and the margins beside the text
+  frame:SetWidth(math.max(WIDTH, math.min(WIDEST, math.ceil(frame.text:GetStringWidth()) + 64)))
   frame.onClick = onClick
   frame:Show()
 
@@ -114,4 +119,12 @@ function Toast.Show(text, onClick)
   hideTimer = C_Timer.NewTimer(DURATION, function()
     frame:Hide()
   end)
+end
+
+--- Puts away the toast on screen, if there is one, and forgets what was held back
+function Toast.Hide()
+  held = nil
+  if frame then
+    frame:Hide()
+  end
 end

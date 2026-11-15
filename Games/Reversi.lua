@@ -432,6 +432,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the note that a player has to pass, beside the tally
   small = { width = 290, height = 250 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 16 },
   createView = createView,
   seatLabel = seatLabel,
 })

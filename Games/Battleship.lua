@@ -1067,5 +1067,7 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the panel of ships and its buttons beside the sea
   small = { width = 490, height = 350 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 30 },
   createView = createView,
 })

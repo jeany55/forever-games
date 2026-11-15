@@ -282,6 +282,8 @@ private.Games.Register({
   moves = moves,
   result = result,
   computer = COMPUTER,
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 4 },
   createView = createView,
   seatLabel = function(seat)
     return MARKS[seat]

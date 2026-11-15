@@ -59,6 +59,7 @@ local _, private = ...
 --- @field id string
 --- @field game string Game id
 --- @field gameVersion number
+--- @field showcase boolean? Set up for a picture of it (Session:Showcase): cleared away afterwards, never counted
 --- @field players string[] Full player names by seat
 --- @field options table<string, any>? What the rules were set to where that isn't what the game does by default, by option id
 --- @field me number The local player's seat

@@ -331,6 +331,8 @@ private.Games.Register({
   moves = moves,
   result = result,
   computer = COMPUTER,
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 10 },
   createView = createView,
   seatLabel = function(seat)
     return seat == 1 and L["connectfour_red"] or L["connectfour_yellow"]

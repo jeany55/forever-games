@@ -2864,6 +2864,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the players' plates and the buttons beside the board
   small = { width = 330, height = 310 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { seats = 3, plies = 6 },
   createView = createView,
   history = true,
 })

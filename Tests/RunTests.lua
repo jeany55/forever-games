@@ -1939,6 +1939,46 @@ local function chessOnScreen()
   return world, white, black, match.id, MainFrame
 end
 
+function tests.WindowShowsAShowcasedChessGameWithItsPieces()
+  local alone = World.New():AddPlayer("Alice-Realm")
+  local match = assert(alone.session:Showcase("chess"))
+  local MainFrame = openWindow(alone)
+  MainFrame.Open(match.id, true)
+  settle(shownBoard())
+  local pieces = Client.Find(function(widget)
+    return type(widget.texture) == "string" and widget.texture:find("Images\\Chess\\") ~= nil and widget:IsVisible()
+  end)
+  local standing = 0
+  for _ in pairs(alone.private.Match.State(match).board) do
+    standing = standing + 1
+  end
+  equal(standing, #pieces, "pieces drawn")
+end
+
+function tests.WindowShowsAShowcaseAgainstPeopleAsAGameAgainstThem()
+  local alone = World.New():AddPlayer("Alice-Realm")
+  local match = assert(alone.session:Showcase("words", { people = true }))
+  local MainFrame = openWindow(alone)
+  MainFrame.Open(match.id, true)
+  -- The texts are their keys here: whose turn it is, and nobody is the computer
+  local said = MainFrame.Describe(match)
+  assert(said == "status_with_tally" or said == "status_your_turn", "it says " .. said)
+  local names = MainFrame.Names(match)
+  assert(not names:find("computer", 1, true), "the others are called " .. names)
+  assert(not names:find("Alice", 1, true), "the player's own name is in it: " .. names)
+  equal("Elowen", MainFrame.PlayerName(match, match.me))
+
+  -- The front page has only the showcases on it while it is a picture of one
+  assert(alone.session:Invite({}, "chess", { computer = { level = "easy" } }))
+  alone.session:ShowcaseOnly(true)
+  local listed = alone.session:List()
+  equal(1, #listed)
+  equal(match.id, listed[1].id)
+  alone.session:ShowcaseOnly(false)
+  alone.session:ForgetShowcases()
+  equal(1, #alone.session:List())
+end
+
 function tests.WindowWithNoGamesSaysWhatItIsAndWhoMadeIt()
   local alone = World.New():AddPlayer("Alice-Realm")
   openWindow(alone).Open()

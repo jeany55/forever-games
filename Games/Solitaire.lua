@@ -651,5 +651,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for seven columns, and the line along the top with Finish
   small = { width = 280, height = 220 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 25 },
   createView = createView,
 })

@@ -532,6 +532,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the longest of the lines that say what a take does
   small = { width = 330, height = 180 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 4 },
   createView = createView,
   -- Not the engine's business: for the tests
   rules = { lost = lost },

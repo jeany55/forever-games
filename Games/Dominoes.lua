@@ -1692,6 +1692,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the scores either side of the hands
   small = { width = 450, height = 300 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 8 },
   createView = createView,
   -- Not the engine's business: for the tests, the bench and the view
   rules = { canLay = canLay, canAct = canAct, standing = standing, parse = parse, DRAW = DRAW, TOP = TOP },

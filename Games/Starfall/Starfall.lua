@@ -165,5 +165,7 @@ engine.Games.Register({
   },
   -- The least the small window gives it: room for its words, which are drawn to scale
   small = { width = 450, height = 240 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 3 },
   createView = own.CreateView,
 })

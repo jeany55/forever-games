@@ -270,6 +270,21 @@ local function moves(state)
   return list
 end
 
+--- How a game is played into for a picture of it (Session:Showcase): words found at random,
+--- never calling it done
+--- @param state FourtilesState
+--- @param random Random
+--- @return string?
+local function showcasePick(state, _, _, random)
+  local list = {}
+  for _, move in ipairs(moves(state)) do
+    if move ~= WRAP_UP then
+      list[#list + 1] = move
+    end
+  end
+  return #list > 0 and list[random:Roll(#list)] or nil
+end
+
 --- @param state FourtilesState
 local function result(state)
   if not state.done then
@@ -1007,5 +1022,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for the side panel and the row of buttons under the tiles
   small = { width = 530, height = 300 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 9, pick = showcasePick },
   createView = createView,
 })

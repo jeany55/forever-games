@@ -181,6 +181,10 @@ end
 --- @param ... string|number
 --- @return boolean
 function Session:send(match, seat, type, ...)
+  if match.showcase then
+    -- Its people aren't there to tell (Session:Showcase): as good as told
+    return true
+  end
   return self.env.send(match.players[seat], Codec.Encode(type, match.id, ...))
 end
 
@@ -367,7 +371,7 @@ end
 function Session:List()
   local list = {}
   for _, match in pairs(self.env.matches) do
-    if not match.hidden then
+    if not match.hidden and (not self.showcasing or match.showcase) then
       list[#list + 1] = match
     end
   end
@@ -613,6 +617,167 @@ function Session:startComputer(game, setup)
   return match
 end
 
+--- The seats a showcase is played with: what the game asks for, or two where the computer can be
+--- played against, or the fewest there can be
+--- @param game GameDefinition
+--- @return number
+local function showcaseSeats(game)
+  local asked = game.showcase and game.showcase.seats
+  if asked and Games.CanSeat(game, asked) then
+    return asked
+  end
+  if game.computer and Games.CanSeat(game, 2) then
+    return 2
+  end
+  return Games.SeatCounts(game)[1]
+end
+
+--- How many log entries a showcase is played into before it is looked at, if the game doesn't say
+local SHOWCASE_PLIES = 0
+-- More than any showcase needs: a game that can't get to the player's turn again stops here
+local SHOWCASE_MOST = 400
+-- Who the other players are in a showcase played against people. Nobody's: names of its own
+local SHOWCASE_PEOPLE = { "Thalric", "Mirelle", "Brannoc", "Sefiya", "Corwyn", "Yselle", "Dravin", "Liraen" }
+
+--- How a showcase is set up besides what the game says (Session:Showcase)
+--- @class ShowcaseSetup
+--- @field people boolean? The other seats are people's, as in a game against guildmates, rather than the computer's. The computer still plays their moves into it, and nothing is ever sent to them
+--- @field waiting boolean? Played on until it is somebody else's move rather than the player's
+--- @field seed string? Another deal than the game's own `showcase.seed`
+
+--- Sets up a game the way it is best seen, for a picture of it (Tools/ShotBench): seated and set
+--- the way the game's `showcase` says, and played into by the computer, or by the game's own
+--- `pick` where the computer doesn't play it, until it is the player's move again. It is the
+--- same every time: the deal and every move come from `showcase.seed`. It is the player's,
+--- against the computer if there are other seats or against people who aren't there
+--- (`setup.people`), and marked `showcase` so it can be cleared away (Session:ForgetShowcases).
+--- Nothing is sent for it, and it is never counted or kept as a record
+--- @param gameId string
+--- @param setup ShowcaseSetup?
+--- @return Match?, string? error
+function Session:Showcase(gameId, setup)
+  setup = setup or {}
+  local game = Games.Get(gameId)
+  if not game then
+    return nil, "unknown_game"
+  end
+  local showcase = game.showcase or {}
+  local seats = showcaseSeats(game)
+  if seats > 1 and not Computer.Plays(game) then
+    return nil, "no_computer"
+  end
+  local level = showcase.level or Computer.DEFAULT_LEVEL
+  local mySeat = showcase.seat or 1
+  local players, computers = {}, nil
+  for seat = 1, seats do
+    players[seat] = seat == mySeat and self.env.me or Match.COMPUTER
+    if seat ~= mySeat then
+      computers = computers or {}
+      computers[seat] = level
+    end
+  end
+  local id = "showcase" .. game.id .. (setup.seed or showcase.seed or "")
+  self:dropShowcase(id)
+  --- @type Match
+  local match = {
+    id = id,
+    game = game.id,
+    gameVersion = game.version,
+    players = players,
+    computers = computers,
+    options = Games.Chosen(game, Games.ForPlayers(game, showcase.options, seats)),
+    me = mySeat,
+    log = {},
+    status = "active",
+    seen = {},
+    created = self.env.now(),
+    updated = self.env.now(),
+    showcase = true,
+  }
+  if seats > 2 then
+    match.host = mySeat
+    assert(Match.Append(match, Match.START))
+  end
+
+  -- Played into: each seat in turn, the player's too, as the computer would play it
+  local plies, random = showcase.plies or SHOWCASE_PLIES, Random.New(Random.Seed(id))
+  while match.status == "active" and #match.log < SHOWCASE_MOST do
+    local turn = Match.Turn(match)
+    if turn == nil and Match.IsTogether(match) then
+      turn = mySeat
+    end
+    local far = #match.log >= plies
+    if not turn or (far and (turn ~= mySeat) == (setup.waiting == true)) then
+      break
+    end
+    local state = Match.State(match)
+    local entry
+    if showcase.pick then
+      local move = showcase.pick(state, turn, #match.log, random)
+      entry = move and (Match.IsTogether(match) and turn .. move or move)
+    elseif Computer.Plays(game) then
+      local seen = Computer.Copy(game.visible and game.visible(state, turn) or state)
+      local thinker = Computer.Think(game, seen, turn, level, Random.Stir(Random.Seed(id), "computer" .. #match.log))
+      thinker:Run(nil, self.env.clock)
+      entry = thinker.move
+    else
+      local moves = game.moves and game.moves(state, turn) or {}
+      local move = #moves > 0 and moves[random:Roll(#moves)] or nil
+      entry = move and (Match.IsTogether(match) and turn .. move or move)
+    end
+    if not entry or not Match.Append(match, entry) then
+      break
+    end
+  end
+  -- Seen already: the window shows the game as it stands, not the moves played into it one by one
+  match.shown = #match.log
+  if setup.people and computers then
+    -- The computer's seats are given to people, each with a name of their own, who have all had
+    -- every move: the window shows it as a game against them
+    local first = Random.Seed(id) % #SHOWCASE_PEOPLE
+    for seat in pairs(computers) do
+      players[seat] = SHOWCASE_PEOPLE[(first + seat) % #SHOWCASE_PEOPLE + 1]
+      match.seen[seat] = #match.log
+    end
+    match.computers = nil
+    match.host = mySeat
+  end
+  self.env.matches[match.id] = match
+  self.env.notify("changed", match)
+  return match
+end
+
+--- While on, the player's list is only the showcases, for a picture of the front page with games
+--- on it that aren't the player's own (Session:Showcase)
+--- @param on boolean
+function Session:ShowcaseOnly(on)
+  self.showcasing = on or nil
+end
+
+--- Takes a showcase off the player's list. There is nobody to tell: it was only ever theirs
+--- @param id string
+function Session:dropShowcase(id)
+  local match = self.env.matches[id]
+  if match and match.showcase then
+    self.thinking[id], self.waits[id] = nil, nil
+    self.env.matches[id] = nil
+    self.env.notify("changed", match)
+  end
+end
+
+--- Clears away every showcase there is (Session:Showcase)
+function Session:ForgetShowcases()
+  local ids = {}
+  for id, match in pairs(self.env.matches) do
+    if match.showcase then
+      ids[#ids + 1] = id
+    end
+  end
+  for _, id in ipairs(ids) do
+    self:dropShowcase(id)
+  end
+end
+
 --- How a game is to be set up
 --- @class InviteSetup
 --- @field options table<string, any>? How the rules are set, by option id. The usual way if left out
@@ -802,6 +967,10 @@ end
 --- @return { game: string, offer: Offer, left: number, taken: number }[] left: seconds before it closes. taken: by how many so far
 function Session:Offers()
   local open = {}
+  if self.showcasing then
+    -- The player's own links aren't in a picture of the front page (Session:ShowcaseOnly)
+    return open
+  end
   for gameId in pairs(self.env.offers) do
     local offer = self:Offered(gameId)
     if offer then
@@ -1041,7 +1210,7 @@ end
 --- @param match Match
 function Session:record(match)
   local game = Games.Get(match.game)
-  if not game or not game.record or not Match.IsSolo(match) then
+  if not game or not game.record or not Match.IsSolo(match) or match.showcase then
     return
   end
   local records = game.record(Match.State(match), match.played or 0, Match.Result(match))
@@ -1355,7 +1524,7 @@ end
 --- Counts a game against the computer that is over, once
 --- @param match Match
 function Session:Tally(match)
-  if match.tallied or match.status ~= "finished" or not Match.IsComputerMatch(match) then
+  if match.tallied or match.showcase or match.status ~= "finished" or not Match.IsComputerMatch(match) then
     return
   end
   local result, level = Match.Result(match), Match.Level(match)

@@ -4113,6 +4113,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the class picker, 390 across
   small = { width = 400, height = 280 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 6 },
   createView = createView,
   seatLabel = function(seat)
     return L["wormcraft_team_" .. TEAM_COLORS[seat]]

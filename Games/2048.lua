@@ -750,5 +750,7 @@ private.Games.Register({
   },
   -- The least the small window gives it: room for the boxes either side of the grid
   small = { width = 340, height = 240 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 60 },
   createView = createView,
 })

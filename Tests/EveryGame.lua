@@ -1136,6 +1136,62 @@ local FAULTS = {
   },
 }
 
+--- A game set up for a picture of it (Session:Showcase) is the same every time, still on, and the
+--- player's move: what the window shows it as, with nothing the computer is about to change. It is
+--- played as far into as the game asked, and cleared away again with nothing left of it
+--- @param private table
+--- @param game GameDefinition
+local function checkShowcase(private, game)
+  local Match = private.Match
+  local function session()
+    local now = 1000000
+    return private.Session.New({
+      me = "Me-Realm",
+      matches = {},
+      now = function()
+        now = now + 1
+        return now
+      end,
+      random = function()
+        return 1
+      end,
+      notify = function() end,
+      send = function()
+        error("a showcase sent something")
+      end,
+    })
+  end
+  local first = session()
+  local match, err = first:Showcase(game.id)
+  assert(match, "it couldn't be set up for a picture: " .. tostring(err))
+  assert(match.showcase and first.env.matches[match.id] == match, "it isn't marked as a showcase on the player's list")
+  assert(match.status == "active" and not Match.Result(match), "it is over before it is pictured")
+  local turn = Match.Turn(match)
+  assert(turn == match.me or (turn == nil and Match.CanMove(match)), "it isn't the player's move")
+  local wanted = game.showcase and game.showcase.plies or 0
+  assert(#match.log >= wanted, string.format("only %d of the %d moves it asked for were played into it", #match.log, wanted))
+  local again = session():Showcase(game.id)
+  assert(table.concat(again.log, " ") == table.concat(match.log, " "), "it came out another way the second time")
+
+  -- Against people, the same game: seats of their own with names, nobody's the computer's, and
+  -- nothing sent to them whatever happens (send raises an error)
+  local people = session():Showcase(game.id, { people = true })
+  assert(table.concat(people.log, " ") == table.concat(match.log, " "), "against people it was played another way")
+  assert(not private.Match.HasComputers(people), "the computer still sits at it against people")
+  for seat, name in ipairs(people.players) do
+    assert(name ~= Match.COMPUTER and (seat == people.me or name ~= people.players[people.me]), "seat " .. seat .. " has no name of its own")
+  end
+  -- Until somebody else is to move, in a game that has turns
+  if #people.players > 1 and not Match.IsTogether(people) then
+    local waiting = session():Showcase(game.id, { people = true, waiting = true })
+    local mover = Match.Turn(waiting)
+    assert(waiting.status == "active" and mover ~= nil and mover ~= waiting.me, "it wasn't left on somebody else's move")
+  end
+
+  first:ForgetShowcases()
+  assert(next(first.env.matches) == nil, "it was left on the player's list")
+end
+
 --- @param tests table<string, fun()>
 --- @param loadEngine fun(): table A fresh copy of the engine and every game
 --- @param strings string[]? The files the English strings are in, Locales/enUS.lua if left out
@@ -1146,6 +1202,10 @@ return function(tests, loadEngine, strings)
     tests["EveryGame_" .. gameId] = function()
       local private = loadEngine()
       checkGame(private, private.Games.Get(gameId), keys, loadEngine)
+    end
+    tests["Showcase_" .. gameId] = function()
+      local private = loadEngine()
+      checkShowcase(private, private.Games.Get(gameId))
     end
   end
 

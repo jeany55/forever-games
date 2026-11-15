@@ -1332,6 +1332,8 @@ private.Games.Register({
   computer = COMPUTER,
   -- The least the small window gives it: room for the score card, the dice and the roll button side by side
   small = { width = 470, height = 340 },
+  -- How it is set up for a picture of it (Session:Showcase)
+  showcase = { plies = 10 },
   createView = createView,
   -- Not the engine's business: for the tests
   rules = { scoreOf = scoreOf, totalOf = totalOf, think = think },

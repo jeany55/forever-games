@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/readme/logo.png" alt="Forever Games" width="480">
+  <img src=".github/readme/banner.jpg" alt="Forever Games" width="100%">
 </p>
 
 <p align="center">
@@ -26,6 +26,7 @@ online, even if that's tomorrow. When it's your turn again, the addon lets you k
 Nobody around? Nearly every game for two or more can be played against the computer, and there are
 puzzles and solo games with a new challenge for your guild every day.
 
+- [Screenshots](#screenshots)
 - [Install](#install)
 - [The games](#the-games)
 - [Getting started](#getting-started)
@@ -34,6 +35,33 @@ puzzles and solo games with a new challenge for your guild every day.
 - [Commands and options](#commands-and-options)
 - [Good to know](#good-to-know)
 - [Making a game of your own](#making-a-game-of-your-own)
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/readme/screenshots/home.jpg" alt="The front page, with games against three guildies"><br><sub>Your games, and whose turn it is in each.</sub></td>
+    <td width="50%"><img src=".github/readme/screenshots/words.jpg" alt="Words with Warcraft against two players"><br><sub>Words with Warcraft, where Azeroth's names count.</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme/screenshots/carcassonne.jpg" alt="CarcassonneWoW for three"><br><sub>CarcassonneWoW: build Elwynn Forest a tile at a time.</sub></td>
+    <td><img src=".github/readme/screenshots/crazyeights.jpg" alt="Crazy Eights for four"><br><sub>Crazy Eights for up to six.</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme/screenshots/warcraftstein.jpg" alt="Warcraftstein 3D in the Scarlet Monastery"><br><sub>Warcraftstein 3D, through the Scarlet Monastery as your own class.</sub></td>
+    <td><img src=".github/readme/screenshots/pinball.jpg" alt="The Moonglade pinball machine"><br><sub>Pinball: Moonglade.</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme/screenshots/pegshooter.jpg" alt="Peg Shooter's night sky"><br><sub>Peg Shooter: a new sky every game.</sub></td>
+    <td><img src=".github/readme/screenshots/freecell.jpg" alt="FreeCell"><br><sub>FreeCell, with Microsoft's numbered deals.</sub></td>
+  </tr>
+</table>
+
+<img src=".github/readme/screenshots/social.jpg" alt="A turn popup and game links in guild chat">
+<sub>When it's your turn you get a popup, wherever you are. A link in chat starts a game with whoever clicks it.</sub>
+
+<img src=".github/readme/screenshots/small.jpg" alt="Chess in the small window in a corner of the screen">
+<sub><b>Make Small</b> keeps a game in a corner of the screen while you get on with something else.</sub>
 
 ## Install
 
@@ -615,7 +643,7 @@ unless the game says otherwise.
 | `/fg small` | Play the game on screen in a small window, or whole again |
 | `/fg play <game>` | Play a game alone, or against the computer, set up the way you last had it |
 | `/fg daily <game>` | Go straight to today's challenge |
-| `/fg challenge <player> [game]` | Challenge someone. Leave the name out to challenge your target |
+| `/fg challenge [player] [game]` | Challenge someone. Leave the name out to challenge your target |
 | `/fg link <game>` | Link a game (or a race) in chat for anyone to play, set up the way you last had it |
 | `/fg party` | Open the party rooms |
 | `/fg options` | Open the options (or right-click the minimap button) |
@@ -631,7 +659,8 @@ corner while you do something else (auto-running to the next flight point, say).
 game, whose turn it is, and a **Menu** with the buttons from under the game. Drag it by its top to
 move it and by its corner to resize it, and it stays where you leave it. It fades while the mouse
 is elsewhere and is put away during combat. You can turn either of those off in the options.
-**Whole** takes it back to the full window.
+**Whole** takes it back to the full window. **Reset** in the options puts both windows back to their
+usual size and place.
 
 In the options (also under AddOns in the game's settings) you can choose:
 
@@ -640,6 +669,7 @@ In the options (also under AddOns in the game's settings) you can choose:
 - whether the games make their own sounds
 - whether anyone can challenge you, or only friends and guildies
 - whether the minimap button is shown, and how big the window is
+- whether the logo on the front page is animated
 - whether the small window fades while the mouse is elsewhere, and whether it hides in combat
 - the back of the cards, five designs in six colours, the felt every table is covered with, the
   colour of the dice (Backgammon keeps its white and red, which tell the players apart), and what
