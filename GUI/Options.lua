@@ -3,17 +3,23 @@
 --------------------------
 -- The addon's page in the game's own settings window: how the player is told it is their turn,
 -- what they hear, who may challenge them, how the window is drawn and what the cards, the felt,
--- the dice and the dominoes look like. How a game is played is not in here, that is set for each game in the
--- new game wizard.
+-- the dice and the dominoes look like. How a game is played is not in here, that is set for each
+-- game in the new game wizard.
 --
--- Everything on the page is a setting the client keeps for as long as the window is open and
--- reads from and writes to the saved profile through the two functions it is given.
+-- The page is a frame of the addon's own that the settings window shows as it is (a canvas), not
+-- settings put into the window's own list. That list is shared: its rows are used again for the
+-- client's settings, and its search mixes everyone's together. Rows that had shown an addon's
+-- settings carried the addon's taint into the client's own, and the client blocked what only it
+-- may do there (searching the settings brought up "ForeverGames has been blocked from an action
+-- only available to the Blizzard UI"). Nothing of the page's is ever in that list now, and it
+-- isn't searched.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
 local L = private.L
 local Toast = private.Toast
 local MainFrame = private.MainFrame
+local Widgets = private.Widgets
 local Cards = private.Cards
 local Felt = private.Felt
 local Dice = private.Dice
@@ -45,29 +51,70 @@ local DOMINO_UNIT, DOMINO_HEIGHT, DOMINO_TILE = 24, 56, "36"
 local FELT_CARD = 0.6
 -- The swatch for each game's own felt is half the one colour games have and half the other
 local OWN_FELTS = { "green", "teal" }
--- Where the settings window puts its controls across a row, and their names, from its middle
--- and from its left edge
+-- Where a row's control begins, from the middle of the page, and its name, from the left edge:
+-- where the settings window puts its own
 local CONTROL_X, LABEL_X = -80, 37
+-- How tall a row is, a section's heading, and the page's title above them all
+local ROW_HEIGHT, SECTION_HEIGHT, TITLE_HEIGHT = 30, 44, 50
+-- How wide the dropdown and the slider are, and the reset button
+local CONTROL_WIDTH, BUTTON_WIDTH = 200, 120
+-- How far a turn of the mouse wheel scrolls the page
+local WHEEL_STEP = 40
 -- How far the gold the chosen one lies on reaches round it
 local CHOSEN_RIM = 3
 local GOLD = { 1, 0.82, 0 }
+-- The client's own pictures for a box to tick and for the bar a slider runs along
+local CHECK_TEXTURES = {
+  normal = "Interface\\Buttons\\UI-CheckBox-Up",
+  pushed = "Interface\\Buttons\\UI-CheckBox-Down",
+  highlight = "Interface\\Buttons\\UI-CheckBox-Highlight",
+  checked = "Interface\\Buttons\\UI-CheckBox-Check",
+}
+local SLIDER_THUMB = "Interface\\Buttons\\UI-SliderBar-Button-Horizontal"
 
-local category
--- The pickers on the page while it is open, to be shown what was chosen when it changes
-local pickers = {}
+-- The page, and what the settings window knows it by
+local panel, category
+-- Every setting on the page, for the window's Defaults button
+local settings = {}
+-- What shows each setting's value, to show it again when it changes or the page is shown
+local refreshers = {}
 
 --- @return table
 local function profile()
   return ForeverGames.db.profile
 end
 
+--- What a control on the page sets: a value with its usual one, read and written through the two
+--- functions it is given
+--- @class OptionSetting
+--- @field default any
+--- @field GetValue fun(self: OptionSetting): any
+--- @field SetValue fun(self: OptionSetting, value: any)
+
+--- @param default any
+--- @param get fun(): any
+--- @param set fun(value: any)
+--- @return OptionSetting
+local function setting(default, get, set)
+  local made = {
+    default = default,
+    GetValue = function()
+      return get()
+    end,
+    SetValue = function(_, value)
+      set(value)
+    end,
+  }
+  settings[#settings + 1] = made
+  return made
+end
+
 --- A setting kept in the saved profile under a name of its own
 --- @param key string What it goes by in the profile
 --- @param onChange fun(value: any)? What else there is to do when it is changed
---- @return table setting
+--- @return OptionSetting
 local function stored(key, onChange)
-  local default = ForeverGames.db.defaults.profile[key]
-  return Settings.RegisterProxySetting(category, "ForeverGames_" .. key, type(default), L["options_" .. key], default, function()
+  return setting(ForeverGames.db.defaults.profile[key], function()
     return profile()[key]
   end, function(value)
     profile()[key] = value
@@ -77,21 +124,201 @@ local function stored(key, onChange)
   end)
 end
 
+--- Shows every control on the page what its setting is now
+local function refresh()
+  for _, each in ipairs(refreshers) do
+    each()
+  end
+end
+
+-----------------------------
+-- The page
+-----------------------------
+-- Everything is put down the page one after the other, each row as wide as the page, its name on
+-- the left and what changes it from the middle.
+
+--- @class OptionsPage
+--- @field content Frame What the rows are put in, inside the part that scrolls
+--- @field top number How far down the page the next row goes
+local page = {}
+
+--- The name and what it is for, under the cursor
+--- @param owner Frame
 --- @param title string
-local function section(layout, title)
-  layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(title))
+--- @param tip string?
+local function explain(owner, title, tip)
+  owner:SetScript("OnEnter", function()
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:SetText(title)
+    if tip then
+      GameTooltip:AddLine(tip, 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+  end)
+  owner:SetScript("OnLeave", GameTooltip_Hide)
+end
+
+--- A row of the page, as tall as it says, with a name on the left
+--- @param height number
+--- @param label string?
+--- @param tip string?
+--- @return Frame row
+local function row(height, label, tip)
+  local frame = CreateFrame("Frame", nil, page.content)
+  frame:SetPoint("TOPLEFT", page.content, "TOPLEFT", 0, -page.top)
+  frame:SetPoint("TOPRIGHT", page.content, "TOPRIGHT", 0, -page.top)
+  frame:SetHeight(height)
+  page.top = page.top + height
+  if label then
+    frame.label = Widgets.Label(frame, "GameFontNormal", label)
+    frame.label:SetPoint("LEFT", frame, "LEFT", LABEL_X, 0)
+    explain(frame, label, tip)
+  end
+  return frame
+end
+
+--- A section's heading
+--- @param title string
+local function section(title)
+  local frame = row(SECTION_HEIGHT)
+  local text = Widgets.Label(frame, "GameFontHighlightLarge", title)
+  text:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", LABEL_X - 30, 8)
+  local line = frame:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 1, 1, 0.15)
+  line:SetHeight(1)
+  line:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", LABEL_X - 30, 2)
+  line:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 2)
+end
+
+--- A box to tick, for a setting that is on or off
+--- @param value OptionSetting
+--- @param label string
+--- @param tip string?
+--- @return CheckButton
+local function checkbox(value, label, tip)
+  local frame = row(ROW_HEIGHT, label, tip)
+  local check = CreateFrame("CheckButton", nil, frame)
+  check:SetSize(26, 26)
+  check:SetPoint("LEFT", frame, "CENTER", CONTROL_X, 0)
+  check:SetNormalTexture(CHECK_TEXTURES.normal)
+  check:SetPushedTexture(CHECK_TEXTURES.pushed)
+  check:SetHighlightTexture(CHECK_TEXTURES.highlight, "ADD")
+  check:SetCheckedTexture(CHECK_TEXTURES.checked)
+  check:SetScript("OnClick", function(self)
+    local on = not value:GetValue()
+    value:SetValue(on)
+    self:SetChecked(on)
+  end)
+  explain(check, label, tip)
+  refreshers[#refreshers + 1] = function()
+    check:SetChecked(value:GetValue() == true)
+  end
+  frame.control = check
+  return check
+end
+
+--- A choice of a few things, named
+--- @param value OptionSetting
+--- @param choices { value: any, text: string }[]
+--- @param label string
+--- @param tip string?
+--- @return Button
+local function dropdown(value, choices, label, tip)
+  local frame = row(ROW_HEIGHT, label, tip)
+  local menu = Widgets.Dropdown(frame, 22)
+  menu:SetWidth(CONTROL_WIDTH)
+  menu:SetPoint("LEFT", frame, "CENTER", CONTROL_X + 4, 0)
+  refreshers[#refreshers + 1] = function()
+    local list = {}
+    for index, choice in ipairs(choices) do
+      list[index] = {
+        text = choice.text,
+        on = value:GetValue() == choice.value,
+        pick = function()
+          value:SetValue(choice.value)
+        end,
+      }
+    end
+    menu:SetChoices(list, refresh)
+  end
+  frame.control = menu
+  return menu
+end
+
+--- A number along a bar, from the least it can be to the most, by steps
+--- @param value OptionSetting
+--- @param least number
+--- @param most number
+--- @param step number
+--- @param show fun(value: number): string How it is written beside the bar
+--- @param label string
+--- @param tip string?
+--- @return Slider
+local function slider(value, least, most, step, show, label, tip)
+  local frame = row(ROW_HEIGHT, label, tip)
+  local bar = CreateFrame("Slider", nil, frame)
+  bar:SetOrientation("HORIZONTAL")
+  bar:SetSize(CONTROL_WIDTH - 50, 18)
+  bar:SetPoint("LEFT", frame, "CENTER", CONTROL_X + 8, 0)
+  bar:SetMinMaxValues(least, most)
+  bar:SetValueStep(step)
+  bar:SetObeyStepOnDrag(true)
+  bar:SetThumbTexture(SLIDER_THUMB)
+  local track = bar:CreateTexture(nil, "BACKGROUND")
+  track:SetColorTexture(1, 1, 1, 0.2)
+  track:SetHeight(4)
+  track:SetPoint("LEFT")
+  track:SetPoint("RIGHT")
+  local text = Widgets.Label(frame, "GameFontHighlight")
+  text:SetPoint("LEFT", bar, "RIGHT", 10, 0)
+  local showing = false
+  bar:SetScript("OnValueChanged", function(_, number)
+    number = math.floor(number / step + 0.5) * step
+    text:SetText(show(number))
+    -- Only what the player does to it changes the setting, not the page showing what it is
+    if not showing and number ~= value:GetValue() then
+      value:SetValue(number)
+    end
+  end)
+  explain(bar, label, tip)
+  refreshers[#refreshers + 1] = function()
+    showing = true
+    bar:SetValue(value:GetValue())
+    text:SetText(show(value:GetValue()))
+    showing = false
+  end
+  frame.control = bar
+  return bar
+end
+
+--- A button that does something there and then
+--- @param label string
+--- @param text string On the button
+--- @param onClick fun()
+--- @param tip string?
+--- @return Button
+local function action(label, text, onClick, tip)
+  local frame = row(ROW_HEIGHT, label, tip)
+  local button = Widgets.Button(frame, text, BUTTON_WIDTH, 22)
+  button:SetPoint("LEFT", frame, "CENTER", CONTROL_X + 4, 0)
+  button:SetScript("OnClick", function()
+    onClick()
+    refresh()
+  end)
+  explain(button, label, tip)
+  frame.control = button
+  return button
 end
 
 -----------------------------
 -- Pickers
 -----------------------------
--- What things look like is chosen by clicking on a picture of it: a part of the page of its own,
--- made from a template in GUI/Options.xml as tall as the rows in it, each row of pictures beside
--- its name as every setting has.
+-- What things look like is chosen by clicking on a picture of it: a row of pictures beside its
+-- name, as every setting has.
 
 --- @class PickerRow
 --- @field label string
---- @field setting table What a click sets
+--- @field setting OptionSetting What a click sets
 --- @field choices string[]
 --- @field chosen fun(): string Which of them is chosen now
 --- @field value (fun(choice: string): string)? What a click on one sets the setting to, the choice itself if left out
@@ -106,13 +333,6 @@ end
 --- @return string design, string colour
 local function partsOf(back)
   return back:match("^(%a+)_(%a+)$")
-end
-
---- Shows every picker on the page what is chosen now
-local function refreshPickers()
-  for each in pairs(pickers) do
-    each:Refresh()
-  end
 end
 
 --- A picture to click on
@@ -150,71 +370,39 @@ local function thumbnail(frame, row, onClick)
   return button
 end
 
---- What a picker on the page does, for the templates in GUI/Options.xml
-ForeverGamesPickerMixin = {}
-
---- Called by the settings window each time it shows the picker
---- @param initializer table
-function ForeverGamesPickerMixin:Init(initializer)
-  if not self.rows then
-    self.rows, self.buttons = initializer:GetData().rows, {}
-    local top = -PICKER_TOP
-    for index, row in ipairs(self.rows) do
-      local text = self:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-      text:SetPoint("LEFT", self, "TOPLEFT", LABEL_X, top - row.height / 2)
-      text:SetText(row.label)
-      self.buttons[index] = {}
-      for column, choice in ipairs(row.choices) do
-        local button = thumbnail(self, row, function()
-          row.setting:SetValue(row.value and row.value(choice) or choice)
-        end)
-        button:SetPoint("TOPLEFT", self, "TOP", CONTROL_X + (column - 1) * (row.width + THUMB_GAP), top)
-        self.buttons[index][column] = button
-      end
-      top = top - row.height - ROW_GAP
-    end
-  end
-  pickers[self] = true
-  self:Refresh()
-end
-
---- Called by the settings window when it is done with the picker for now
-function ForeverGamesPickerMixin:Release()
-  pickers[self] = nil
-end
-
---- Draws every choice, the chosen ones on gold
-function ForeverGamesPickerMixin:Refresh()
-  for index, row in ipairs(self.rows) do
-    local chosen = row.chosen()
-    for column, choice in ipairs(row.choices) do
-      local button = self.buttons[index][column]
-      row.paint(button, choice)
-      button.chosen:SetShown(choice == chosen)
-      button.name = row.name(choice)
-    end
-  end
-end
-
---- Puts a picker on the page, where the client has a way to put a part of one's own on it
---- @param layout table
---- @param template string Of GUI/Options.xml, as tall as the rows
+--- Rows of pictures to choose from, one under the other
 --- @param rows PickerRow[]
---- @param ... string Words to find it by in the window's search
-local function addPicker(layout, template, rows, ...)
-  local initializer = Settings.CreateElementInitializer(template, { rows = rows })
-  local height = 2 * PICKER_TOP + ROW_GAP * (#rows - 1)
-  for _, row in ipairs(rows) do
-    height = height + row.height
+--- @return { rows: PickerRow[], buttons: Button[][] } picker
+local function picker(rows)
+  local made = { rows = rows, buttons = {} }
+  for index, each in ipairs(rows) do
+    local frame = row(each.height + (index == 1 and PICKER_TOP or 0) + (index == #rows and PICKER_TOP or ROW_GAP))
+    local top = index == 1 and -PICKER_TOP or 0
+    frame.label = Widgets.Label(frame, "GameFontNormal", each.label)
+    frame.label:SetPoint("LEFT", frame, "TOPLEFT", LABEL_X, top - each.height / 2)
+    made.buttons[index] = {}
+    for column, choice in ipairs(each.choices) do
+      local button = thumbnail(frame, each, function()
+        each.setting:SetValue(each.value and each.value(choice) or choice)
+        refresh()
+      end)
+      button:SetPoint("TOPLEFT", frame, "TOP", CONTROL_X + (column - 1) * (each.width + THUMB_GAP), top)
+      made.buttons[index][column] = button
+    end
   end
-  -- As tall as the template, said again in case the window asks the picker instead
-  function initializer:GetExtent()
-    return height
+  -- Every choice drawn, the chosen ones on gold
+  refreshers[#refreshers + 1] = function()
+    for index, each in ipairs(rows) do
+      local chosen = each.chosen()
+      for column, choice in ipairs(each.choices) do
+        local button = made.buttons[index][column]
+        each.paint(button, choice)
+        button.chosen:SetShown(choice == chosen)
+        button.name = each.name(choice)
+      end
+    end
   end
-  if initializer.AddSearchTags then
-    initializer:AddSearchTags(...)
-  end
-  layout:AddInitializer(initializer)
+  return made
 end
 
 --- @param colour string
@@ -224,23 +412,20 @@ local function colourName(colour)
 end
 
 --- The back of the cards: each design in the colour chosen, and the design chosen in each colour
---- @param layout table
-local function cardBacks(layout)
-  local setting = stored("cardBack", function(value)
-    Cards.SetBack(value)
-    refreshPickers()
-  end)
+--- @return table picker
+local function cardBacks()
+  local back = stored("cardBack", Cards.SetBack)
   local function design()
     return (partsOf(Cards.Back()))
   end
   local function colour()
     return select(2, partsOf(Cards.Back()))
   end
-  section(layout, L["options_cards"])
-  addPicker(layout, "ForeverGamesCardBackTemplate", {
+  section(L["options_cards"])
+  return picker({
     {
       label = L["options_cardBack_design"],
-      setting = setting,
+      setting = back,
       choices = Cards.BACK_DESIGNS,
       chosen = design,
       value = function(choice)
@@ -257,7 +442,7 @@ local function cardBacks(layout)
     },
     {
       label = L["options_cardBack_colour"],
-      setting = setting,
+      setting = back,
       choices = Cards.BACK_COLOURS,
       chosen = colour,
       value = function(choice)
@@ -270,7 +455,7 @@ local function cardBacks(layout)
       width = CARD_WIDTH,
       height = CARD_HEIGHT,
     },
-  }, L["options_cardBack"], L["options_cards"])
+  })
 end
 
 --- A swatch of felt with a card lying on it, the felt of each game half one colour and half another
@@ -298,16 +483,13 @@ end
 
 --- What the table is covered with, the colour of the dice on it that stand for nobody, and what
 --- the dominoes are made of
---- @param layout table
-local function tableLooks(layout)
-  section(layout, L["options_table"])
-  addPicker(layout, "ForeverGamesTableTemplate", {
+--- @return table picker
+local function tableLooks()
+  section(L["options_table"])
+  return picker({
     {
       label = L["options_feltColour"],
-      setting = stored("feltColour", function(value)
-        Felt.SetColour(value)
-        refreshPickers()
-      end),
+      setting = stored("feltColour", Felt.SetColour),
       choices = Felt.COLOURS,
       chosen = Felt.Colour,
       paint = paintFelt,
@@ -319,10 +501,7 @@ local function tableLooks(layout)
     },
     {
       label = L["options_diceColour"],
-      setting = stored("diceColour", function(value)
-        Dice.SetColour(value)
-        refreshPickers()
-      end),
+      setting = stored("diceColour", Dice.SetColour),
       choices = Dice.COLOURS,
       chosen = Dice.Colour,
       paint = function(button, choice)
@@ -336,10 +515,7 @@ local function tableLooks(layout)
     },
     {
       label = L["options_dominoStyle"],
-      setting = stored("dominoStyle", function(value)
-        Dominoes.SetStyle(value)
-        refreshPickers()
-      end),
+      setting = stored("dominoStyle", Dominoes.SetStyle),
       choices = Dominoes.STYLES,
       chosen = Dominoes.Style,
       paint = function(button, choice)
@@ -357,40 +533,42 @@ local function tableLooks(layout)
       width = CARD_WIDTH,
       height = DOMINO_HEIGHT,
     },
-  }, L["options_feltColour"], L["options_diceColour"], L["options_dominoStyle"], L["options_table"])
+  })
 end
 
---- Builds the page. Does nothing on a client that has no settings window to put it in
-function Options.Init()
-  if category or not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting) then
-    return
-  end
-  local layout
-  category, layout = Settings.RegisterVerticalLayoutCategory(L["title"])
+--- Puts everything on the page
+local function build()
+  local title = Widgets.Label(panel, "GameFontHighlightHuge", L["title"])
+  title:SetPoint("TOPLEFT", panel, "TOPLEFT", LABEL_X - 30, -16)
+  local scroll = Widgets.Scroll(panel, WHEEL_STEP)
+  scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -TITLE_HEIGHT)
+  scroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -6, 6)
+  page.content, page.top = scroll.content, 0
+  -- As wide as the room the settings window gives it
+  scroll:HookScript("OnSizeChanged", function(self, width)
+    page.content:SetWidth(width)
+  end)
 
-  section(layout, L["options_notifications"])
-  Settings.CreateCheckbox(category, stored("toasts"), L["options_toasts_tip"])
-  Settings.CreateCheckbox(category, stored("alert"), L["options_alert_tip"])
+  section(L["options_notifications"])
+  checkbox(stored("toasts"), L["options_toasts"], L["options_toasts_tip"])
+  checkbox(stored("alert"), L["options_alert"], L["options_alert_tip"])
   -- What was held back for as long as these said to has waited long enough
-  Settings.CreateCheckbox(category, stored("combat", Toast.Release), L["options_combat_tip"])
-  Settings.CreateCheckbox(category, stored("quiet", Toast.Release), L["options_quiet_tip"])
+  checkbox(stored("combat", Toast.Release), L["options_combat"], L["options_combat_tip"])
+  checkbox(stored("quiet", Toast.Release), L["options_quiet"], L["options_quiet_tip"])
 
-  section(layout, L["options_sounds"])
-  Settings.CreateCheckbox(category, stored("sound"), L["options_sound_tip"])
+  section(L["options_sounds"])
+  checkbox(stored("sound"), L["options_sound"], L["options_sound_tip"])
 
-  section(layout, L["options_challengers"])
-  local createDropdown = Settings.CreateDropdown or Settings.CreateDropDown
-  createDropdown(category, stored("challenges"), function()
-    local container = Settings.CreateControlTextContainer()
-    for _, who in ipairs(CHALLENGERS) do
-      container:Add(who, L["options_challenges_" .. who])
-    end
-    return container:GetData()
-  end, L["options_challenges_tip"])
+  section(L["options_challengers"])
+  local who = {}
+  for index, each in ipairs(CHALLENGERS) do
+    who[index] = { value = each, text = L["options_challenges_" .. each] }
+  end
+  dropdown(stored("challenges"), who, L["options_challenges"], L["options_challenges_tip"])
 
-  section(layout, L["options_window"])
+  section(L["options_window"])
   -- The profile says whether the button is hidden, the page asks whether it is shown
-  local minimap = Settings.RegisterProxySetting(category, "ForeverGames_minimap", "boolean", L["options_minimap"], true, function()
+  local minimap = setting(true, function()
     return not profile().minimap.hide
   end, function(value)
     profile().minimap.hide = not value
@@ -401,45 +579,73 @@ function Options.Init()
       icon:Hide(private.ADDON_NAME)
     end
   end)
-  Settings.CreateCheckbox(category, minimap, L["options_minimap_tip"])
-  Settings.CreateCheckbox(category, stored("wisp", MainFrame.Refresh), L["options_wisp_tip"])
-
-  local usualScale = ForeverGames.db.defaults.profile.window.scale
-  local scale = Settings.RegisterProxySetting(category, "ForeverGames_scale", "number", L["options_scale"], usualScale, function()
+  checkbox(minimap, L["options_minimap"], L["options_minimap_tip"])
+  checkbox(stored("wisp", MainFrame.Refresh), L["options_wisp"], L["options_wisp_tip"])
+  local scale = setting(ForeverGames.db.defaults.profile.window.scale, function()
     return profile().window.scale
   end, function(value)
     profile().window.scale = value
     MainFrame.ApplyScale()
   end)
-  local slider = Settings.CreateSliderOptions(SCALE_MIN, SCALE_MAX, SCALE_STEP)
-  slider:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(value)
+  slider(scale, SCALE_MIN, SCALE_MAX, SCALE_STEP, function(value)
     return L["options_scale_label"]:format(value)
-  end)
-  Settings.CreateSlider(category, scale, slider, L["options_scale_tip"])
-  Settings.CreateCheckbox(category, stored("smallFade"), L["options_smallFade_tip"])
-  Settings.CreateCheckbox(category, stored("smallFights"), L["options_smallFights_tip"])
+  end, L["options_scale"], L["options_scale_tip"])
+  checkbox(stored("smallFade"), L["options_smallFade"], L["options_smallFade_tip"])
+  checkbox(stored("smallFights"), L["options_smallFights"], L["options_smallFights_tip"])
+  action(L["options_reset"], L["options_reset_button"], MainFrame.ResetWindow, L["options_reset_tip"])
 
-  layout:AddInitializer(CreateSettingsButtonInitializer(L["options_reset"], L["options_reset_button"], MainFrame.ResetWindow, L["options_reset_tip"], true))
+  Options.cardBacks = cardBacks()
+  Options.tableLooks = tableLooks()
+  page.content:SetHeight(page.top + PICKER_TOP)
+end
 
-  -- What things look like, where the client has a way to show the pictures to choose from
-  if Settings.CreateElementInitializer then
-    cardBacks(layout)
-    tableLooks(layout)
+--- Builds the page and gives it to the settings window
+function Options.Init()
+  if panel then
+    return
   end
-
-  Settings.RegisterAddOnCategory(category)
+  panel = CreateFrame("Frame")
+  panel.name = L["title"]
+  panel:Hide()
+  build()
+  -- Shown what everything is set to each time it is opened, and what everything is set to by
+  -- anything else meanwhile
+  panel:SetScript("OnShow", refresh)
+  refresh()
+  -- The window's Defaults button: everything on the page as it is to begin with
+  function panel.OnDefault()
+    for _, each in ipairs(settings) do
+      each:SetValue(each.default)
+    end
+    refresh()
+  end
+  if Settings and Settings.RegisterCanvasLayoutCategory then
+    category = Settings.RegisterCanvasLayoutCategory(panel, L["title"])
+    Settings.RegisterAddOnCategory(category)
+  elseif InterfaceOptions_AddCategory then
+    InterfaceOptions_AddCategory(panel)
+  end
+  Options.panel = panel
 end
 
 --- Opens the settings window on the addon's page
 --- @return boolean, string? error
 function Options.Open()
-  if not category then
+  if not panel then
     return false, "no_options"
   end
   -- The client doesn't let an addon open its settings in the middle of a fight
   if InCombatLockdown() then
     return false, "options_combat"
   end
-  Settings.OpenToCategory(category:GetID())
+  if category then
+    Settings.OpenToCategory(category:GetID())
+  elseif InterfaceOptionsFrame_OpenToCategory then
+    -- The old window only lands on the page the second time it is asked
+    InterfaceOptionsFrame_OpenToCategory(panel)
+    InterfaceOptionsFrame_OpenToCategory(panel)
+  else
+    return false, "no_options"
+  end
   return true
 end

@@ -116,5 +116,4 @@ GUI\Wizard.lua
 GUI\MainFrame.lua
 GUI\Party.lua
 GUI\Options.lua
-GUI\Options.xml
 Core.lua

@@ -9077,57 +9077,19 @@ function tests.EveryCardBackHasAPicture()
 end
 
 function tests.OptionsPickHowCardsFeltDiceAndDominoesLook()
-  --- The game's settings window, as much of it as the options page uses: what is put on the page
-  --- is kept in order, and a setting is the two functions it was given
-  --- @return table[] initializers
-  local function fakeSettings()
-    local initializers = {}
-    local function initializer(kind, data)
-      return {
-        kind = kind,
-        data = data,
-        GetData = function(self)
-          return self.data
-        end,
-      }
-    end
-    Settings = {
-      RegisterVerticalLayoutCategory = function()
-        return { GetID = function() end }, {
-          AddInitializer = function(_, added)
-            initializers[#initializers + 1] = added
-          end,
-        }
-      end,
-      RegisterProxySetting = function(_, _, _, _, default, get, set)
-        return {
-          default = default,
-          GetValue = function()
-            return get()
-          end,
-          SetValue = function(_, value)
-            set(value)
-          end,
-        }
-      end,
-      CreateCheckbox = function() end,
-      CreateDropdown = function() end,
-      CreateSliderOptions = function()
-        return { SetLabelFormatter = function() end }
-      end,
-      CreateSlider = function() end,
-      CreateElementInitializer = initializer,
-      RegisterAddOnCategory = function() end,
-    }
-    MinimalSliderWithSteppersMixin = { Label = {} }
-    CreateSettingsListSectionHeaderInitializer = function(title)
-      return initializer("section", { name = title })
-    end
-    CreateSettingsButtonInitializer = function()
-      return initializer("button")
-    end
-    return initializers
-  end
+  -- The game's settings window, as much of it as the options page uses: a page of the addon's own
+  -- is given to it, and nothing of the page goes into the window's own list of settings
+  local given
+  Settings = {
+    RegisterCanvasLayoutCategory = function(frame, name)
+      given = { frame = frame, name = name }
+      return { GetID = function() end }
+    end,
+    RegisterAddOnCategory = function() end,
+    RegisterVerticalLayoutCategory = function()
+      error("the options page is put into the settings window's own list")
+    end,
+  }
 
   local felt, frame, _, private = tableOnItsOwn()
   private.L = setmetatable({}, {
@@ -9135,7 +9097,29 @@ function tests.OptionsPickHowCardsFeltDiceAndDominoesLook()
       return key
     end,
   })
-  private.MainFrame, private.Toast = {}, {}
+  local nothing = function() end
+  private.MainFrame = { ApplyScale = nothing, Refresh = nothing, ResetWindow = nothing }
+  private.Toast = {}
+  -- The minimap button's library, for this test only: anything else goes to the real one
+  local minimapShown, realLibStub = true, LibStub
+  LibStub = setmetatable({}, {
+    __call = function(_, name, ...)
+      if name ~= "LibDBIcon-1.0" then
+        return realLibStub(name, ...)
+      end
+      return {
+        Show = function()
+          minimapShown = true
+        end,
+        Hide = function()
+          minimapShown = false
+        end,
+      }
+    end,
+    __index = function(_, key)
+      return realLibStub and realLibStub[key]
+    end,
+  })
   for _, file in ipairs({ "Engine/Bones.lua", "GUI/Felt.lua", "GUI/Dice.lua", "GUI/Dominoes.lua" }) do
     assert(loadfile(file))(ADDON_NAME, private)
   end
@@ -9144,40 +9128,36 @@ function tests.OptionsPickHowCardsFeltDiceAndDominoesLook()
     window = { scale = 100 }, cardBack = "suits_blue", feltColour = "own", diceColour = "white", dominoStyle = "ivory",
   } }
   ForeverGames.db.profile.window = { scale = 100 }
-  local initializers = fakeSettings()
+  ForeverGames.db.profile.minimap = { hide = false }
+  ForeverGames.db.profile.toasts = true
   assert(loadfile("GUI/Options.lua"))(ADDON_NAME, private)
   private.Options.Init()
+  local Options = private.Options
+  equal(Options.panel, given and given.frame, "the page is the addon's own frame")
+  equal("title", given.name)
 
-  -- The backs, and the felt and dice, each have a section of the page to themselves with a
-  -- picker of the addon's own in it
-  local pickers = {}
-  for index, each in ipairs(initializers) do
-    if each.kind:find("^ForeverGames") then
-      pickers[each.kind] = each
-      pickers[#pickers + 1] = initializers[index - 1].data.name
-    end
-  end
-  equal("options_cards,options_table", table.concat(pickers, ","))
-  local backs, looks = pickers.ForeverGamesCardBackTemplate, pickers.ForeverGamesTableTemplate
-  equal(134, backs:GetExtent(), "as tall as GUI/Options.xml has it")
-  equal(172, looks:GetExtent(), "as tall as GUI/Options.xml has it")
-  -- No row reaches past the width GUI/Options.xml gives it, into the window's scroll bar
-  for _, each in ipairs({ backs, looks }) do
-    for _, row in ipairs(each:GetData().rows) do
+  -- No row of pictures reaches past the width there is beside the names, into the scroll bar
+  for _, each in ipairs({ Options.cardBacks, Options.tableLooks }) do
+    for _, row in ipairs(each.rows) do
       assert(#row.choices * (row.width + 6) - 6 <= 320, row.label .. " is too wide for the page")
     end
   end
 
-  --- A picker as the settings window makes it from its template and has it show itself
-  local function made(initializer)
-    local row = CreateFrame("Frame", nil, UIParent)
-    for name, method in pairs(ForeverGamesPickerMixin) do
-      row[name] = method
-    end
-    row:Init(initializer)
-    return row
+  -- A box ticked off turns its setting off, and the minimap button's hides the button
+  local function control(label)
+    local found = Client.Find(function(widget)
+      return widget.label and widget.label.text == label and widget.control ~= nil
+    end)
+    equal(1, #found, label)
+    return found[1].control
   end
-  local picker, tableLooks = made(backs), made(looks)
+  control("options_toasts"):Fire("OnClick")
+  equal(false, ForeverGames.db.profile.toasts)
+  control("options_minimap"):Fire("OnClick")
+  equal(true, ForeverGames.db.profile.minimap.hide)
+  equal(false, minimapShown)
+
+  local picker, tableLooks = Options.cardBacks, Options.tableLooks
   local designs, colours = picker.buttons[1], picker.buttons[2]
   equal(5, #designs)
   equal(6, #colours)
@@ -9246,12 +9226,13 @@ function tests.OptionsPickHowCardsFeltDiceAndDominoesLook()
   assert(styles[2].domino.body.texture:find("ebonyFaceV"), "a picture to choose from stays what it is")
   equal(true, styles[3].chosen:IsShown())
 
-  -- The window's Defaults button puts the usual looks on everything again
-  for _, each in ipairs({ backs, looks }) do
-    for _, row in ipairs(each:GetData().rows) do
-      row.setting:SetValue(row.setting.default)
-    end
-  end
+  -- The window's Defaults button puts the usual looks on everything again, and every other
+  -- setting on the page as it was to begin with
+  Options.panel.OnDefault()
+  equal(true, ForeverGames.db.profile.toasts)
+  equal(false, ForeverGames.db.profile.minimap.hide)
+  equal(true, minimapShown)
+  LibStub = realLibStub
   assert(felt.sprites.AS.picture.texture:find("suits_blue$"))
   equal(true, designs[1].chosen:IsShown())
   equal(true, colours[1].chosen:IsShown())
