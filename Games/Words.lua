@@ -2862,6 +2862,8 @@ private.Games.Register({
   drop = drop,
   visible = visible,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the players' plates and the buttons beside the board
+  small = { width = 330, height = 310 },
   createView = createView,
   history = true,
 })

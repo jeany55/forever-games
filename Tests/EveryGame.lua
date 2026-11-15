@@ -289,6 +289,13 @@ local function checkNames(private, game, keys)
     end
   end
   checkHowTo(Games, game, keys)
+  -- The small window is never bigger than it has to be for it, nor more than a corner of the screen
+  if game.small ~= nil then
+    local small = game.small
+    assert(type(small.width) == "number" and type(small.height) == "number", "small says how wide and how high")
+    assert(small.width >= 248 and small.height >= 174, "small is no less than every game gets anyway")
+    assert(small.width <= 640 and small.height <= 480, "small is more than a corner of the screen")
+  end
   if game.seatLabel then
     for _, seats in ipairs(Games.SeatCounts(game)) do
       for seat = 1, seats do

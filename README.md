@@ -612,6 +612,7 @@ unless the game says otherwise.
 |---|---|
 | `/fg` | Open or close the window (same as the minimap button) |
 | `/fg new` | Start a new game |
+| `/fg small` | Play the game on screen in a small window, or whole again |
 | `/fg play <game>` | Play a game alone, or against the computer, set up the way you last had it |
 | `/fg daily <game>` | Go straight to today's challenge |
 | `/fg challenge <player> [game]` | Challenge someone. Leave the name out to challenge your target |
@@ -625,6 +626,13 @@ unless the game says otherwise.
 The window can be resized from its corner, and the board grows with it. **Focus** hides everything
 except the game you're looking at.
 
+**Make Small** moves the game you're looking at into a small window of its own, to play in a
+corner while you do something else (auto-running to the next flight point, say). It shows the
+game, whose turn it is, and a **Menu** with the buttons from under the game. Drag it by its top to
+move it and by its corner to resize it, and it stays where you leave it. It fades while the mouse
+is elsewhere and is put away during combat. You can turn either of those off in the options.
+**Whole** takes it back to the full window.
+
 In the options (also under AddOns in the game's settings) you can choose:
 
 - whether your turn is announced with a message, a sound, or both
@@ -632,6 +640,7 @@ In the options (also under AddOns in the game's settings) you can choose:
 - whether the games make their own sounds
 - whether anyone can challenge you, or only friends and guildies
 - whether the minimap button is shown, and how big the window is
+- whether the small window fades while the mouse is elsewhere, and whether it hides in combat
 - the back of the cards, five designs in six colours, the felt every table is covered with, the
   colour of the dice (Backgammon keeps its white and red, which tell the players apart), and what
   the dominoes are made of: ivory, ebony, jade, sapphire, or ivory with coloured pips

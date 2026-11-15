@@ -430,6 +430,8 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the note that a player has to pass, beside the tally
+  small = { width = 290, height = 250 },
   createView = createView,
   seatLabel = seatLabel,
 })

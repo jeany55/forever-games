@@ -1085,5 +1085,7 @@ private.Games.Register({
     lower = true,
     time = true,
   },
+  -- The least the small window gives it: room for the expert field
+  small = { width = 310, height = 220 },
   createView = createView,
 })

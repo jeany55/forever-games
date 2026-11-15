@@ -2106,5 +2106,7 @@ private.Games.Register({
     lower = true,
     time = true,
   },
+  -- The least the small window gives it: room for the grid with the numbers to put in beside it
+  small = { width = 300, height = 230 },
   createView = createView,
 })

@@ -1283,6 +1283,8 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the line of who is where with the Play and Undo buttons
+  small = { width = 280, height = 280 },
   createView = createView,
   seatLabel = function(seat)
     return seat == WHITE and L["backgammon_white"] or L["backgammon_red"]

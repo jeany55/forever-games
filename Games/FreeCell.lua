@@ -841,5 +841,7 @@ private.Games.Register({
     lower = true,
     time = true,
   },
+  -- The least the small window gives it: room for eight columns, and the line along the top with Finish
+  small = { width = 350, height = 230 },
   createView = createView,
 })

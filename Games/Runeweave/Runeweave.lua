@@ -153,5 +153,7 @@ engine.Games.Register({
       return state.score
     end,
   },
+  -- The least the small window gives it: room for its words, which are drawn to scale
+  small = { width = 340, height = 230 },
   createView = own.CreateView,
 })

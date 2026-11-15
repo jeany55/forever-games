@@ -790,5 +790,7 @@ private.Games.Register({
   drop = drop,
   visible = visible,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the pass button and the suits over the hand
+  small = { width = 360, height = 330 },
   createView = createView,
 })

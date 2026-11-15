@@ -3377,5 +3377,7 @@ private.Games.Register({
     lower = true,
     time = true,
   },
+  -- The least the small window gives it: room for the row along the bottom: portrait, bars, abilities, time
+  small = { width = 490, height = 300 },
   createView = createView,
 })

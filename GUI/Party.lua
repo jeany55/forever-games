@@ -868,9 +868,9 @@ function Party.Open(gameId)
   if private.Wizard and private.Wizard.IsOpen() then
     private.Wizard.Reset()
   end
-  -- Asked for, the room is shown whole even if it was small
+  -- Asked for, the room is shown whole even if it was small, and so is the window it is in
   isSmall = false
-  private.MainFrame.Open()
+  private.MainFrame.Open(nil, true)
   local room = private.rooms.room
   if not room then
     local game = Rooms.Game(gameId) or chosenGame or Rooms.Games()[1]

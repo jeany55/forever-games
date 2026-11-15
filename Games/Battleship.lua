@@ -1065,5 +1065,7 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the panel of ships and its buttons beside the sea
+  small = { width = 490, height = 350 },
   createView = createView,
 })

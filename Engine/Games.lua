@@ -84,7 +84,7 @@ local _, private = ...
 --- @field race RaceView? The game for one is a race against somebody, who is playing the same deal on their own (Engine/Race.lua): who, how they did, and for a game with a `ghost` where they were as they played
 
 --- @class GameViewObject
---- @field Layout fun(self: GameViewObject, width: number, height: number) Fit into this much room. Called before the first Update and again whenever the window is resized
+--- @field Layout fun(self: GameViewObject, width: number, height: number, compact: boolean?) Fit into this much room. Called before the first Update and again whenever the window is resized, and when the game is moved to the small window (GUI/MainFrame.lua) and back: `compact` while it is there, where the room is a corner of the screen and what is only nice to have may be left out
 --- @field Update fun(self: GameViewObject, view: GameView) Show a position. Called on every change and often when nothing changed at all, so it has to be cheap and must not restart animations
 --- @field Busy (fun(self: GameViewObject): boolean)? Whether it is still showing a move being made. The window waits for it before the computer makes its next move, and before showing the next of the moves the player missed
 --- @field Paused (fun(self: GameViewObject): boolean)? For a game that is timed (`clock`): whether the player is keeping it still, as a game played against the clock as it falls is paused. The clock isn't run while it is
@@ -132,6 +132,7 @@ local _, private = ...
 --- @field drop (fun(state: table, seat: number))? A player resigned and the others play on: take them out of the game and never say it is their turn again. Needed by games for more than two, unless they are played together. The engine ends the game itself once only one player is left
 --- @field beaten (fun(state: table, seat: number): boolean)? For a game for more than two where a player can be put out of it by the others while they play on: whether a seat has been. A game against the computer is over for the player once they are, the computer doesn't play on among itself
 --- @field moves (fun(state: table, seat: number): string[])? The moves a seat could make, each of them legal and none twice. All of them where that is practical; where there are far too many (every word that could be laid) enough of them for a game played with nothing else to get somewhere. Asked only while the game is on, of a seat that may move: the one whose turn it is, or anyone still in a game played together. The tests play every game that has it out at random to see that its rules hold together (Tests/EveryGame.lua)
+--- @field small { width: number, height: number }? The least room its view needs when the game is played in the small window (GUI/MainFrame.lua), for a game that needs more than that is made to give everything. The window can't be made smaller than this while the game is in it, and is made bigger for it
 --- @field createView fun(stage: Frame): GameViewObject Builds the game's widgets inside stage. Called once, the first time one of its matches is looked at
 --- @field draws boolean? Players may agree a draw
 --- @field history boolean? Moves have a notation: show the move list and let players step back through the game

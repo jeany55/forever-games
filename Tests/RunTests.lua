@@ -2068,6 +2068,251 @@ function tests.WindowOpensOnItsFrontPageWhateverGamesThereAre()
   end
 end
 
+-- The small window, in a block of its own for the main chunk's room for locals
+do
+--- The small window a game is played in, and what is in it: found by its "Whole" button
+--- @return table small, table menu
+local function smallWindow()
+  local grow = Client.Find(function(widget)
+    return widget.kind == "Button" and widget.text == "small_whole"
+  end)[1]
+  local small = grow and grow:GetParent()
+  local menu = small and Client.Find(function(widget)
+    return widget.text == "small_menu" and widget:GetParent():GetParent() == small
+  end)[1]
+  return small, menu and menu:GetParent()
+end
+
+--- What the small window's menu offers, top to bottom
+--- @param menu table
+--- @return string[]
+local function smallChoices(menu)
+  local texts = {}
+  for _, row in ipairs(menu.list.rows) do
+    if row:IsShown() then
+      texts[#texts + 1] = row.label.text
+    end
+  end
+  return texts
+end
+
+function tests.WindowPlaysAGameSmallInACorner()
+  local alice = World.New():AddPlayer("Alice-Realm")
+  local game = alice.private.Games.Get("solitaire")
+  local laid = {}
+  local createView = game.createView
+  game.createView = function(stage)
+    local view = createView(stage)
+    local layout = view.Layout
+    function view.Layout(self, width, height, compact)
+      laid[#laid + 1] = { width = width, height = height, compact = compact }
+      return layout(self, width, height, compact)
+    end
+    return view
+  end
+  local match = assert(alice.session:Invite({}, "solitaire"))
+  local MainFrame = openWindow(alice)
+  local window = ForeverGames.db.profile.window
+  MainFrame.Open(match.id)
+  equal(false, laid[#laid].compact == true, "laid out whole first")
+  equal(false, MainFrame.IsSmall())
+
+  -- Made small, the game is in a window of its own and the whole one is put away
+  Client.Button("small_make"):Fire("OnClick")
+  local small, menu = smallWindow()
+  equal(true, small:IsShown())
+  equal(false, ForeverGamesFrame:IsShown())
+  equal(true, MainFrame.IsShown())
+  equal(true, MainFrame.IsSmall())
+  equal(true, window.small, "kept")
+  equal(true, MainFrame.IsViewing(match.id))
+  equal(match.id, MainFrame.Pondering(), "it is on the clock")
+  equal("MEDIUM", small.strata or "MEDIUM")
+  for _, name in ipairs(UISpecialFrames) do
+    assert(_G[name] ~= small, "Escape is for the world, not the game in the corner")
+  end
+  -- The same view, moved over, has all of the small window but its strip along the top
+  local last = laid[#laid]
+  equal(true, last.compact)
+  equal(380 - 12, last.width)
+  equal(340 - 40 - 6, last.height)
+  equal(1, #Client.Find(function(widget)
+    return widget.kind == "FontString" and widget.text == game.name and widget:GetParent() == small
+  end), "the game is named over it")
+
+  -- The buttons under the game are in its menu, and the way back to the rest
+  equal("small_menu", menu.label.text)
+  menu:Fire("OnClick")
+  local choices = table.concat(smallChoices(menu), ",")
+  equal("give_up,start_another,howto,home", choices)
+  menu.list:Hide()
+
+  -- Dragged to size, the game follows and the size is kept
+  small:SetSize(300, 260)
+  equal(300 - 12, laid[#laid].width)
+  equal(260 - 46, laid[#laid].height)
+  for _, row in ipairs(Client.Find(function(widget)
+    return widget.kind == "Button" and widget:GetParent() == small and widget:GetScript("OnMouseUp") ~= nil
+  end)) do
+    row:Fire("OnMouseDown")
+    row:Fire("OnMouseUp")
+  end
+  equal(300, window.smallWidth)
+  equal(260, window.smallHeight)
+
+  -- It fades with the mouse elsewhere, and is back for it. Unless the player would rather not
+  Client.over = false
+  for _ = 1, 30 do
+    small:Fire("OnUpdate", 0.02)
+  end
+  assert(math.abs(small:GetAlpha() - 0.4) < 1e-9, "faded, got " .. small:GetAlpha())
+  Client.over = true
+  for _ = 1, 30 do
+    small:Fire("OnUpdate", 0.02)
+  end
+  equal(1, small:GetAlpha())
+  ForeverGames.db.profile.smallFade = false
+  Client.over = false
+  small:Fire("OnUpdate", 0.02)
+  equal(1, small:GetAlpha())
+  Client.over = true
+
+  -- A fight puts it away, and the game stands still meanwhile, until it is over
+  MainFrame.Fighting(true)
+  equal(false, small:IsShown())
+  equal(nil, MainFrame.Pondering())
+  equal(false, MainFrame.IsViewing(match.id), "a turn that comes up is told")
+  MainFrame.Fighting(false)
+  equal(true, small:IsShown())
+  ForeverGames.db.profile.smallFights = false
+  MainFrame.Fighting(true)
+  equal(true, small:IsShown(), "unless the player would rather keep it")
+  MainFrame.Fighting(false)
+
+  -- Closed and opened again it is small again, where it was
+  small.close:Fire("OnClick")
+  equal(false, MainFrame.IsShown())
+  MainFrame.Fighting(true)
+  MainFrame.Fighting(false)
+  equal(false, small:IsShown(), "a fight doesn't bring back what was closed")
+  MainFrame.Toggle()
+  equal(true, small:IsShown())
+  equal(false, ForeverGamesFrame:IsShown())
+  MainFrame.Toggle()
+  equal(false, MainFrame.IsShown())
+  MainFrame.Open(match.id)
+  equal(true, small:IsShown())
+
+  -- Whole again, the game is back in the whole window with all of its room
+  Client.Button("small_whole"):Fire("OnClick")
+  equal(false, small:IsShown())
+  equal(true, ForeverGamesFrame:IsShown())
+  equal(false, MainFrame.IsSmall())
+  equal(false, laid[#laid].compact == true)
+  equal(true, MainFrame.IsViewing(match.id))
+
+  -- The front page is whole: going there from the menu leaves the small window behind
+  Client.Button("small_make"):Fire("OnClick")
+  menu:Fire("OnClick")
+  for _, row in ipairs(menu.list.rows) do
+    if row.label.text == "home" then
+      row:Fire("OnClick")
+    end
+  end
+  equal(false, small:IsShown())
+  equal(true, ForeverGamesFrame.home:IsVisible())
+  equal(false, MainFrame.IsSmall())
+
+  -- And so is where a game that is given up leaves the player
+  MainFrame.Open(match.id)
+  MainFrame.MakeSmall(true)
+  equal(true, small:IsShown())
+  menu:Fire("OnClick")
+  for _, row in ipairs(menu.list.rows) do
+    if row.label.text == "give_up" then
+      row:Fire("OnClick")
+    end
+  end
+  equal(false, small:IsShown())
+  equal(true, ForeverGamesFrame.home:IsVisible())
+
+  -- Only a game is shown small, not the front page
+  MainFrame.MakeSmall(true)
+  equal(false, small:IsShown())
+  equal(false, MainFrame.IsSmall())
+
+  -- The wizard has the whole window too
+  local another = assert(alice.session:Invite({}, "solitaire"))
+  MainFrame.Open(another.id)
+  MainFrame.MakeSmall(true)
+  MainFrame.NewGame()
+  equal(false, small:IsShown())
+  equal(true, ForeverGamesFrame:IsShown())
+  equal(false, MainFrame.IsSmall())
+
+  -- Put back where it started out, at the size it started out
+  MainFrame.Open(another.id)
+  MainFrame.MakeSmall(true)
+  ForeverGames.db.defaults = { profile = { window = { width = 920, height = 680, scale = 100 } } }
+  MainFrame.ResetWindow()
+  equal(380, small.width)
+  equal(340, small.height)
+  equal(nil, window.smallPlace)
+  equal("BOTTOMRIGHT", small.anchors[1][1])
+
+  -- A game that needs more room than that is given it, for as long as it is in the window
+  local yacht = assert(alice.session:Invite({}, "yacht"))
+  local need = alice.private.Games.Get("yacht").small
+  MainFrame.Select(yacht.id)
+  equal(need.width + 12, small.width)
+  equal(need.height + 46, small.height)
+  MainFrame.Select(another.id)
+  equal(380, small.width)
+  equal(340, small.height)
+end
+
+function tests.WindowShowsEveryGameSmallAtTheLeastItCanBe()
+  local alice = World.New():AddPlayer("Alice-Realm")
+  local Games = alice.private.Games
+  local MainFrame = openWindow(alice)
+  local shown = 0
+  for _, game in ipairs(Games.List()) do
+    -- Pinball's machine takes what it is drawn with (GUI/DotMatrix.lua) as the engine is loaded,
+    -- which is before the window is here. The games that need their maps from an addon of their
+    -- own draw them with the client's maps and the like, which are only in their own tests
+    if Games.PlaysAlone(game) and Games.Offered(game) and game.id ~= "pinball" and not game.addon then
+      local setup = {}
+      if not Games.CanSeat(game, 1) then
+        setup.computer = { count = 1 }
+      end
+      local match = assert(alice.session:Invite({}, game.id, setup), game.id)
+      MainFrame.Open(match.id)
+      MainFrame.MakeSmall(true)
+      local small = smallWindow()
+      equal(true, small:IsShown(), game.id)
+      -- With all the room it says it needs
+      local need = game.small or { width = 248, height = 174 }
+      assert(small.stage.width >= need.width and small.stage.height >= need.height, game.id .. " has room enough")
+      -- As small as it can be dragged, then big, and whole again
+      for _, size in ipairs({ { 260, 220 }, { 900, 700 }, { 380, 340 } }) do
+        small:SetSize(size[1], size[2])
+        for _ = 1, 10 do
+          small:Fire("OnUpdate", 0.05)
+        end
+      end
+      MainFrame.MakeSmall(false)
+      equal(true, ForeverGamesFrame:IsShown(), game.id)
+      MainFrame.MakeSmall(true)
+      alice.session:Forget(match.id)
+      MainFrame.Refresh()
+      equal(false, small:IsShown(), game.id .. " forgotten, the front page is whole")
+      shown = shown + 1
+    end
+  end
+  assert(shown >= 20, "every game played alone or against the computer, got " .. shown)
+end
+end
+
 function tests.WindowPlaysChessByClickingAndDragging()
   local world, white, black, id = chessOnScreen()
   local board = shownBoard()

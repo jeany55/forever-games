@@ -1005,5 +1005,7 @@ private.Games.Register({
       return state.score
     end,
   },
+  -- The least the small window gives it: room for the side panel and the row of buttons under the tiles
+  small = { width = 530, height = 300 },
   createView = createView,
 })

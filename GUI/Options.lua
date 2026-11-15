@@ -416,6 +416,8 @@ function Options.Init()
     return L["options_scale_label"]:format(value)
   end)
   Settings.CreateSlider(category, scale, slider, L["options_scale_tip"])
+  Settings.CreateCheckbox(category, stored("smallFade"), L["options_smallFade_tip"])
+  Settings.CreateCheckbox(category, stored("smallFights"), L["options_smallFights_tip"])
 
   layout:AddInitializer(CreateSettingsButtonInitializer(L["options_reset"], L["options_reset_button"], MainFrame.ResetWindow, L["options_reset_tip"], true))
 

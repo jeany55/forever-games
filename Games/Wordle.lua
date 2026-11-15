@@ -985,5 +985,7 @@ private.Games.Register({
     end,
     lower = true,
   },
+  -- The least the small window gives it: room for the rows and the keyboard under them, seven letters long
+  small = { width = 340, height = 340 },
   createView = createView,
 })

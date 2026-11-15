@@ -1690,6 +1690,8 @@ private.Games.Register({
     return state.scores
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the scores either side of the hands
+  small = { width = 450, height = 300 },
   createView = createView,
   -- Not the engine's business: for the tests, the bench and the view
   rules = { canLay = canLay, canAct = canAct, standing = standing, parse = parse, DRAW = DRAW, TOP = TOP },

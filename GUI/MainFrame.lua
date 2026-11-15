@@ -18,6 +18,13 @@
 --
 -- The window can be resized. The stage is given whatever room there is and the game's view
 -- lays itself out in it.
+--
+-- A game can also be made small, for playing while doing something else: it is moved out to a
+-- window of its own that shows nothing but the game, how it stands, and a menu of what the
+-- buttons under it would do. It sits in a corner where the player put it, out of the way of what
+-- is going on (under the bags and the map), fades while the mouse is elsewhere and is put away
+-- for the length of a fight. Whatever needs the whole window, the front page, the wizard and the
+-- rules, has it back.
 
 --- @type nil, ForeverGamesPrivate
 local _, private = ...
@@ -108,6 +115,14 @@ local HEADER_TOP = 32
 -- Room the selected game's panel keeps around the stage: its title above, the note and buttons below
 local STAGE_TOP, STAGE_BOTTOM, STAGE_SIDE = 66, 72, 12
 local MOVES_WIDTH = 150
+-- The small window: how big it starts out and how small it can be made, the strip along its top
+-- (the game's name, and how it stands under that) and the room kept around the game
+local SMALL_WIDTH, SMALL_HEIGHT, SMALL_LEAST_WIDTH, SMALL_LEAST_HEIGHT = 380, 340, 260, 220
+local SMALL_HEADER, SMALL_PAD = 40, 6
+-- Where it starts out: over the right end of the action bars, where a room's is (GUI/Party.lua)
+local SMALL_PLACE = { "BOTTOMRIGHT", "BOTTOMRIGHT", -260, 180 }
+-- How faint it is with the mouse elsewhere, and the seconds it takes to fade and to come back
+local SMALL_FAINT, SMALL_FADE = 0.4, 0.25
 local MOVE_ROW_HEIGHT = 20
 -- The guild's board of the day's challenge, and where its list starts under its title
 local BOARD_WIDTH, BOARD_ROW_HEIGHT, BOARD_TOP = 190, 20, 44
@@ -168,9 +183,16 @@ local reading
 -- What the move list last scrolled to, so it only follows the game when something changed
 local movesShown
 local refreshing = false
+-- The small window, whether the player has it up (it may be put away for a fight all the same),
+-- and whether that is where it is
+local small
+local smallOpen, smallFighting = false, false
+-- Being dragged to size, in which it stays as it is rather than fading
+local smallSizing = false
 
---- Window settings that are remembered between sessions
---- @return { width: number, height: number, scale: number }
+--- Window settings that are remembered between sessions: how big the window is, and whether the
+--- game on screen is shown small, how big that is and where it was left
+--- @return { width: number, height: number, scale: number, small: boolean?, smallWidth: number?, smallHeight: number?, smallPlace: table? }
 local function settings()
   return ForeverGames.db.profile.window
 end
@@ -1665,9 +1687,24 @@ local function createDetailPanel(body)
     MainFrame.Home()
   end)
 
+  -- Out to a window of its own, to be played in a corner
+  detail.shrink = Widgets.Button(detail, L["small_make"], 96, 22)
+  detail.shrink:SetPoint("RIGHT", detail.home, "LEFT", -6, 0)
+  detail.shrink:SetScript("OnClick", function()
+    GameTooltip_Hide()
+    MainFrame.MakeSmall(true)
+  end)
+  detail.shrink:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText(L["small_make"])
+    GameTooltip:AddLine(L["small_make_tip"], 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  detail.shrink:SetScript("OnLeave", GameTooltip_Hide)
+
   -- The rules, for anyone who doesn't know the game
   detail.howto = Widgets.Button(detail, L["howto"], 120, 22)
-  detail.howto:SetPoint("RIGHT", detail.home, "LEFT", -6, 0)
+  detail.howto:SetPoint("RIGHT", detail.shrink, "LEFT", -6, 0)
   detail.howto:SetScript("OnClick", toggleHowTo)
   detail.howto:SetScript("OnEnter", function(self)
     if self.tip then
@@ -1882,7 +1919,7 @@ local function refreshDetail(match, fresh)
   detail.howto:SetShown(explained)
   detail.howto.tip = game and L["howto_tip"]:format(game.name)
   detail.next:ClearAllPoints()
-  detail.next:SetPoint("RIGHT", explained and detail.howto or detail.home, "LEFT", -6, 0)
+  detail.next:SetPoint("RIGHT", explained and detail.howto or detail.shrink, "LEFT", -6, 0)
   detail.next:SetShown(others > 0)
   detail.next:SetText(L["next_waiting"]:format(others))
   if waiting then
@@ -1922,6 +1959,14 @@ local function refreshDetail(match, fresh)
 
   local width, height = stageSize((boarded and BOARD_WIDTH) or (history and MOVES_WIDTH) or nil)
   detail.stageArea:SetSize(width, height)
+  -- Shown small, the game is in the small window and has all of it
+  local compact = small ~= nil and small:IsShown()
+  local area = detail.stageArea
+  if compact then
+    area = small.stage
+    width, height = math.floor(small:GetWidth() - SMALL_PAD * 2), math.floor(small:GetHeight() - SMALL_HEADER - SMALL_PAD)
+    small.stage:SetSize(width, height)
+  end
   if showBoard then
     catchUp(match)
   end
@@ -1952,15 +1997,21 @@ local function refreshDetail(match, fresh)
   if showBoard then
     local entry = views[game.id]
     if not entry then
-      local stage = CreateFrame("Frame", nil, detail.stageArea)
+      local stage = CreateFrame("Frame", nil, area)
       stage:SetPoint("CENTER")
       entry = { stage = stage, view = game.createView(stage) }
       views[game.id] = entry
     end
-    if entry.width ~= width or entry.height ~= height then
-      entry.width, entry.height = width, height
+    -- The same view goes along to the small window and back, keeping all it has
+    if entry.stage:GetParent() ~= area then
+      entry.stage:SetParent(area)
+      entry.stage:ClearAllPoints()
+      entry.stage:SetPoint("CENTER")
+    end
+    if entry.width ~= width or entry.height ~= height or entry.compact ~= compact then
+      entry.width, entry.height, entry.compact = width, height, compact
       entry.stage:SetSize(width, height)
-      entry.view:Layout(width, height)
+      entry.view:Layout(width, height, compact)
     end
     entry.stage:Show()
 
@@ -2582,51 +2633,324 @@ end
 
 --- Makes the window as big as the player wants everything in it, and lets it be resized up to
 --- the size of the screen, which is fewer of the window's own points the bigger it is drawn
-local function applyScale()
-  local scale = settings().scale / 100
-  frame:SetScale(scale)
-  local maxWidth, maxHeight = math.max(MIN_WIDTH, GetScreenWidth() / scale), math.max(MIN_HEIGHT, GetScreenHeight() / scale)
-  if frame.SetResizeBounds then
-    frame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, maxWidth, maxHeight)
+--- Lets a window be dragged to any size from the least it can be to the size of the screen
+--- @param window Frame
+--- @param scale number
+--- @param leastWidth number
+--- @param leastHeight number
+local function bound(window, scale, leastWidth, leastHeight)
+  window:SetScale(scale)
+  local maxWidth, maxHeight = math.max(leastWidth, GetScreenWidth() / scale), math.max(leastHeight, GetScreenHeight() / scale)
+  if window.SetResizeBounds then
+    window:SetResizeBounds(leastWidth, leastHeight, maxWidth, maxHeight)
   else
-    frame:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
-    frame:SetMaxResize(maxWidth, maxHeight)
+    window:SetMinResize(leastWidth, leastHeight)
+    window:SetMaxResize(maxWidth, maxHeight)
   end
 end
 
---- The corner the window is resized by
-local function createResizeGrip()
-  frame:SetResizable(true)
-  applyScale()
+--- The small window is drawn to the same scale, for the game in it to look the same. How small
+--- it can be is worked out again for the game in it (fitSmall)
+local function applyScale()
+  bound(frame, settings().scale / 100, MIN_WIDTH, MIN_HEIGHT)
+  if small then
+    small.fitted = nil
+  end
+end
 
-  local grip = CreateFrame("Button", nil, frame)
+--- The corner a window is resized by
+--- @param window Frame
+--- @param inset number How far in from the corner it is
+--- @param done fun() Called once the window is the size it was dragged to
+--- @return Button
+local function createGrip(window, inset, done)
+  window:SetResizable(true)
+  local grip = CreateFrame("Button", nil, window)
   grip:SetSize(16, 16)
-  grip:SetPoint("BOTTOMRIGHT", -3, 3)
-  grip:SetFrameLevel(frame:GetFrameLevel() + 20)
+  grip:SetPoint("BOTTOMRIGHT", -inset, inset)
+  grip:SetFrameLevel(window:GetFrameLevel() + 20)
   grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
   grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
   grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
   grip:SetScript("OnMouseDown", function()
     -- A window held by its middle grows both ways at once, leaving the corner behind the cursor.
     -- Held by the corner across from the grip it stays where it is and the grip follows the mouse
-    local left, top = frame:GetLeft(), frame:GetTop()
+    local left, top = window:GetLeft(), window:GetTop()
     if left and top then
-      frame:ClearAllPoints()
-      frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+      window:ClearAllPoints()
+      window:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
     end
-    frame:StartSizing("BOTTOMRIGHT")
+    window:StartSizing("BOTTOMRIGHT")
   end)
   grip:SetScript("OnMouseUp", function()
-    frame:StopMovingOrSizing()
-    local window = settings()
-    window.width, window.height = math.floor(frame:GetWidth() + 0.5), math.floor(frame:GetHeight() + 0.5)
+    window:StopMovingOrSizing()
+    done()
     MainFrame.Refresh()
   end)
 
   -- The selected game follows the window while it is being dragged to size
-  frame:SetScript("OnSizeChanged", function()
+  window:SetScript("OnSizeChanged", function()
     MainFrame.Refresh()
   end)
+  return grip
+end
+
+local function createResizeGrip()
+  createGrip(frame, 3, function()
+    local window = settings()
+    window.width, window.height = math.floor(frame:GetWidth() + 0.5), math.floor(frame:GetHeight() + 0.5)
+  end)
+  applyScale()
+end
+
+--- What the window does every frame while the game on screen is in it, whole or small: a game
+--- that is timed is on the clock for as long as it is looked at, see Session.Spend, and the
+--- computer plays only while its game is
+--- @param elapsed number Seconds since the last frame
+local function tick(elapsed)
+  if reading then
+    return
+  elseif catching and not Wizard.IsOpen() then
+    catchingUp(elapsed)
+  elseif selectedId and not review and not Wizard.IsOpen() then
+    -- Not while the game itself is held still, see GameViewObject.Paused
+    local match = private.session:Get(selectedId)
+    local entry = match and views[match.game]
+    if not (entry and entry.view.Paused and entry.view:Paused()) then
+      private.session:Spend(selectedId, elapsed)
+    end
+    ponder(elapsed)
+  end
+end
+
+-----------------------------
+-- The small window
+-----------------------------
+
+--- Puts the small window where the player left it, or where it starts out
+local function placeSmall()
+  local place = settings().smallPlace
+  if type(place) ~= "table" or not place[1] then
+    place = SMALL_PLACE
+  end
+  small:ClearAllPoints()
+  small:SetPoint(place[1], UIParent, place[2], place[3], place[4])
+end
+
+--- The least the small window can be with a game in it: what every game gets, or more for one
+--- that says it needs more (GameDefinition.small)
+--- @param game GameDefinition?
+--- @return number width, number height
+local function smallLeast(game)
+  local need = game and game.small
+  local width, height = SMALL_LEAST_WIDTH, SMALL_LEAST_HEIGHT
+  if need then
+    width = math.max(width, need.width + SMALL_PAD * 2)
+    height = math.max(height, need.height + SMALL_HEADER + SMALL_PAD)
+  end
+  return width, height
+end
+
+--- Gives the game in the small window the room it needs and keeps it from being made smaller,
+--- and is the size the player made it otherwise. Done as a game comes into it, not every time it
+--- is drawn, which would undo dragging it to size
+--- @param game GameDefinition?
+local function fitSmall(game)
+  local id = game and game.id
+  if small.fitted == id then
+    return
+  end
+  small.fitted = id
+  local window = settings()
+  local leastWidth, leastHeight = smallLeast(game)
+  bound(small, window.scale / 100, leastWidth, leastHeight)
+  local width, height = window.smallWidth or SMALL_WIDTH, window.smallHeight or SMALL_HEIGHT
+  small:SetSize(math.max(leastWidth, width), math.max(leastHeight, height))
+end
+
+--- Fades the small window while the mouse is elsewhere, if the player wants it to, and brings it
+--- back for the mouse, for a menu that is open and for a game against others that waits on them
+--- @param elapsed number
+local function fadeSmall(elapsed)
+  local match = selectedId and private.session:Get(selectedId)
+  local faint = ForeverGames.db.profile.smallFade ~= false
+    and not smallSizing
+    and not small:IsMouseOver()
+    and not small.menu.list:IsShown()
+    and not (match and waitingOnMe(match))
+  local target, alpha = faint and SMALL_FAINT or 1, small:GetAlpha()
+  if alpha ~= target then
+    local step = elapsed * (1 - SMALL_FAINT) / SMALL_FADE
+    small:SetAlpha(target > alpha and math.min(target, alpha + step) or math.max(target, alpha - step))
+  end
+end
+
+local function createSmall()
+  local window = settings()
+  small = Widgets.Panel(UIParent)
+  small:SetBackdropColor(0.04, 0.04, 0.06, 0.94)
+  small:SetBackdropBorderColor(1, 0.82, 0, 0.35)
+  small:SetSize(math.max(SMALL_LEAST_WIDTH, window.smallWidth or SMALL_WIDTH), math.max(SMALL_LEAST_HEIGHT, window.smallHeight or SMALL_HEIGHT))
+  -- Under the bags, the map and the client's own windows, which come and go over it
+  small:SetFrameStrata("MEDIUM")
+  small:SetMovable(true)
+  small:SetClampedToScreen(true)
+  small:EnableMouse(true)
+  small:RegisterForDrag("LeftButton")
+  small:SetScript("OnDragStart", small.StartMoving)
+  small:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    local point, _, relative, x, y = self:GetPoint(1)
+    settings().smallPlace = { point, relative, x, y }
+  end)
+  placeSmall()
+  small:Hide()
+  -- Not on the list of windows Escape closes: it is up while the player does other things,
+  -- Escape among them
+
+  small.title = Widgets.Label(small, "GameFontNormalSmall")
+  small.title:SetPoint("TOPLEFT", 8, -7)
+  small.title:SetWordWrap(false)
+  small.title:SetJustifyH("LEFT")
+  small.close = CreateFrame("Button", nil, small, "UIPanelCloseButton")
+  small.close:SetSize(22, 22)
+  small.close:SetPoint("TOPRIGHT", 0, 0)
+  small.close:SetScript("OnClick", function()
+    MainFrame.Hide()
+  end)
+  small.grow = Widgets.Button(small, L["small_whole"], 54, 18)
+  small.grow:SetPoint("RIGHT", small.close, "LEFT", 0, 0)
+  small.grow:SetScript("OnClick", function()
+    GameTooltip_Hide()
+    MainFrame.MakeSmall(false)
+  end)
+  small.grow:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText(L["small_whole"])
+    GameTooltip:AddLine(L["small_whole_tip"], 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  small.grow:SetScript("OnLeave", GameTooltip_Hide)
+  -- What the buttons under the game would do in the whole window, and the way to the rest
+  small.menu = Widgets.Dropdown(small, 18)
+  small.menu:SetWidth(64)
+  small.menu:SetPoint("RIGHT", small.grow, "LEFT", -4, 0)
+  small.title:SetPoint("RIGHT", small.menu, "LEFT", -6, 0)
+
+  small.status = Widgets.Label(small, "GameFontHighlightSmall")
+  small.status:SetPoint("TOPLEFT", 8, -24)
+  small.status:SetPoint("RIGHT", -8, 0)
+  small.status:SetWordWrap(false)
+  small.status:SetJustifyH("LEFT")
+  small.statusPulse = Widgets.Pulse(small.status)
+
+  -- Sized explicitly, as the stage in the whole window is
+  small.stage = CreateFrame("Frame", nil, small)
+  small.stage:SetPoint("TOPLEFT", SMALL_PAD, -SMALL_HEADER)
+  -- Said in place of the game while it hasn't begun
+  small.message = Widgets.Label(small.stage, "GameFontHighlight")
+  small.message:SetPoint("LEFT", 8, 0)
+  small.message:SetPoint("RIGHT", -8, 0)
+  small.message:SetJustifyH("CENTER")
+
+  local grip = createGrip(small, 1, function()
+    smallSizing = false
+    local window = settings()
+    window.smallWidth, window.smallHeight = math.floor(small:GetWidth() + 0.5), math.floor(small:GetHeight() + 0.5)
+  end)
+  grip:HookScript("OnMouseDown", function()
+    smallSizing = true
+  end)
+  applyScale()
+
+  small:SetScript("OnShow", function()
+    MainFrame.Refresh()
+  end)
+  small:SetScript("OnUpdate", function(_, elapsed)
+    tick(elapsed)
+    fadeSmall(elapsed)
+  end)
+end
+
+--- Fills in the small window around the game, which refreshDetail put in it
+--- @param match Match
+local function refreshSmall(match)
+  local detail, game = frame.detail, Games.Get(match.game)
+  small.title:SetText(detail.header:GetText())
+  small.status:SetText(detail.status:GetText())
+  if waitingOnMe(match) then
+    small.status:SetTextColor(unpack(Widgets.GREEN))
+    small.statusPulse:Play()
+  else
+    small.status:SetTextColor(1, 1, 1)
+    small.statusPulse:Stop()
+    small.status:SetAlpha(1)
+  end
+  small.message:SetText(detail.message:GetText() or "")
+  small.message:SetShown(detail.message:GetText() ~= "")
+
+  local choices = {}
+  if catching and catching.id == match.id then
+    choices[#choices + 1] = { text = L["missed_skip"], pick = skipCatchingUp }
+  end
+  for _, action in ipairs(actionsFor(match)) do
+    if not action.disabled then
+      choices[#choices + 1] = { text = action.text, tip = action.tip, pick = action.onClick }
+    end
+  end
+  local others = #waitingIn(private.session:List(), match.id)
+  if others > 0 then
+    choices[#choices + 1] = {
+      text = L["next_waiting"]:format(others),
+      pick = function()
+        local waiting = waitingIn(private.session:List(), selectedId)
+        if waiting[1] then
+          MainFrame.Select(waiting[1].id)
+        end
+      end,
+    }
+  end
+  -- What needs the room of the whole window is read there
+  if HowTo.Has(game) then
+    choices[#choices + 1] = {
+      text = L["howto"],
+      pick = function()
+        MainFrame.MakeSmall(false)
+        toggleHowTo()
+      end,
+    }
+  end
+  choices[#choices + 1] = { text = L["home"], pick = MainFrame.Home }
+  small.menu:SetChoices(choices)
+  small.menu.label:SetText(L["small_menu"])
+end
+
+--- Shows the whole window in place of the small one
+local function showWhole()
+  smallOpen, smallFighting = false, false
+  if small then
+    small:Hide()
+  end
+  if frame:IsShown() then
+    MainFrame.Refresh()
+  else
+    frame:Show()
+  end
+end
+
+--- Shows the small window in place of the whole one, even in a fight when it is asked for
+local function showSmall()
+  smallOpen, smallFighting = true, false
+  if not small then
+    createSmall()
+  end
+  frame:Hide()
+  if small:IsShown() then
+    MainFrame.Refresh()
+  else
+    small:SetAlpha(1)
+    small:Show()
+  end
 end
 
 local function create()
@@ -2669,22 +2993,8 @@ local function create()
   frame.body:SetPoint("BOTTOMRIGHT", -INSET, INSET)
   frame.detail = createDetailPanel(frame.body)
   frame.home = createHomePanel(frame.body)
-  -- A game that is timed is on the clock for as long as it is looked at, see Session.Spend, and
-  -- the computer plays only while its game is
   frame.detail:SetScript("OnUpdate", function(_, elapsed)
-    if reading then
-      return
-    elseif catching and not Wizard.IsOpen() then
-      catchingUp(elapsed)
-    elseif selectedId and not review and not Wizard.IsOpen() then
-      -- Not while the game itself is held still, see GameViewObject.Paused
-      local match = private.session:Get(selectedId)
-      local entry = match and views[match.game]
-      if not (entry and entry.view.Paused and entry.view:Paused()) then
-        private.session:Spend(selectedId, elapsed)
-      end
-      ponder(elapsed)
-    end
+    tick(elapsed)
   end)
   createResizeGrip()
 
@@ -2705,9 +3015,20 @@ end
 -----------------------------
 
 local function redraw()
-  local inWizard = Wizard.IsOpen()
+  local compact = small ~= nil and small:IsShown()
+  if compact then
+    local selected = selectedId and private.session:Get(selectedId)
+    if not selected or selected.hidden then
+      -- With no game left to show small, the player is back at the front page, whole
+      settings().small, compact = false, false
+      showWhole()
+    else
+      fitSmall(Games.Get(selected.game))
+    end
+  end
+  local inWizard = not compact and Wizard.IsOpen()
   local Party = private.Party
-  local inParty = not inWizard and Party ~= nil and Party.OnPage()
+  local inParty = not compact and not inWizard and Party ~= nil and Party.OnPage()
   frame.body:SetShown(not inWizard and not inParty)
 
   if inWizard then
@@ -2732,12 +3053,15 @@ local function redraw()
       refreshHome(private.session:List())
     end
     refreshDetail(selected, fresh)
+    if compact then
+      refreshSmall(selected)
+    end
   end
 end
 
 --- Redraws the window if it is open
 function MainFrame.Refresh()
-  if not frame or not frame:IsShown() or refreshing then
+  if not frame or not (frame:IsShown() or (small and small:IsShown())) or refreshing then
     return
   end
   refreshing = true
@@ -2768,15 +3092,67 @@ function MainFrame.ApplyScale()
   end
 end
 
---- Puts the window back in the middle of the screen at the size it started out with
+--- Puts the window back in the middle of the screen at the size it started out with, and the
+--- small window back in its corner at its own
 function MainFrame.ResetWindow()
   local window, usual = settings(), ForeverGames.db.defaults.profile.window
   window.width, window.height = usual.width, usual.height
+  window.smallWidth, window.smallHeight, window.smallPlace = SMALL_WIDTH, SMALL_HEIGHT, nil
+  if small then
+    placeSmall()
+    small.fitted = nil
+  end
   if frame then
     frame:ClearAllPoints()
     frame:SetPoint("CENTER")
     frame:SetSize(window.width, window.height)
     MainFrame.Refresh()
+  end
+end
+
+--- Shows the game on screen small, in a window of its own, or whole in the main window again.
+--- Which it is is kept: the game the window is opened on is shown the same way next time
+--- @param on boolean
+function MainFrame.MakeSmall(on)
+  if not frame then
+    create()
+  end
+  local match = selectedId and private.session:Get(selectedId)
+  -- Only a game can be small
+  on = on and match ~= nil and not match.hidden
+  settings().small = on
+  if on then
+    -- What is out of sight is left, the rules over the board and an earlier position
+    if reading then
+      HowTo.Close()
+    end
+    review = nil
+    showSmall()
+  else
+    showWhole()
+  end
+end
+
+--- @return boolean Whether the game on screen is shown small, or would be with the window open
+function MainFrame.IsSmall()
+  return settings().small == true
+end
+
+--- Called as a fight starts and once it is over. The small window is put away for its length, if
+--- the player wants it to be, and the game in it stands still meanwhile (see Pondering)
+--- @param on boolean
+function MainFrame.Fighting(on)
+  if not small then
+    return
+  end
+  if on and small:IsShown() and ForeverGames.db.profile.smallFights ~= false then
+    smallFighting = true
+    small:Hide()
+  elseif not on and smallFighting then
+    smallFighting = false
+    if smallOpen then
+      small:Show()
+    end
   end
 end
 
@@ -2799,21 +3175,29 @@ end
 --- @param id string
 --- @return boolean
 function MainFrame.IsViewing(id)
-  return frame ~= nil and frame:IsShown() and not Wizard.IsOpen() and selectedId == id
+  if selectedId ~= id or not frame then
+    return false
+  end
+  return (frame:IsShown() and not Wizard.IsOpen()) or (small ~= nil and small:IsShown())
 end
 
 --- The match the window lets the computer think in (see ponder): the one on screen, unless the
 --- player is looking back through it
 --- @return string?
 function MainFrame.Pondering()
-  if frame and frame:IsShown() and frame.detail:IsVisible() and selectedId and not review and not reading and not Wizard.IsOpen() then
+  if not frame or not selectedId or review or reading then
+    return nil
+  end
+  local whole = frame:IsShown() and frame.detail:IsVisible() and not Wizard.IsOpen()
+  if whole or (small ~= nil and small:IsShown()) then
     return selectedId
   end
   return nil
 end
 
 --- @param id string? Match to show. Without one the window is where it was left: on the front page, or on the game that was being looked at
-function MainFrame.Open(id)
+--- @param whole boolean? In the whole window, even if the game was shown small
+function MainFrame.Open(id, whole)
   if not frame then
     create()
   end
@@ -2826,10 +3210,17 @@ function MainFrame.Open(id)
       private.Party.Hide()
     end
   end
-  if frame:IsShown() then
-    MainFrame.Refresh()
+  if whole then
+    settings().small = false
+  end
+  -- A game that was shown small is shown small again, the wizard and a room aside
+  local match = selectedId and private.session:Get(selectedId)
+  local Party = private.Party
+  local busy = Wizard.IsOpen() or (Party ~= nil and Party.OnPage())
+  if settings().small and match and not match.hidden and not busy then
+    showSmall()
   else
-    frame:Show()
+    showWhole()
   end
 end
 
@@ -2840,9 +3231,9 @@ function MainFrame.NewGame(gameId, rules)
   if not frame then
     create()
   end
-  if not frame:IsShown() then
-    frame:Show()
-  end
+  -- The wizard has the whole window, and what is started there is shown whole
+  settings().small = false
+  showWhole()
   if private.Party then
     private.Party.Hide()
   end
@@ -2850,21 +3241,25 @@ function MainFrame.NewGame(gameId, rules)
   MainFrame.Refresh()
 end
 
---- @return boolean Whether the window is open
+--- @return boolean Whether the window is open, whole or small
 function MainFrame.IsShown()
-  return frame ~= nil and frame:IsShown()
+  return frame ~= nil and (frame:IsShown() or (small ~= nil and small:IsShown()))
 end
 
---- Puts the window away
+--- Puts the window away, whole or small
 function MainFrame.Hide()
+  smallOpen, smallFighting = false, false
+  if small then
+    small:Hide()
+  end
   if frame then
     frame:Hide()
   end
 end
 
 function MainFrame.Toggle()
-  if frame and frame:IsShown() then
-    frame:Hide()
+  if MainFrame.IsShown() then
+    MainFrame.Hide()
   else
     MainFrame.Open()
   end

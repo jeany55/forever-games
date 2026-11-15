@@ -245,8 +245,10 @@ local function createView(stage)
 end
 ```
 
-`Layout(width, height)` is called before the first `Update` and again whenever the window is
-resized. `Update(view)` is called on every change and also when nothing has changed, so it must be
+`Layout(width, height, compact)` is called before the first `Update` and again whenever the window is
+resized. When the player clicks **Make Small**, the same view is moved into a small window in a
+corner of the screen and laid out again with `compact` set to `true`; it can be as small as about
+250 by 175. Fit what matters into that, and leave out anything that is only nice to have. `Update(view)` is called on every change and also when nothing has changed, so it must be
 cheap and must not restart animations. The fields of `view` you will use most are:
 
 | Field | What it is |

@@ -198,5 +198,7 @@ engine.Games.Register({
   raceFor = { key = "score", show = function(value)
     return L["pinball_points"]:format(Machine.commas(value))
   end },
+  -- The least the small window gives it: room for the panel of 250 beside the table
+  small = { width = 440, height = 300 },
   createView = createView,
 })

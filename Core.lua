@@ -65,8 +65,12 @@ local defaults = {
     diceColour = "white",
     -- What dominoes are made of, one of the looks in GUI/Dominoes.lua
     dominoStyle = "ivory",
-    -- The scale is in hundredths of the window's usual size
-    window = { width = 920, height = 680, scale = 100 },
+    -- The scale is in hundredths of the window's usual size. Whether the game on screen is shown
+    -- small, in a window of its own, and how big that is; where it was left is kept with it
+    window = { width = 920, height = 680, scale = 100, small = false, smallWidth = 380, smallHeight = 340 },
+    -- Whether the small window fades while the mouse is elsewhere, and is put away in a fight
+    smallFade = true,
+    smallFights = true,
     -- Ids of the games the player starred in the new game wizard
     favourites = {},
     -- How the player last set the rules of each game in the wizard, by game id
@@ -219,13 +223,16 @@ function ForeverGames:OnEnable()
   })
 
   -- A game for a room may stop for a fight, and keep out of its way
+  -- and so may a game shown small
   self:RegisterEvent("PLAYER_REGEN_DISABLED", function()
     private.rooms:Fighting(true)
     Party.Refresh()
+    MainFrame.Fighting(true)
   end)
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     private.rooms:Fighting(false)
     Party.Refresh()
+    MainFrame.Fighting(false)
   end)
 
   Links.Init(function(host, gameId)
@@ -498,6 +505,14 @@ function ForeverGames:HandleSlashCommand(input)
     MainFrame.Toggle()
   elseif command == "new" then
     MainFrame.NewGame()
+  elseif command == "small" then
+    -- The game on screen small, or whole again
+    if MainFrame.IsShown() and MainFrame.IsSmall() then
+      MainFrame.MakeSmall(false)
+    else
+      MainFrame.Open()
+      MainFrame.MakeSmall(true)
+    end
   elseif command == "party" or command == "room" then
     Party.Toggle()
   elseif command == "options" or command == "config" or command == "settings" then

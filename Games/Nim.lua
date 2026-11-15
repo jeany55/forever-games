@@ -530,6 +530,8 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the longest of the lines that say what a take does
+  small = { width = 330, height = 180 },
   createView = createView,
   -- Not the engine's business: for the tests
   rules = { lost = lost },

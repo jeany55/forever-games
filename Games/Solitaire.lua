@@ -649,5 +649,7 @@ private.Games.Register({
       return state.score
     end,
   },
+  -- The least the small window gives it: room for seven columns, and the line along the top with Finish
+  small = { width = 280, height = 220 },
   createView = createView,
 })

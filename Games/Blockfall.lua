@@ -2180,5 +2180,7 @@ private.Games.Register({
       return state.score
     end,
   },
+  -- The least the small window gives it: room for the boxes either side of the well
+  small = { width = 320, height = 335 },
   createView = createView,
 })

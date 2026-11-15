@@ -2641,6 +2641,8 @@ private.Games.Register({
     return state.outcome
   end,
   computer = COMPUTER,
+  -- The least the small window gives it: room for the panel beside the map, with the drawn tile and the buttons
+  small = { width = 400, height = 310 },
   createView = createView,
   -- Not the engine's business: for the tests and the view
   rules = {
