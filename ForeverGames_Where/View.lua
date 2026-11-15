@@ -263,6 +263,7 @@ function View:play(round)
   self.hud:Show()
   self.corner:Show()
   self.small:Clear()
+  self.small:SetExplored(state.map ~= "blank")
   self.small:Show(startMap())
   local loaded = place and self.pano:Show(panorama(place)) or false
   self.missing:SetShown(not loaded)

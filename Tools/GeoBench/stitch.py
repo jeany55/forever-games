@@ -20,6 +20,9 @@ whole in Previews/ to look at.
     --game <folder>                       the game's _forever_ folder, if not the usual one
     --account <name>                      which account's saved variables, if there are several
     --blp                                 the client's own BLP (DXT1) rather than TGA, a fifth of the size
+    --fov <degrees>                       how wide the camera saw, not searched for: for a capture with
+                                          too little detail for the search (fog, open water), given
+                                          what a good capture from the same client found (84.34)
     --from <folder> --tag <name>          somebody else's captures: their GeoBench.lua and their
                                           screenshots anywhere in the folder, as they sent them.
                                           Their panoramas are <name><id>, apart from your own c<id>
@@ -227,12 +230,12 @@ def disagreement(images, step, sign, fov, pitch):
     return difference / max(energy, 1e-6)
 
 
-def calibrate(images, step, said_fov):
+def calibrate(images, step, said_fov, known_fov=None):
     small = [detail(shrink(image, SEARCH_WIDTH)) for image in images]
     best = None
     # Which way round and about how wide, looking level
     for sign in (1, -1):
-        for fov in np.arange(40, 131, 3):
+        for fov in ([known_fov] if known_fov else np.arange(40, 131, 3)):
             score = disagreement(small, step, sign, fov, 0)
             if best is None or score < best[0]:
                 best = (score, sign, fov, 0.0)
@@ -240,7 +243,8 @@ def calibrate(images, step, said_fov):
     # Then closer, the width and the pitch in turn
     for span, steps in ((3, 13), (0.6, 13), (0.12, 13)):
         for _ in range(2):
-            fov = min(np.linspace(fov - span, fov + span, steps), key=lambda v: disagreement(small, step, sign, v, pitch))
+            if not known_fov:
+                fov = min(np.linspace(fov - span, fov + span, steps), key=lambda v: disagreement(small, step, sign, v, pitch))
             pitch = min(np.linspace(pitch - math.radians(span * 3), pitch + math.radians(span * 3), steps),
                         key=lambda v: disagreement(small, step, sign, fov, v))
     score = disagreement(small, step, sign, fov, pitch)
@@ -265,15 +269,15 @@ def extent(images, step, sign, fov, pitch):
     return float(h[up]) * 0.98, float(h[down]) * 0.98
 
 
-def stitch(index, fields, width, as_blp=False, tag=None):
+def stitch(index, fields, width, as_blp=False, tag=None, known_fov=None):
     capture = int(fields["id"])
     step = number(fields, "step") or 30
     said_fov = number(fields, "fov")
     paths = screenshots(index, fields)
     print(f"Capture {capture}: {fields.get('zone')} / {fields.get('subzone')}, {len(paths)} screenshots, {step} degrees apart")
     images = load(paths)
-    sign, fov, pitch, score, level = calibrate(images, step, said_fov)
-    print(f"  field of view {fov:.2f} degrees across (the setting said {said_fov}), looking {math.degrees(pitch):+.2f} up,"
+    sign, fov, pitch, score, level = calibrate(images, step, said_fov, known_fov)
+    print(f"  field of view {fov:.2f} degrees across ({'as given' if known_fov else f'the setting said {said_fov}'}), looking {math.degrees(pitch):+.2f} up,"
           f" turned {'clockwise' if sign > 0 else 'anticlockwise'}; disagreement {score:.3f}"
           + (f" (at the setting's, level: {level:.3f})" if level else ""))
     # A good capture's screenshots agree to under 0.3, moving water and all: past this, no field
@@ -333,6 +337,7 @@ def main():
     parser.add_argument("--blp", action="store_true", help="BLP (DXT1) pictures rather than TGA, about a fifth of the size")
     parser.add_argument("--from", dest="source", help="a folder of somebody else's captures")
     parser.add_argument("--tag", help="what their panoramas are called, before the capture's number")
+    parser.add_argument("--fov", type=float, help="how wide the camera saw, in degrees, rather than searching for it")
     args = parser.parse_args()
     tag = None
     if args.source:
@@ -350,7 +355,7 @@ def main():
     for capture in ids:
         if capture not in found:
             sys.exit(f"No capture {capture} (there are {sorted(found)})")
-        stitch(index, found[capture], args.width, args.blp, tag)
+        stitch(index, found[capture], args.width, args.blp, tag, args.fov)
     if ids:
         print("Then ./install.sh; a new picture needs the game restarted, /reload is enough for one stitched again")
 

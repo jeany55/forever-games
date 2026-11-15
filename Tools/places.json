@@ -1370,5 +1370,649 @@
    ]
   },
   "source": "c51"
+ },
+ {
+  "id": "nightsongwoods",
+  "continent": 1,
+  "x": 1398.8,
+  "y": -2278.0,
+  "mapID": 1440,
+  "zone": "Ashenvale",
+  "subzone": "Nightsong Woods",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.45815,
+   "bottom": -0.50225,
+   "facing": 4.1913,
+   "sky": [
+    0.1359,
+    0.2449,
+    0.2947
+   ],
+   "ground": [
+    0.1338,
+    0.212,
+    0.1064
+   ]
+  },
+  "source": "c52"
+ },
+ {
+  "id": "wetlandsfalls",
+  "continent": 0,
+  "x": -4288.7,
+  "y": -3120.7,
+  "mapID": 1437,
+  "zone": "Wetlands",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.30135,
+   "bottom": -0.69335,
+   "facing": 2.2499,
+   "sky": [
+    0.4857,
+    0.5079,
+    0.5197
+   ],
+   "ground": [
+    0.5009,
+    0.4372,
+    0.3139
+   ]
+  },
+  "source": "c53"
+ },
+ {
+  "id": "wetlandscamp",
+  "continent": 0,
+  "x": -4224.6,
+  "y": -2719.8,
+  "mapID": 1437,
+  "zone": "Wetlands",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.42385,
+   "bottom": -0.54145,
+   "facing": 1.8365,
+   "sky": [
+    0.42,
+    0.4156,
+    0.4641
+   ],
+   "ground": [
+    0.3551,
+    0.2548,
+    0.0878
+   ]
+  },
+  "source": "c54"
+ },
+ {
+  "id": "silverstreammine",
+  "continent": 0,
+  "x": -4935.9,
+  "y": -2855.8,
+  "mapID": 1432,
+  "zone": "Loch Modan",
+  "subzone": "Silver Stream Mine",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.38465,
+   "bottom": -0.58555,
+   "facing": 3.9888,
+   "sky": [
+    0.3606,
+    0.408,
+    0.4559
+   ],
+   "ground": [
+    0.1905,
+    0.229,
+    0.0776
+   ]
+  },
+  "source": "c56"
+ },
+ {
+  "id": "lochmodanmist",
+  "continent": 0,
+  "x": -5222.8,
+  "y": -3079.4,
+  "mapID": 1432,
+  "zone": "Loch Modan",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.34545,
+   "bottom": -0.63455,
+   "facing": 4.2371,
+   "sky": [
+    0.3817,
+    0.4325,
+    0.4911
+   ],
+   "ground": [
+    0.2556,
+    0.2779,
+    0.2674
+   ]
+  },
+  "source": "c57"
+ },
+ {
+  "id": "angorfortress",
+  "continent": 0,
+  "x": -6402.3,
+  "y": -3292.4,
+  "mapID": 1418,
+  "zone": "Badlands",
+  "subzone": "Angor Fortress",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.45325,
+   "bottom": -0.50715,
+   "facing": 1.9684,
+   "sky": [
+    0.4979,
+    0.2985,
+    0.2001
+   ],
+   "ground": [
+    0.6939,
+    0.2534,
+    0.0471
+   ]
+  },
+  "source": "c58"
+ },
+ {
+  "id": "badlandscanyon",
+  "continent": 0,
+  "x": -6616.7,
+  "y": -2373.9,
+  "mapID": 1418,
+  "zone": "Badlands",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.47285,
+   "bottom": -0.48755,
+   "facing": 4.4428,
+   "sky": [
+    0.5544,
+    0.3557,
+    0.3271
+   ],
+   "ground": [
+    0.5066,
+    0.2287,
+    0.0991
+   ]
+  },
+  "source": "c59"
+ },
+ {
+  "id": "hillsbradriver",
+  "continent": 0,
+  "x": -285.6,
+  "y": -1170.0,
+  "mapID": 1424,
+  "zone": "Hillsbrad Foothills",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.46305,
+   "bottom": -0.49735,
+   "facing": 2.0233,
+   "sky": [
+    0.3215,
+    0.3811,
+    0.3208
+   ],
+   "ground": [
+    0.3005,
+    0.3368,
+    0.0536
+   ]
+  },
+  "source": "c60"
+ },
+ {
+  "id": "durnholdekeep",
+  "continent": 0,
+  "x": -661.9,
+  "y": -1357.8,
+  "mapID": 1424,
+  "zone": "Hillsbrad Foothills",
+  "subzone": "Durnholde Keep",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.42385,
+   "bottom": -0.54145,
+   "facing": 4.0462,
+   "sky": [
+    0.4638,
+    0.545,
+    0.4783
+   ],
+   "ground": [
+    0.3819,
+    0.3538,
+    0.1579
+   ]
+  },
+  "source": "c61"
+ },
+ {
+  "id": "thoradinswall",
+  "continent": 0,
+  "x": -736.4,
+  "y": -1679.4,
+  "mapID": 1417,
+  "zone": "Arathi Highlands",
+  "subzone": "Thoradin's Wall",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.43365,
+   "bottom": -0.52675,
+   "facing": 3.5028,
+   "sky": [
+    0.5442,
+    0.671,
+    0.6647
+   ],
+   "ground": [
+    0.4637,
+    0.401,
+    0.2029
+   ]
+  },
+  "source": "c62"
+ },
+ {
+  "id": "needlesmesa",
+  "continent": 1,
+  "x": -5338.4,
+  "y": -2612.2,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.40915,
+   "bottom": -0.55615,
+   "facing": 4.1647,
+   "sky": [
+    0.4962,
+    0.2577,
+    0.1632
+   ],
+   "ground": [
+    0.6112,
+    0.2816,
+    0.1253
+   ]
+  },
+  "source": "c63"
+ },
+ {
+  "id": "needlespillars",
+  "continent": 1,
+  "x": -5557.1,
+  "y": -2846.5,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.68845,
+   "bottom": -0.30135,
+   "facing": 4.1909,
+   "sky": [
+    0.4565,
+    0.3191,
+    0.2922
+   ],
+   "ground": [
+    0.5596,
+    0.29,
+    0.1397
+   ]
+  },
+  "source": "c64"
+ },
+ {
+  "id": "needlescanyon",
+  "continent": 1,
+  "x": -5612.9,
+  "y": -3051.0,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.68355,
+   "bottom": -0.30625,
+   "facing": 4.82,
+   "sky": [
+    0.5223,
+    0.4062,
+    0.3892
+   ],
+   "ground": [
+    0.5974,
+    0.3038,
+    0.1481
+   ]
+  },
+  "source": "c65"
+ },
+ {
+  "id": "shimmeringflats",
+  "continent": 1,
+  "x": -5608.9,
+  "y": -3540.8,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": "The Shimmering Flats",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.54635,
+   "bottom": -0.41895,
+   "facing": 4.4526,
+   "sky": [
+    0.4499,
+    0.5771,
+    0.6535
+   ],
+   "ground": [
+    0.9149,
+    0.7784,
+    0.5582
+   ]
+  },
+  "source": "c66"
+ },
+ {
+  "id": "weazelscrater",
+  "continent": 1,
+  "x": -5719.9,
+  "y": -3889.5,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": "Weazel's Crater",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.45325,
+   "bottom": -0.50715,
+   "facing": 3.8637,
+   "sky": [
+    0.5207,
+    0.7232,
+    0.8367
+   ],
+   "ground": [
+    0.5883,
+    0.4038,
+    0.2737
+   ]
+  },
+  "source": "c67"
+ },
+ {
+  "id": "mirageraceway",
+  "continent": 1,
+  "x": -5960.8,
+  "y": -4016.0,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": "Mirage Raceway",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.53165,
+   "bottom": -0.43365,
+   "facing": 3.5373,
+   "sky": [
+    0.4973,
+    0.7296,
+    0.8851
+   ],
+   "ground": [
+    0.7919,
+    0.7227,
+    0.6301
+   ]
+  },
+  "source": "c68"
+ },
+ {
+  "id": "mirageflats",
+  "continent": 1,
+  "x": -6347.8,
+  "y": -3773.2,
+  "mapID": 1441,
+  "zone": "Thousand Needles",
+  "subzone": "Mirage Raceway",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.56105,
+   "bottom": -0.40425,
+   "facing": 1.9147,
+   "sky": [
+    0.5522,
+    0.7638,
+    0.9
+   ],
+   "ground": [
+    0.801,
+    0.7342,
+    0.6442
+   ]
+  },
+  "source": "c69"
+ },
+ {
+  "id": "gadgetzanwall",
+  "continent": 1,
+  "x": -7005.4,
+  "y": -3799.3,
+  "mapID": 1446,
+  "zone": "Tanaris",
+  "subzone": "Gadgetzan",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.44835,
+   "bottom": -0.51205,
+   "facing": 3.3745,
+   "sky": [
+    0.5232,
+    0.4264,
+    0.3564
+   ],
+   "ground": [
+    0.6527,
+    0.4276,
+    0.2358
+   ]
+  },
+  "source": "c70"
+ },
+ {
+  "id": "gadgetzandunes",
+  "continent": 1,
+  "x": -7190.6,
+  "y": -3935.4,
+  "mapID": 1446,
+  "zone": "Tanaris",
+  "subzone": "Gadgetzan",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.61005,
+   "bottom": -0.36505,
+   "facing": 1.3119,
+   "sky": [
+    0.5629,
+    0.4572,
+    0.3774
+   ],
+   "ground": [
+    0.8792,
+    0.6679,
+    0.411
+   ]
+  },
+  "source": "c71"
+ },
+ {
+  "id": "steamwheedlebeach",
+  "continent": 1,
+  "x": -7104.1,
+  "y": -4849.2,
+  "mapID": 1446,
+  "zone": "Tanaris",
+  "subzone": "Steamwheedle Port",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.39445,
+   "bottom": -0.57085,
+   "facing": 4.4632,
+   "sky": [
+    0.2302,
+    0.1973,
+    0.2225
+   ],
+   "ground": [
+    0.7463,
+    0.5915,
+    0.3649
+   ]
+  },
+  "source": "c72"
+ },
+ {
+  "id": "steamwheedledock",
+  "continent": 1,
+  "x": -6922.8,
+  "y": -4928.6,
+  "mapID": 1446,
+  "zone": "Tanaris",
+  "subzone": "Steamwheedle Port",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.44345,
+   "bottom": -0.51695,
+   "facing": 5.2827,
+   "sky": [
+    0.205,
+    0.1932,
+    0.2427
+   ],
+   "ground": [
+    0.2427,
+    0.2234,
+    0.1648
+   ]
+  },
+  "source": "c73"
+ },
+ {
+  "id": "steamwheedleinn",
+  "continent": 1,
+  "x": -6895.6,
+  "y": -4954.3,
+  "mapID": 1446,
+  "zone": "Tanaris",
+  "subzone": "Steamwheedle Port",
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.58065,
+   "bottom": -0.38955,
+   "facing": 5.1115,
+   "sky": [
+    0.1702,
+    0.0795,
+    0.0172
+   ],
+   "ground": [
+    0.2499,
+    0.1481,
+    0.0597
+   ]
+  },
+  "source": "c74"
+ },
+ {
+  "id": "riverglades",
+  "continent": 0,
+  "x": -8104.2,
+  "y": -5311.0,
+  "mapID": 2548,
+  "zone": "Riverglades",
+  "subzone": null,
+  "pano": {
+   "tiles": 4,
+   "width": 4096,
+   "height": 1024,
+   "top": 0.53655,
+   "bottom": -0.42875,
+   "facing": 1.1646,
+   "sky": [
+    0.5122,
+    0.6716,
+    0.7123
+   ],
+   "ground": [
+    0.4589,
+    0.3677,
+    0.0612
+   ]
+  },
+  "source": "c75"
  }
 ]

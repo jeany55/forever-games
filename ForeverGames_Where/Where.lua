@@ -57,6 +57,7 @@ end
 --- @field guesses WhereGuess[] By round
 --- @field total integer Points so far
 --- @field time integer Seconds each place is given, 0 for as long as it takes
+--- @field map string? "blank" for a map to guess on without the areas drawn in, "explored" or nil for all of them
 
 local function catalogue()
   return Places.Catalogue("where")
@@ -90,6 +91,16 @@ local OPTIONS = {
       return value == 0 and L["where_time_none"] or L["where_time_seconds"]:format(value)
     end,
   },
+  {
+    id = "map",
+    name = L["where_option_map"],
+    description = L["where_option_map_description"],
+    choices = { "explored", "blank" },
+    default = "explored",
+    label = function(value)
+      return L["where_map_" .. value]
+    end,
+  },
 }
 
 --- @param seats number
@@ -101,7 +112,7 @@ local function newState(seats, random, rules)
   for index, place in ipairs(Places.Pick(random, catalogue(), ROUNDS)) do
     ids[index] = place.id
   end
-  return { places = ids, round = 1, guesses = {}, total = 0, time = rules.time or 0 }
+  return { places = ids, round = 1, guesses = {}, total = 0, time = rules.time or 0, map = rules.map }
 end
 
 --- @param state WhereState
@@ -175,6 +186,12 @@ local WHERE = {
       heading = L["where_time"],
       text = function(rules)
         return rules.time > 0 and L["where_howto_timed"] or nil
+      end,
+    },
+    {
+      heading = L["where_option_map"],
+      text = function(rules)
+        return rules.map == "blank" and L["where_howto_blank"] or nil
       end,
     },
     { heading = L["howto_scoring"], text = L["where_howto_scoring"] },

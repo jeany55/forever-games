@@ -602,6 +602,39 @@ return function(tests, loadEngine)
     end
   end
 
+  function tests.MapViewShownBareHasNoOverlaysAndNamesNoAreas()
+    local Client = dofile("Tests/FakeClient.lua")
+    local _, zone = fakeMaps(Client)
+    local map, point, run = mapAt(Client, { explored = false })
+    map:Show(zone)
+    local function shown()
+      local count = 0
+      for _, patch in ipairs(map.art.patches) do
+        count = count + (patch:IsShown() and 1 or 0)
+      end
+      return count
+    end
+    equal(0, shown(), "only the bare art")
+    point(550 / 1002 * 600, 400 / 668 * 400)
+    run(1 / 60)
+    equal("Elwynn Forest", map.zoneName:GetText(), "Goldshire's rectangle, but no area is named")
+    map:SetExplored(true)
+    equal(3, shown(), "explored again, every overlay")
+    equal(501, map.art.patches[1].texture)
+    map:SetExplored(false)
+    equal(0, shown(), "and bare again")
+  end
+
+  function tests.WhereDealsTheMapItWasSetUpWith()
+    local private = loadEngine()
+    local game = private.Games.Get("where")
+    local rules = private.Games.Rules(game.options)
+    equal("explored", rules.map, "all of it, unless asked")
+    equal("explored", game.newState(1, private.Random.New(1), rules).map)
+    rules.map = "blank"
+    equal("blank", game.newState(1, private.Random.New(1), rules).map)
+  end
+
   function tests.MapViewNamesTheAreaUnderTheCursor()
     local Client = dofile("Tests/FakeClient.lua")
     local continent, zone = fakeMaps(Client)

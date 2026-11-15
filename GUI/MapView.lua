@@ -9,7 +9,9 @@
 -- All of every map is shown, explored or not: the pictures the world map lays over its art for
 -- the places a character has been are drawn for every place there is (GUI/MapOverlays.lua, from
 -- the client's own tables), so no player sees more of it than another. The area under the
--- cursor is named, Goldshire as well as Elwynn Forest.
+-- cursor is named, Goldshire as well as Elwynn Forest. Or none of them, for a harder game
+-- (`explored = false`, SetExplored): only the map's bare art, as a character who has been nowhere
+-- sees it, and only the zones named.
 --
 -- Zooming goes on past the map's own detail into the zone under the cursor: turn the wheel on
 -- far enough over Elwynn Forest on the Eastern Kingdoms and the map becomes Elwynn's, turn it
@@ -36,6 +38,7 @@ local _, private = ...
 --- @field onClick (fun(place: Place))? A click on the map, as a place in the world. Nothing is done with a click without it
 --- @field onMap (fun(mapID: integer, name: string))? It went to another map
 --- @field trail boolean? The maps this one is in along the top, to go out to with a click
+--- @field explored boolean? false for the bare art, without what the world map shows of where a character has been
 
 --- @class MapPin
 --- @field place Place
@@ -93,7 +96,8 @@ function MapView.New(parent, options)
   local viewport = private.Viewport.New(parent, { maxZoom = MAX_ZOOM, step = STEP })
   --- @type MapView
   local self = setmetatable({ viewport = viewport, frame = viewport.frame, width = 0, height = 0, pins = {}, lines = {},
-    spare = {}, onClick = options.onClick, onMap = options.onMap, locked = false, crumbs = {} }, MapView)
+    spare = {}, onClick = options.onClick, onMap = options.onMap, locked = false, crumbs = {},
+    explored = options.explored ~= false }, MapView)
   self.mapID = options.map or call(C_Map.GetFallbackWorldMapID) or WORLD
   local content = viewport.content
   local level = content:GetFrameLevel()
@@ -166,11 +170,12 @@ local function layerOf(mapID)
   return layers and layers[1]
 end
 
---- The overlays of a map's art, the whole of what can be explored of it
+--- The overlays of a map's art, the whole of what can be explored of it: none on a map shown bare
+--- @param self MapView
 --- @param mapID integer
 --- @return table[]?
-local function overlaysOf(mapID)
-  local art = call(C_Map.GetMapArtID, mapID)
+local function overlaysOf(self, mapID)
+  local art = self.explored and call(C_Map.GetMapArtID, mapID)
   return art and private.MapOverlays and private.MapOverlays[art]
 end
 
@@ -234,7 +239,7 @@ function MapView:drawArt()
       end
       return used, file
     end
-    for _, patch in ipairs(overlaysOf(self.mapID) or {}) do
+    for _, patch in ipairs(overlaysOf(self, self.mapID) or {}) do
       local across, down = ceil(patch[O_WIDTH] / tw), ceil(patch[O_HEIGHT] / th)
       for j = 1, down do
         local h, fh = th, th
@@ -627,7 +632,7 @@ end
 --- @return string?
 function MapView:areaAt(x, y)
   local layer = layerOf(self.mapID)
-  local overlays = layer and overlaysOf(self.mapID)
+  local overlays = layer and overlaysOf(self, self.mapID)
   if not overlays then
     return nil
   end
@@ -971,6 +976,18 @@ end
 -----------------------------
 -- Public
 -----------------------------
+
+--- Shows every area of every map filled in, or only the maps' bare art
+--- @param explored boolean
+function MapView:SetExplored(explored)
+  explored = explored ~= false
+  if explored == self.explored then
+    return
+  end
+  self.explored = explored
+  self.art.mapID = nil
+  self:drawArt()
+end
 
 --- @param width number
 --- @param height number
