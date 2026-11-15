@@ -24792,55 +24792,30 @@ do
 end
 
 -----------------------------
--- The retail tocs
+-- The tocs
 -----------------------------
--- Every addon has a toc for the Forever client (<name>.toc, the one a client falls back on) and
--- one for retail (<name>_Standard.toc, which retail picks first). They list the same files and
--- say the same things, only the Interface (and the X-GameType) is the client's own.
+-- Forever Games is for WoW Forever only: every addon has one toc, for the Forever client, and none
+-- for retail (<name>_Standard.toc) any more.
 
-do
-  local OWN = { Interface = true, ["X-GameType"] = true }
-
-  --- The lines of a toc, with its Interface (and the other lines of the client's own) apart
-  local function readToc(path)
-    local file = io.open(path)
-    if not file then
-      return nil
-    end
-    local shared, own = {}, {}
-    for line in file:lines() do
-      line = line:gsub("%s+$", "")
-      local field, value = line:match("^##%s*([%w%-]+):%s*(.*)$")
-      if field and OWN[field] then
-        own[field] = value
-      else
-        shared[#shared + 1] = line
-      end
-    end
-    file:close()
-    return shared, own
+function tests.EveryAddonIsForWoWForever()
+  local folders = { "." }
+  local listing = io.popen("ls -d ForeverGames_*/ Examples/ForeverGames_*/ 2>/dev/null")
+  for folder in listing:lines() do
+    folders[#folders + 1] = folder:gsub("/$", "")
   end
-
-  function tests.EveryAddonHasARetailTocListingTheSame()
-    local folders = { "." }
-    local listing = io.popen("ls -d ForeverGames_*/ Examples/ForeverGames_*/ 2>/dev/null")
-    for folder in listing:lines() do
-      folders[#folders + 1] = folder:gsub("/$", "")
+  listing:close()
+  for _, folder in ipairs(folders) do
+    local name = folder == "." and ADDON_NAME or folder:match("([^/]+)$")
+    local file = io.open(folder .. "/" .. name .. ".toc")
+    assert(file, "no " .. name .. ".toc")
+    local interface = file:read("*a"):match("##%s*Interface:%s*(%d+)")
+    file:close()
+    equal("16001", interface, name .. ".toc is for the Forever client")
+    local retail = io.open(folder .. "/" .. name .. "_Standard.toc")
+    if retail then
+      retail:close()
     end
-    listing:close()
-    for _, folder in ipairs(folders) do
-      local name = folder == "." and ADDON_NAME or folder:match("([^/]+)$")
-      local forever, foreverOwn = readToc(folder .. "/" .. name .. ".toc")
-      local retail, retailOwn = readToc(folder .. "/" .. name .. "_Standard.toc")
-      assert(forever, "no " .. name .. ".toc")
-      assert(retail, name .. " has no " .. name .. "_Standard.toc for retail: copy its .toc, with the retail Interface")
-      equal("16001", foreverOwn.Interface, name .. ".toc is for the Forever client")
-      assert(tonumber(retailOwn.Interface) and tonumber(retailOwn.Interface) >= 120105,
-        name .. "_Standard.toc is for retail, Interface 120105 or later: " .. tostring(retailOwn.Interface))
-      for i = 1, math.max(#forever, #retail) do
-        equal(forever[i], retail[i], name .. "_Standard.toc line " .. i .. " is as in " .. name .. ".toc")
-      end
-    end
+    assert(not retail, name .. "_Standard.toc is for retail, which Forever Games isn't for")
   end
 end
 

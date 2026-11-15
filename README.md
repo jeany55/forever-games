@@ -6,7 +6,6 @@
   <a href="https://github.com/jeany55/forever-games/releases/latest"><img src="https://img.shields.io/github/v/release/jeany55/forever-games?label=download&color=c8a24a" alt="Latest release"></a>
   <a href="https://github.com/jeany55/forever-games/releases"><img src="https://img.shields.io/github/downloads/jeany55/forever-games/total?color=c8a24a" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-1f6feb" alt="For World of Warcraft Forever">
-  <img src="https://img.shields.io/badge/World%20of%20Warcraft-Retail-1f6feb" alt="For World of Warcraft retail">
   <a href="https://github.com/jeany55/forever-games/actions/workflows/tests.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/jeany55/forever-games/actions/workflows/release.yml"><img src="https://github.com/jeany55/forever-games/actions/workflows/release.yml/badge.svg" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/jeany55/forever-games" alt="MIT licence"></a>
@@ -65,19 +64,23 @@ puzzles and solo games with a new challenge for your guild every day.
 
 ## Install
 
-1. Download `ForeverGames-<version>.zip` from the
-   [latest release](https://github.com/jeany55/forever-games/releases/latest).
-2. Unzip it into `Interface\AddOns`, inside the folder for the version of the game you play in your
-   World of Warcraft folder. Create the `AddOns` folder if it isn't there. The same download is for
-   WoW Forever (`_forever_`) and for retail (`_retail_`): each picks the files that are its own.
-3. You should now have five folders there: `ForeverGames`, `ForeverGames_Freedoom`,
-   `ForeverGames_Freedoom_Maps`, `ForeverGames_Where` and `ForeverGames_Where_Places`. Keep all
-   five. Freedoom and Where in Azeroth are addons of their own. If you had `ForeverGames_Pinball`,
+The easy way is the [CurseForge app](https://www.curseforge.com/download/app) or another addon
+manager: search for Forever Games and it installs and updates it for you. Where in Azeroth and
+Freedoom are separate downloads there, as they're big. Installing either one brings Forever Games
+along with it.
+
+To install by hand:
+
+1. From the [latest release](https://github.com/jeany55/forever-games/releases/latest), download
+   `ForeverGames-<version>.zip`, and if you want them, `ForeverGames_Where-<version>.zip` (Where in
+   Azeroth) and `ForeverGames_Freedoom-<version>.zip` (Freedoom).
+2. Unzip them into `Interface\AddOns`, inside the WoW Forever folder in
+   your World of Warcraft folder (`_forever_`). Create the `AddOns` folder if it isn't there.
+3. You should now have a `ForeverGames` folder there, and for each of the other two, two more:
+   `ForeverGames_Where` and `ForeverGames_Where_Places`, `ForeverGames_Freedoom` and
+   `ForeverGames_Freedoom_Maps`. Keep each pair together. If you had `ForeverGames_Pinball`,
    `ForeverGames_Runeweave` or `ForeverGames_Starfall` from before, delete them: those games are
-   part of `ForeverGames` now. `ForeverGames_Freedoom_Maps` holds
-   Freedoom's maps and `ForeverGames_Where_Places` the places of Where in Azeroth, which is why
-   the download is large. The maps are only loaded when you play Freedoom, and a place's pictures
-   only when you are taken there.
+   part of `ForeverGames` now.
 4. Restart the game if it was running, and check Forever Games is ticked in the AddOns list on the
    character screen.
 

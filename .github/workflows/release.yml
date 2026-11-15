@@ -21,6 +21,10 @@ on:
         description: "Deploy to CurseForge"
         default: true
         type: boolean
+      everyCompanion:
+        description: "Upload Where in Azeroth and Freedoom even if they haven't changed"
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -32,13 +36,16 @@ jobs:
     steps:
       # Checks-out repository
       - uses: actions/checkout@v4
+        with:
+          # Every tag too, to tell what changed since the last release
+          fetch-depth: 0
 
       - name: Run tests
         run: |
           sudo apt-get install -y lua5.1
           ./Tests/RunTests.sh
 
-      # Increment version and replace in the toc files, the Forever client's and retail's
+      # Increment version and replace it in the toc
       - name: Update version
         run: |
           VERSION=$(grep '^## Version:' ForeverGames.toc | grep -o '[0-9]*\.[0-9]*\.[0-9]*')
@@ -63,7 +70,7 @@ jobs:
 
           newVersion="${MAJOR_VERSION}.${MINOR_VERSION}.${PATCH_VERSION}"
 
-          sed -i -e "s/^## Version: $VERSION/## Version: $newVersion/" ForeverGames.toc ForeverGames_Standard.toc
+          sed -i -e "s/^## Version: $VERSION/## Version: $newVersion/" ForeverGames.toc
 
           echo "VERSION=$newVersion" >> $GITHUB_ENV
 
@@ -73,8 +80,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-          if ! git diff --quiet ForeverGames.toc ForeverGames_Standard.toc; then
-            git add ForeverGames.toc ForeverGames_Standard.toc
+          if ! git diff --quiet ForeverGames.toc; then
+            git add ForeverGames.toc
             git commit -m "Update to version $VERSION"
             git push
           fi
@@ -82,24 +89,42 @@ jobs:
           git tag -a "v$VERSION" -m "Release version ${VERSION}"
           git push origin tag "v$VERSION"
 
-      # Put the addon into a ForeverGames folder and zip it
-      - name: Generate zip
-        run: ./build.sh
+      # One zip for Forever Games, one for Where in Azeroth, one for Freedoom (see build.sh)
+      - name: Generate zips
+        run: |
+          ./build.sh
+          version() { grep '^## Version:' "$1" | grep -o '[0-9]*\.[0-9]*\.[0-9]*'; }
+          echo "WHERE_VERSION=$(version ForeverGames_Where/ForeverGames_Where.toc)" >> $GITHUB_ENV
+          echo "FREEDOOM_VERSION=$(version ForeverGames_Freedoom/ForeverGames_Freedoom.toc)" >> $GITHUB_ENV
 
-      # Upload zip made in previous step as a github release and attach to version tag
+      # Where in Azeroth and Freedoom only go to CurseForge when they changed since the last release,
+      # so their players don't download them again for every change to Forever Games
+      - name: What changed
+        run: |
+          PREVIOUS=$(git describe --tags --abbrev=0 "v$VERSION^" 2>/dev/null || true)
+          changed() {
+            [[ -z "$PREVIOUS" || "${{ inputs.everyCompanion }}" == "true" ]] || ! git diff --quiet "$PREVIOUS" "v$VERSION" -- "$@"
+          }
+          if changed ForeverGames_Where ForeverGames_Where_Places; then echo "WHERE_CHANGED=true" >> $GITHUB_ENV; fi
+          if changed ForeverGames_Freedoom ForeverGames_Freedoom_Maps; then echo "FREEDOOM_CHANGED=true" >> $GITHUB_ENV; fi
+
+      # Upload the zips made in previous step as a github release and attach to version tag
       - name: Create release
         uses: ncipollo/release-action@v1.12.0
         with:
-          artifacts: .release/ForeverGames-${{ env.VERSION }}.zip
+          artifacts: ".release/*.zip"
           tag: "v${{ env.VERSION }}"
           body: ${{ inputs.changeNotes }}
 
-      # Upload the same zip to CurseForge. Needs the CURSE_TOKEN secret (an API token from
-      # https://authors.curseforge.com/account/api-tokens) and the CURSEFORGE_PROJECT_ID variable
-      # (the number on the project's page) set on the repository; skipped until both are there.
-      # game_versions: the Forever client (Interface 16001) and retail (ForeverGames_Standard.toc,
-      # Interface 120105). Keep them in step with the tocs.
-      - name: Upload to CurseForge
+      # Upload to CurseForge. Needs the CURSE_TOKEN secret (an API token from
+      # https://authors.curseforge.com/account/api-tokens) and, on the repository, a variable with the
+      # number on each project's page: CURSEFORGE_PROJECT_ID (Forever Games),
+      # CURSEFORGE_WHERE_PROJECT_ID and CURSEFORGE_FREEDOOM_PROJECT_ID. Each upload is skipped until its
+      # variables are there. Where in Azeroth and Freedoom need Forever Games (CURSEFORGE_SLUG, the last
+      # part of its page's address), so the CurseForge app installs it with them.
+      # game_versions: the Forever client (Interface 16001), the only one the addon is for. Keep it in
+      # step with the tocs.
+      - name: Upload Forever Games to CurseForge
         if: ${{ inputs.deployToCurse && vars.CURSEFORGE_PROJECT_ID != '' }}
         uses: itsmeow/curseforge-upload@v3
         with:
@@ -109,4 +134,30 @@ jobs:
           project_id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           display_name: ${{ env.VERSION }}
           token: ${{ secrets.CURSE_TOKEN }}
-          game_versions: "1.60.1,12.1.5"
+          game_versions: "1.60.1"
+
+      - name: Upload Where in Azeroth to CurseForge
+        if: ${{ inputs.deployToCurse && vars.CURSEFORGE_WHERE_PROJECT_ID != '' && vars.CURSEFORGE_SLUG != '' && env.WHERE_CHANGED == 'true' }}
+        uses: itsmeow/curseforge-upload@v3
+        with:
+          file_path: .release/ForeverGames_Where-${{ env.WHERE_VERSION }}.zip
+          game_endpoint: "wow"
+          changelog: ${{ inputs.changeNotes }}
+          project_id: ${{ vars.CURSEFORGE_WHERE_PROJECT_ID }}
+          display_name: ${{ env.WHERE_VERSION }}
+          token: ${{ secrets.CURSE_TOKEN }}
+          game_versions: "1.60.1"
+          relations: "${{ vars.CURSEFORGE_SLUG }}:requiredDependency"
+
+      - name: Upload Freedoom to CurseForge
+        if: ${{ inputs.deployToCurse && vars.CURSEFORGE_FREEDOOM_PROJECT_ID != '' && vars.CURSEFORGE_SLUG != '' && env.FREEDOOM_CHANGED == 'true' }}
+        uses: itsmeow/curseforge-upload@v3
+        with:
+          file_path: .release/ForeverGames_Freedoom-${{ env.FREEDOOM_VERSION }}.zip
+          game_endpoint: "wow"
+          changelog: ${{ inputs.changeNotes }}
+          project_id: ${{ vars.CURSEFORGE_FREEDOOM_PROJECT_ID }}
+          display_name: ${{ env.FREEDOOM_VERSION }}
+          token: ${{ secrets.CURSE_TOKEN }}
+          game_versions: "1.60.1"
+          relations: "${{ vars.CURSEFORGE_SLUG }}:requiredDependency"

@@ -3,13 +3,11 @@
 This is for anyone changing the addon itself. To play it, see the [README](README.md).
 
 The folder has to be called `ForeverGames` inside `Interface/AddOns`. After changing anything the
-addon ships, `./install.sh` copies it into the game, ready to `/reload`: into WoW Forever (`_forever_`)
-and retail, whichever are installed (or `WOW_ADDONS=<AddOns folder> ./install.sh` for one of your
-choosing).
+addon ships, `./install.sh` copies it into WoW Forever (`_forever_`), ready to `/reload` (or
+`WOW_ADDONS=<AddOns folder> ./install.sh` for another AddOns folder).
 
-Every addon has two tocs: `<name>.toc` for WoW Forever (Interface 16001), and `<name>_Standard.toc`
-for retail (Interface 120105 and on), which retail picks first. They list the same files and are
-otherwise the same, which a test checks: a file added to one goes in the other too.
+Forever Games is for WoW Forever only: every addon has one toc, `<name>.toc`, with Interface 16001,
+which a test checks.
 
 ## Tests
 
@@ -149,11 +147,14 @@ Words after it run only the tests whose names have one of them in:
 - `Examples/ForeverGames_Pig/` the example in [API.md](API.md), tested with the rest but not
   shipped
 
-`install.sh` and `build.sh` take every `ForeverGames_*` folder along beside `ForeverGames`.
+`install.sh` takes every `ForeverGames_*` folder along beside `ForeverGames`. `build.sh` makes three
+zips, one for each CurseForge project: Forever Games, Where in Azeroth (with every
+`ForeverGames_Where_*` pack) and Freedoom (with its maps). It stops if a `ForeverGames_*` folder
+isn't in any of them.
 
 ## Adding a game
 
-Add a file to `Games/`, list it in `ForeverGames.toc` and `ForeverGames_Standard.toc` and call `private.Games.Register` with the
+Add a file to `Games/`, list it in `ForeverGames.toc` and call `private.Games.Register` with the
 functions described at the top of `Engine/Games.lua`. A game can also be an addon of its own,
 which registers it through `ForeverGamesAPI` instead: [API.md](API.md) says how. A game has two
 halves:

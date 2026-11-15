@@ -55,7 +55,6 @@ matches, resigning, rematches and the list of games.
 ```
 ForeverGames_Pig/
   ForeverGames_Pig.toc
-  ForeverGames_Pig_Standard.toc
   Locales/enUS.lua
   Pig.lua
   Tests.lua
@@ -79,10 +78,8 @@ Locales\enUS.lua
 Pig.lua
 ```
 
-That one is for WoW Forever. For retail, copy it as `ForeverGames_Pig_Standard.toc` and change
-only the Interface, to retail's (`## Interface: 120105`). Retail picks the `_Standard.toc` first,
-and every other client falls back on the plain one. Keep the two the same apart from that: the
-tests check they are, for every addon in this repository.
+Forever Games is for WoW Forever only, so the Interface is Forever's, 16001. The tests check every
+addon in this repository says so.
 
 Don't make the addon `LoadOnDemand`. Its game has to be registered at login to show up. If the
 game needs a lot of data, put that data in a second addon that is loaded on demand (see
@@ -469,8 +466,6 @@ A pack is two things. Its `.toc` depends on Where in Azeroth:
 
 Places.lua
 ```
-
-with the same again as `ForeverGames_Where_Bob_Standard.toc` for retail, `## Interface: 120105`.
 
 And its `Places.lua` hands its places to the engine:
 

@@ -4,6 +4,7 @@ For each picture named in GALLERY it takes the latest one there is in Shots/ (th
 and writes:
 
   Shots/gallery/NN-<name>.png           full size, numbered in order, for the CurseForge gallery
+                                        (a .jpg instead when the PNG is over CurseForge's 2 MB)
   Shots/gallery/00-banner.png           the banner: the logo, a line, and three games over Azeroth
   .github/readme/screenshots/<name>.jpg smaller, for the README
   .github/readme/banner.jpg
@@ -43,6 +44,8 @@ PICKS = [
 # How wide the README's copies are: a window, and a whole screen
 README_WIDTH, README_SCENE_WIDTH = 900, 1400
 BANNER = (1600, 600)
+# CurseForge turns away pictures over 2 MB
+LARGEST = 1900 * 1000  # "2 MB", with room to spare however they count it
 TAGLINE = "Challenge your guild. Turns wait while you're offline."
 SUBLINE = "30+ games inside World of Warcraft"
 
@@ -127,23 +130,38 @@ def wrap(draw, text, face, width):
     return lines + [line]
 
 
+def save_for_curseforge(picture, stem):
+    """As a PNG, or as a JPEG as good as fits when the PNG is too big for CurseForge"""
+    path = os.path.join(GALLERY, stem + ".png")
+    picture.save(path)
+    if os.path.getsize(path) <= LARGEST:
+        return path
+    os.remove(path)
+    path = os.path.join(GALLERY, stem + ".jpg")
+    for quality in (95, 92, 90, 87, 84, 80):
+        picture.save(path, quality=quality, optimize=True, subsampling=0 if quality >= 90 else 2)
+        if os.path.getsize(path) <= LARGEST:
+            break
+    return path
+
+
 def main():
     os.makedirs(GALLERY, exist_ok=True)
     shots = os.path.join(README, "screenshots")
     os.makedirs(shots, exist_ok=True)
     # Only the numbered pictures it made before: anything else kept there (avatars) stays
-    for old in glob.glob(os.path.join(GALLERY, "[0-9][0-9]-*.png")):
+    for old in glob.glob(os.path.join(GALLERY, "[0-9][0-9]-*.png")) + glob.glob(os.path.join(GALLERY, "[0-9][0-9]-*.jpg")):
         os.remove(old)
     pictures = {}
     for number, (source, name) in enumerate(PICKS, 1):
         picture = Image.open(latest(source)).convert("RGB")
         pictures[name] = picture
-        picture.save(os.path.join(GALLERY, "%02d-%s.png" % (number, name)))
+        save_for_curseforge(picture, "%02d-%s" % (number, name))
         wide = README_SCENE_WIDTH if source.endswith("-scene") else README_WIDTH
         scaled(picture, min(wide, picture.width)).save(os.path.join(shots, name + ".jpg"), quality=86, optimize=True)
         print("%02d %s <- %s" % (number, name, os.path.basename(latest(source))))
     made = banner(pictures)
-    made.save(os.path.join(GALLERY, "00-banner.png"))
+    save_for_curseforge(made, "00-banner")
     made.save(os.path.join(README, "banner.jpg"), quality=88, optimize=True)
     print("banner and %d pictures in %s, README copies in %s" % (len(PICKS), GALLERY, shots))
 
