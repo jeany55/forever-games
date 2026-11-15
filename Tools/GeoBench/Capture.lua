@@ -113,7 +113,10 @@ local function keep()
   for index, shot in ipairs(shots) do
     names[index], called[index] = shot.done or shot.called, shot.called
   end
-  local capture = { id = #GeoBenchDB.captures + 1, where = here, step = run.step, fov = run.fov,
+  -- Captures 1 to 51 were taken on the beta client, whose saved captures are gone: numbering
+  -- carries on from 52 so stitch.py never takes a new capture for one already stitched (c1..c51)
+  local last = GeoBenchDB.captures[#GeoBenchDB.captures]
+  local capture = { id = math.max(52, last and last.id + 1 or 0), where = here, step = run.step, fov = run.fov,
     format = run.format, shots = shots, client = ns.environment(), facingAfter = select(2, ns.call(GetPlayerFacing)),
     third = run.third }
   local width, height = GetPhysicalScreenSize()
