@@ -87,7 +87,17 @@ jobs:
           fi
 
           git tag -a "v$VERSION" -m "Release version ${VERSION}"
-          git push origin tag "v$VERSION"
+          # GitHub sometimes turns away a tag pushed straight after a commit ("Internal Server
+          # Error"), so try a few times with a pause between
+          for attempt in 1 2 3 4 5; do
+            if git push origin tag "v$VERSION"; then
+              break
+            fi
+            if [[ $attempt == 5 ]]; then
+              exit 1
+            fi
+            sleep $(( attempt * 10 ))
+          done
 
       # One zip for Forever Games, one for Where in Azeroth, one for Freedoom (see build.sh)
       - name: Generate zips
