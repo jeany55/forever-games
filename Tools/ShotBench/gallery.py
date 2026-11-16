@@ -8,6 +8,8 @@ and writes:
   Shots/gallery/00-banner.png           the banner: the logo, a line, and three games over Azeroth
   .github/readme/screenshots/<name>.jpg smaller, for the README
   .github/readme/banner.jpg
+  Shots/gallery/banner-<game>.png and .github/readme/banner-<game>.jpg, for the games that are
+                                        projects of their own (COMPANIONS)
 
 Run with ./python.sh gallery.py (./python.sh finds a Python with Pillow).
 """
@@ -118,6 +120,53 @@ def banner(pictures):
     return canvas.convert("RGB")
 
 
+# The games that are projects of their own: what crop.py named the window, the part of it that is the
+# game's own view (the background, blurred), the big icon, the name and the line under it
+COMPANIONS = [
+    ("where", "where-window", (55, 142, 1097, 737), "Where in Azeroth",
+     "You're dropped somewhere in the world. Look around, then pin where you are."),
+    ("freedoom", "freedoom-window", (225, 155, 928, 600), "Freedoom",
+     "Run for the exit inside World of Warcraft, and race your friends' ghosts."),
+]
+COMPANION_LINE = "A game for Forever Games"
+
+
+def companion_banner(window, view, icon, title, tagline):
+    """A banner like Forever Games' own, for a game that is a project of its own"""
+    width, height = BANNER
+    window = Image.open(window).convert("RGB")
+    # Behind it all, the game's own view, filling the banner, out of focus
+    back = window.crop(view)
+    cover = max(width / back.width, height / back.height)
+    back = back.resize((round(back.width * cover), round(back.height * cover)), Image.LANCZOS)
+    left, top = (back.width - width) // 2, (back.height - height) // 2
+    back = back.crop((left, top, left + width, top + height)).filter(ImageFilter.GaussianBlur(10)).convert("RGBA")
+    shade = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(shade)
+    for x in range(width):
+        alpha = round(225 - 110 * min(1, max(0, (x - 600) / 600)))
+        draw.line((x, 0, x, height), fill=(8, 8, 14, alpha))
+    canvas = Image.alpha_composite(back, shade)
+
+    # The window without the bit of the world around its frame
+    framed = window.crop((22, 20, window.width - 22, window.height - 20))
+    shadowed(canvas, scaled(framed, 640), (880, 66))
+
+    mark = Image.open(icon).convert("RGBA").resize((150, 150), Image.LANCZOS)
+    shadowed(canvas, mark, (100, 80), blur=10, offset=(0, 6))
+    draw = ImageDraw.Draw(canvas)
+    y = 80 + 150 + 30
+    # Big enough to read at half size, as CurseForge shows it
+    for text, face, colour, gap in ((title, font(64), (255, 214, 102), 18),
+                                     (tagline, font(34, bold=False), (235, 235, 240), 22),
+                                     (COMPANION_LINE, font(28, bold=False), (190, 190, 200), 0)):
+        for line in wrap(draw, text, face, 680):
+            draw.text((100, y), line, font=face, fill=colour)
+            y += face.size + 10
+        y += gap
+    return canvas.convert("RGB")
+
+
 def wrap(draw, text, face, width):
     lines, line = [], ""
     for word in text.split():
@@ -164,6 +213,12 @@ def main():
     save_for_curseforge(made, "00-banner")
     made.save(os.path.join(README, "banner.jpg"), quality=88, optimize=True)
     print("banner and %d pictures in %s, README copies in %s" % (len(PICKS), GALLERY, shots))
+    for name, window, view, title, tagline in COMPANIONS:
+        made = companion_banner(latest(window), view, os.path.join(README, "icons", "large", name + ".png"), title, tagline)
+        save_for_curseforge(made, "banner-" + name)
+        # CurseForge's descriptions take pictures up to 800 wide
+        scaled(made, 800).save(os.path.join(README, "banner-" + name + ".jpg"), quality=90, optimize=True)
+        print("banner-" + name)
 
 
 if __name__ == "__main__":
